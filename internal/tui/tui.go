@@ -39,7 +39,7 @@ func Run(ctx context.Context, options Options) error {
 	if options.InitialError != nil {
 		err = options.InitialError
 	}
-	m := model{ctx: ctx, locale: options.Locale, client: client, install: options.InstallService, installCommand: options.InstallCommand, width: 100, height: 30, loading: true, statusLoading: true, nextStatus: time.Now().Add(10 * time.Second), connection: ConnectionSettings{BaseURL: options.BaseURL, TokenFile: options.TokenFile, CAFile: options.CAFile}, remember: options.RememberConnection, startCommand: options.StartCommand, rememberPending: options.RememberConnection != nil}
+	m := model{ctx: ctx, locale: options.Locale, client: client, install: options.InstallService, installCommand: options.InstallCommand, width: 100, height: 30, loading: true, statusLoading: true, nextStatus: time.Now().Add(10 * time.Second), connection: ConnectionSettings{BaseURL: options.BaseURL, TokenFile: options.TokenFile, CAFile: options.CAFile}, managementToken: strings.TrimSpace(options.Token), remember: options.RememberConnection, startCommand: options.StartCommand, rememberPending: options.RememberConnection != nil}
 	if options.StartCommand != nil || options.InstallCommand != nil || options.InstallService != nil {
 		m.localBaseURL = options.BaseURL
 	}
@@ -80,6 +80,8 @@ type tickMsg time.Time
 
 type model struct {
 	connection      ConnectionSettings
+	managementToken string
+	tokenVisible    bool
 	localBaseURL    string
 	remember        func(ConnectionSettings) error
 	rememberPending bool
@@ -251,9 +253,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab", "right":
 			m.page = (m.page + 1) % 3
 			m.selected = 0
+			m.tokenVisible = false
 		case "shift+tab", "left":
 			m.page = (m.page + 2) % 3
 			m.selected = 0
+			m.tokenVisible = false
 		case "j", "down":
 			m.selected++
 			m.clamp()
@@ -273,6 +277,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "o":
 			m.openConnection()
+		case "t":
+			if m.ready && m.page == 2 && m.managementToken != "" {
+				m.tokenVisible = !m.tokenVisible
+			}
 		case "?":
 			m.form = "help"
 		case "s":
@@ -504,6 +512,7 @@ func (m model) View() string {
 			b.WriteString(m.outboundsView())
 		case 2:
 			fmt.Fprintf(&b, m.text("\n  HTTP proxy    %s\n  SOCKS5        %s\n  Management UI %s\n  PAC           %s\n\n  Use PAC bypass for company services on Mac to keep using local Tailscale.\n  Edit PAC and all routing rules in the Web UI.\n"), m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
+			b.WriteString(m.managementTokenView())
 			if m.localTarget() && (m.installCommand != nil || m.install != nil) {
 				b.WriteString(m.text("  Press i to install the background service.\n"))
 			} else {
@@ -526,7 +535,20 @@ func (m model) View() string {
 		b.WriteString(m.text("  + Add outbound with suggested values\n"))
 		b.WriteString(m.text("  c Connect   d Disconnect   v Verify   n Register   l WARP+ license key\n"))
 	}
+	if m.ready && m.page == 2 {
+		b.WriteString(m.text("  t Show / hide Web UI token\n"))
+	}
 	return b.String()
+}
+
+func (m model) managementTokenView() string {
+	if m.managementToken == "" {
+		return m.text("\n  Web UI token  Unavailable in this session. Press o to load a token file.\n")
+	}
+	if !m.tokenVisible {
+		return m.text("\n  Web UI token  Hidden (press t to show)\n")
+	}
+	return fmt.Sprintf(m.text("\n  Web UI token  %s\n  Anyone with this token can manage Rillway. Press t to hide it.\n"), m.managementToken)
 }
 
 func (m model) flowsView() string {

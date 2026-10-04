@@ -78,7 +78,7 @@ func TestConnectionValidationAndStaleMessages(t *testing.T) {
 	m.fields[0] = "http://127.0.0.1:17892"
 	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
-	if cmd == nil || m.generation != 1 || m.form != "" || !m.rememberPending {
+	if cmd == nil || m.generation != 1 || m.form != "" || !m.rememberPending || m.managementToken != "private-token" || m.tokenVisible {
 		t.Fatal("valid connection not applied")
 	}
 	next, _ = m.Update(loadedMsg{cfg: config.Default(t.TempDir()), generation: 0})

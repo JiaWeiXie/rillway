@@ -11,7 +11,7 @@ and see how that path performs.
 Keep your company's Tailscale on your Mac. Send public traffic through a PAC file
 to an Ubuntu VM, where Rillway routes it through direct, WARP, or WireGuard.
 
-The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered.
+The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered. On Service settings, press `t` to reveal the Web UI token; leaving the page hides it again.
 
 ## One executable, guided installation
 

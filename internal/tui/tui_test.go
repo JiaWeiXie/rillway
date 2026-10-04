@@ -117,7 +117,7 @@ func TestEnglishNavigationAndForms(t *testing.T) {
 		{"loading", model{}, []string{"Connecting to the management service"}},
 		{"connections", model{ready: true}, []string{"[Connections]", "No connections yet", "Enter Create routing rule"}},
 		{"outbounds", model{ready: true, page: 1}, []string{"[Outbounds & VPNs]", "c Connect", "d Disconnect", "v Verify"}},
-		{"settings", model{ready: true, page: 2}, []string{"[Service settings]", "Management UI", "Start or install the service on the machine running it"}},
+		{"settings", model{ready: true, page: 2}, []string{"[Service settings]", "Management UI", "Web UI token", "t Show / hide Web UI token", "Start or install the service on the machine running it"}},
 		{"rule", model{form: "rule", ruleFlow: flow{Host: "example.com"}}, []string{"Create routing rule for example.com", "Automatic (dual stack)", "Enter Save", "Esc Cancel"}},
 		{"license", model{form: "license"}, []string{"WARP+ license key", "Enter Apply", "Esc Cancel"}},
 		{"install", model{form: "install"}, []string{"Install the Rillway background service", "Enter Install", "Esc Cancel"}},
@@ -134,6 +134,38 @@ func TestEnglishNavigationAndForms(t *testing.T) {
 				t.Errorf("untranslated UI text in:\n%s", view)
 			}
 		})
+	}
+}
+
+func TestManagementTokenRequiresExplicitReveal(t *testing.T) {
+	const token = "private-management-token"
+	m := model{ready: true, page: 2, managementToken: token}
+	if view := m.View(); strings.Contains(view, token) || !strings.Contains(view, "Hidden (press t to show)") {
+		t.Fatalf("token was exposed before reveal or hint is missing:\n%s", view)
+	}
+
+	next, command := m.Update(key("t"))
+	m = next.(model)
+	if command != nil || !m.tokenVisible || !strings.Contains(m.View(), token) {
+		t.Fatal("explicit reveal did not show the management token")
+	}
+
+	next, _ = m.Update(key("L"))
+	m = next.(model)
+	if !strings.Contains(m.View(), "Web UI 權杖") || !strings.Contains(m.View(), token) {
+		t.Fatal("Traditional Chinese view changed or hid the revealed token")
+	}
+
+	next, _ = m.Update(key("tab"))
+	m = next.(model)
+	if m.tokenVisible || strings.Contains(m.View(), token) {
+		t.Fatal("leaving service settings did not hide the token")
+	}
+
+	m.page = 0
+	next, _ = m.Update(key("t"))
+	if next.(model).tokenVisible {
+		t.Fatal("token shortcut worked outside service settings")
 	}
 }
 

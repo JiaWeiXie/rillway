@@ -209,6 +209,12 @@ mise exec -- go test ./internal/engine -run '^$' -fuzz FuzzRuleHostname -fuzztim
 - Linux amd64 artifact SHA-256 為 `c01b07e42247662527c8ffff3e2c6e591194877bce60e5ca58ba40b48ed07f13`，已備份後原子更新至 NAS VM。磁碟上的有效設定、token、TLS cert/key、systemd unit 與官方 WARP registration 前後 hash 相同；服務 active、`NRestarts=0`。HTTP、HTTPS CONNECT、SOCKS5、PAC、嚴格 TLS、未登入 `401` 與權杖管理再次通過；revision 為 **12**，管理 API 顯示 9 筆網域與 10 筆 IP 範圍，Tailscale IPv6 項目已啟用。
 - 已部署的 NAS Web UI 再以相同四種語言／viewport 組合做唯讀驗證，預設備註、switch、欄位數量、手機單欄及桌面雙欄均通過，無水平溢出或瀏覽器錯誤。截圖位於 `/private/tmp/rillway-pac-ui-evidence/`；NAS 驗證未儲存設定、未操作 VPN 帳號或 WARP。
 
+## TUI 顯示 Web UI 管理權杖（2026-10-04）
+
+- 服務設定頁會顯示 Web UI 管理權杖狀態；預設隱藏，使用者按 `t` 才顯示，再按一次隱藏。離開服務設定頁、開啟服務連線表單或改連其他服務時會自動隱藏。
+- TUI 只在當次程序的記憶體保留已讀取的權杖。既有 client profile 仍只保存服務網址、權杖檔案與憑證檔案路徑，不會寫入權杖內容。英文與繁體中文介面及操作文件已同步更新。
+- 回歸測試涵蓋預設不洩漏、明確顯示、中英切換保留顯示狀態、離開頁面自動隱藏、其他頁面不接受快捷鍵，以及改連線後採用新權杖。`mise run check` 通過：lint 0 issues、race detector 未發現競態，總 statement coverage **70.8%**；`mise run build` 成功。這次尚未部署至 NAS VM，也未將權杖輸出到測試紀錄。
+
 ## 尚未驗證的外部環境
 
 以下項目明確為 **未驗證**，不能由一般測試通過推論為已完成：

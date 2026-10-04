@@ -8,7 +8,7 @@ Rillway 是以 Go 實作、可觀察的多出口 TCP Proxy。名稱結合 **rill
 
 Mac 保留公司的 Tailscale；公開網站經 PAC 送到 Ubuntu VM，再由 Rillway 選擇直連、WARP 或 WireGuard。
 
-Web UI 與 TUI 會先填好常用出口設定。TUI 按 `o` 選擇服務、`?` 查看說明，切到出口頁按 `+` 新增。驗證成功的服務連線會記住，下次可直接開啟 TUI。
+Web UI 與 TUI 會先填好常用出口設定。TUI 按 `o` 選擇服務、`?` 查看說明，切到出口頁按 `+` 新增。驗證成功的服務連線會記住，下次可直接開啟 TUI。服務設定頁按 `t` 可顯示 Web UI 權杖；離開該頁就會自動隱藏。
 
 ## 單一執行檔與引導安裝
 

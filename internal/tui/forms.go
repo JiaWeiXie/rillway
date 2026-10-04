@@ -24,6 +24,7 @@ type ConnectionSettings struct {
 
 func (m *model) openConnection() {
 	m.form = "connection"
+	m.tokenVisible = false
 	m.field = 0
 	m.fields = []string{m.connection.BaseURL, m.connection.TokenFile, m.connection.CAFile}
 }
@@ -130,13 +131,16 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("could not read the management token file: %w", err)
 				return m, nil
 			}
-			client, err := control.NewClient(settings.BaseURL, strings.TrimSpace(string(token)), settings.CAFile)
+			managementToken := strings.TrimSpace(string(token))
+			client, err := control.NewClient(settings.BaseURL, managementToken, settings.CAFile)
 			if err != nil {
 				m.err = err
 				return m, nil
 			}
 			m.client = client
 			m.connection = settings
+			m.managementToken = managementToken
+			m.tokenVisible = false
 			m.generation++
 			m.ready = false
 			m.loading = true
