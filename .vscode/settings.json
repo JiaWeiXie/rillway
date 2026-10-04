@@ -1,0 +1,12 @@
+{
+  "go.toolsManagement.autoUpdate": false,
+  "go.useLanguageServer": true,
+  "go.alternateTools": {"gopls": "${workspaceFolder}/scripts/gopls"},
+  "gopls": {"gofumpt": true},
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {"source.organizeImports": "explicit"}
+  },
+  "files.exclude": {".cache": true}
+}

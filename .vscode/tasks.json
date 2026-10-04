@@ -1,0 +1,5 @@
+{"version":"2.0.0","tasks":[
+  {"label":"Rillway: check","type":"shell","command":"mise run check","group":"test","problemMatcher":"$go"},
+  {"label":"Rillway: build","type":"shell","command":"mise run build","group":"build","problemMatcher":"$go"},
+  {"label":"Rillway: format","type":"shell","command":"mise run fmt","problemMatcher":[]}
+]}

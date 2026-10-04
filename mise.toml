@@ -1,0 +1,43 @@
+[tools]
+go = "1.27.1"
+"go:golang.org/x/tools/gopls" = "v0.23.0"
+golangci-lint = "2.14.0"
+
+[settings]
+lockfile = true
+
+[env]
+GOMODCACHE = "{{ config_root }}/.cache/gomod"
+GOCACHE = "{{ config_root }}/.cache/go-build"
+GOPATH = "{{ config_root }}/.cache/go"
+GOLANGCI_LINT_CACHE = "{{ config_root }}/.cache/golangci-lint"
+GOPLSCACHE = "{{ config_root }}/.cache/gopls"
+
+[tasks.dev]
+description = "Run the local development daemon"
+run = "go run ./cmd/rillway serve --config .local/config.json"
+
+[tasks.build]
+run = "go build -trimpath -o bin/rillway ./cmd/rillway"
+
+[tasks.fmt]
+run = "golangci-lint fmt ./..."
+
+[tasks.lint]
+run = ["golangci-lint config verify", "golangci-lint run ./..."]
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.check]
+depends = ["lint"]
+run = ["mkdir -p coverage", "go test -race -shuffle=on -coverprofile=coverage/coverage.out ./..."]
+
+[tasks."test:live"]
+run = "go test -tags=live -v ./tests/live/..."
+
+[tasks.fuzz]
+run = ["go test ./internal/config -run=^$ -fuzz=FuzzDecode -fuzztime=10s", "go test ./internal/proxy -run=^$ -fuzz=Fuzz -fuzztime=10s"]
+
+[tasks.release]
+run = "sh scripts/release.sh"

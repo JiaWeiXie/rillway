@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "revision": 1,
+  "listeners": {
+    "http": "127.0.0.1:17890",
+    "socks5": "127.0.0.1:17891",
+    "admin": "127.0.0.1:17892",
+    "pac": "127.0.0.1:17893"
+  },
+  "security": {
+    "allowed_clients": ["127.0.0.0/8", "::1/128"],
+    "admin_token_file": "./.local/state/admin.token",
+    "tls_cert_file": "./.local/state/admin.crt",
+    "tls_key_file": "./.local/state/admin.key"
+  },
+  "outbounds": [
+    {"id": "direct", "type": "direct", "enabled": true, "public_internet": true},
+    {"id": "warp", "type": "warp", "enabled": false, "public_internet": true, "proxy_address": "127.0.0.1:40000", "warp_binary": "warp-cli"},
+    {"id": "company", "type": "tailscale", "enabled": false, "public_internet": false, "state_dir": "./.local/tailscale", "hostname": "rillway"},
+    {"id": "wg", "type": "wireguard", "enabled": false, "public_internet": true, "config_file": "./.local/secrets/wg.conf"}
+  ],
+  "rules": [
+    {"id": "github-origin", "domains": ["github.com", "api.github.com", "codeload.github.com"], "outbound": "direct", "family": "auto"},
+    {"id": "github-cdn", "domains": ["raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"], "suffixes": ["githubassets.com"], "outbound": "warp", "family": "auto"}
+  ],
+  "default_outbound": "direct",
+  "adaptive": {
+    "enabled": false,
+    "candidates": ["direct", "warp"],
+    "window_seconds": 600,
+    "min_samples": 3,
+    "improvement_percent": 25,
+    "improvement_millis": 50,
+    "cooldown_seconds": 600,
+    "probes_per_minute": 12,
+    "probe_concurrency": 2,
+    "probe_timeout_seconds": 4
+  },
+  "pac": {
+    "proxy_address": "127.0.0.1:17890",
+    "bypass_domains": ["local", "ts.net", "tailscale.com"],
+    "bypass_cidrs": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10"]
+  }
+}
