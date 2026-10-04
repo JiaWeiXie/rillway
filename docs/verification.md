@@ -77,6 +77,9 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 - 回歸測試驗證原設定不被 helper 提前修改、無效替代出口拒絕、缺少替代出口拒絕、失敗不變更 runtime／磁碟、raw PUT JSON 不能繞過 direct 保護、兩個並行刪除僅一個成功、錯誤遮罩與雙語訊息。完整 `mise run check` 的 15 個 package 通過、lint 0 issues、race 無競態；`RemoveOutbound` statement coverage **97.7%**，總 coverage **68.1%**。
 - Browser plugin not available；使用既有 Playwright／隔離 Chrome，連線本機暫存 HTTPS daemon，以英文／繁中、1440 × 1000／390 × 844 共四種組合實測。每組均驗證 direct 按鈕不存在、WARP 引用清單、未選替代出口不送出 DELETE、取消保留原設定、選 direct 後成功刪除、`github-cdn` 規則保留並改用 direct、自適應只留 direct。另確認 raw API 停用 direct 回傳 422、revision 不變。
 - 頁面身分、非空畫面、無錯誤覆蓋層、操作後狀態、桌面／手機截圖及版面均通過；無水平溢出，瀏覽器錯誤／警告為 0。截圖在 `/private/tmp/rillway-outbound-ui-evidence/`，測試未取消任何 WARP 註冊或套用 VPN 授權。
+- 修正 commit 為 `fdb0c1f`，四平台 release 成功。NAS 原子更新 binary，Linux amd64 SHA-256 為 `dc8cfadb332834e30461e94a3847736e1c9c93cd00de2b8aea2b630f73c63887`。有效設定／token／TLS cert/key hash 與官方 WARP registration fingerprint 前後相同；服務 active/running、帳號 rillway、`NRestarts=0`。
+- 部署後以嚴格信任 VM cert 的 API 驗證 direct DELETE 在 en／zh-Hant 都回傳 422，設定 revision／內容完全不變。HTTP、SOCKS5、HTTPS CONNECT 再次通過；沒有在正式 NAS 上實際刪除使用者 WARP。
+- NAS Web UI 亦以四個語言／viewport 組合驗證 direct 無修改／刪除按鈕、WARP 刪除對話框列出 `github-cdn` 與自適應、替代出口初始未選且 required、取消後兩個 profile 保留；僅 GET／HEAD、無水平溢出與瀏覽器錯誤／警告。截圖 `nas-1440-zh-Hant.png`／`nas-390-zh-Hant.png` 存在上述暫存證據目錄。本機 QA daemon、測試設定與憑證已清除。Safari／Firefox 與真實 VPN 持續下載中的刪除操作未實測；既有 provider retirement 測試仍通過。
 
 ## Docker 代理匯出與 NAS 實測
 
