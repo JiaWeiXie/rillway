@@ -1,23 +1,60 @@
 # 驗證紀錄與驗收邊界
 
-此紀錄日期為 2026-10-04，環境是 macOS arm64、Go 1.27.1。測試使用暫存設定、本機 HTTP／TCP listener、測試用出口與可控制時鐘，不使用公司帳號或真實 VPN 授權。
+此紀錄日期為 2026-10-04。開發檢查環境是 macOS arm64、Go 1.27.1；一般測試使用暫存設定、本機 HTTP／TCP listener、測試用出口與可控制時鐘，不使用公司帳號。另已在 NAS 的 Ubuntu 26.04.1 LTS x86_64 VM 完成正式部署及免費 WARP 實測，結果與付費／公司帳號的未驗證範圍分開記錄。
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 14 個 package 通過，包含 i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **66.0%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- 最新 `mise run check`：全部 14 個 package 通過，包含新版 WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **66.3%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
 - `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.3–46.0 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
 - Web UI 在 Chrome 實測英文與繁中登入、總覽、規則及設定；桌面與手機版均完成互動驗證，詳見下方。
-- `mise run test:live`：缺少明確指定的真實設定，正確回報 `NOT VERIFIED / SKIP`。
+- `mise run test:live` 未指定設定時仍正確回報 `NOT VERIFIED / SKIP`。另將同一套 opt-in tests 交叉編譯後，在 Ubuntu VM 以實際設定與低權限帳號執行：direct、免費 WARP 通過，`warp-plus` 明確 SKIP。
 
-GitHub Actions 已設定 Linux／macOS 的 `check`、build、fuzz，及 Ubuntu 24.04 的 systemd 驗收工作；尚未推送／在遠端 CI 執行。Ubuntu 26.04 可在新建 VM 上執行以下相同驗收腳本：
+GitHub Actions 已設定 Linux／macOS 的 `check`、build、fuzz，及 Ubuntu 24.04 的 systemd 驗收工作；尚未推送／在遠端 CI 執行。Ubuntu 26.04 正式部署已另做實機驗收。以下腳本限可拋棄的新建 VM，結束時會卸載 unit，不能對目前正式部署使用：
 
 ```sh
 RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 ```
 
 腳本只接受全新、沒有既有 Rillway 安裝的 Ubuntu 24.04／26.04，會實際安裝並測試服務。這次沒有在目前 Mac 執行該腳本。
+
+## NAS Ubuntu 26.04 正式部署與 WARP 實測
+
+目標為 `192.0.2.21`，2026-10-04 實測 Ubuntu 26.04.1 LTS、x86_64、4 vCPU、5,408 MiB RAM。完整操作位置見 [部署目標](deployment-target.md)。
+
+- `rillway.service` enabled、active/running，執行帳號 `rillway`，最後檢查 `NRestarts=0`。手動停止後等待 6 秒，超過 `RestartSec=5` 仍保持停止，再啟動並通過連線驗收。沒有重開 VM，因此未將 enabled 狀態當成開機實測成功。
+- HTTP／SOCKS5／HTTPS 管理／PAC 分別只監聽 `192.0.2.21:17890–17893`。來源 ACL 限 Mac `192.0.2.70/32`、VM `.21/32` 與 loopback；未啟用整個 LAN 範圍或公開入口。
+- 正式安裝發現 systemd 預設會把 state directory 改為 `0755`，已加上 `StateDirectoryMode=0700` 與回歸測試。實機目錄為 `0700`，config、token、TLS cert/key 為 `0600`。
+- TLS SAN 包含 VM IP，使用專案私密副本中的公開 cert 嚴格驗證 HTTPS。未登入 API 回傳 `401`；使用 token 取得設定成功。正式設定 revision 為 `2`。
+- 從 Mac 經 HTTP 與 SOCKS5 取得 VM PAC，回應逐位元相同；HTTPS CONNECT 透過受驗證 TLS 取得管理首頁成功。更新正式 binary 後三種協定再次通過。
+- Binary 以備份加原子替換更新，沒有重跑安裝器。設定及憑證的 SHA-256 前後相同，state 權限保持不變。實作修正 commit 為 `02fb3ab`；本次部署 artifact SHA-256 為 `e514fcdea9a6e86294942cde7b3259d83fcc15c87e287c2856eed2a1424e8281`。VM 也保留對應第三方授權與 module 清單。
+- 官方 `cloudflare-warp CURRENT_VERSION` 從 Cloudflare 的 Ubuntu `resolute` APT 來源安裝。透過 Rillway API 完成免費 consumer 註冊、Local Proxy 連線與端到端驗證。實際模式為 MASQUE／`WarpProxy on port 40000`，listener 僅在 `127.0.0.1:40000`；Cloudflare trace 為 `warp=on`、`colo=EXAMPLE`。API 現在正確顯示 `mode=proxy`、`state=connected`、`listener=true` 與驗證時間。
+- 手動停止 WARP，等待 6 秒後狀態仍為 stopped；`raw.githubusercontent.com` 的固定 WARP 規則回傳 CONNECT `502`，沒有轉成直連，同時 `github.com` 的固定直連規則仍回傳 `200`。重新連線後端到端驗證通過。
+- 在 VM 以 `rillway` 帳號執行交叉編譯的 `tests/live`：direct 與 WARP 皆完成真實 GitHub TCP 連線，WARP 另通過 Cloudflare trace；`warp-plus` 因沒有確認的 Unlimited 訂閱而明確 SKIP。沒有提供／套用任何付費授權碼。
+- 實際代理觀察顯示 `github.com` 命中 `github-origin`／direct，目的 IP 可確認；`raw.githubusercontent.com` 命中 `github-cdn`／warp，目的 IP 保持 unknown，沒有把 SOCKS listener 當作網站 IP。
+- VM 預設路由仍為 `192.0.2.1` 經 `vm-interface`。沒有套用 Mac PAC、修改 Mac 系統 Proxy 或操作 Mac 公司 Tailscale；公司服務的實際共存連線尚待指定目標驗證。
+
+### 限量 GitHub CDN 下載比較
+
+使用相同固定 revision 的 [Noto Sans TC 原始檔](https://raw.githubusercontent.com/google/fonts/9710da1eacb3be272583c3224dcb70f9da6eadbb/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf)，從 Ubuntu VM 明確執行 `diagnose --download-url`。順序為 direct、WARP、WARP、direct、direct、WARP；每次最多 4 MiB、15 秒逾時，沒有跟隨重新導向。此測試不啟用自動下載測速，也不改變分流規則。
+
+| 路徑 | 三次速率，MiB/s | 完成情形 | 完整樣本中位數 |
+| --- | --- | --- | --- |
+| direct | 0.227、0.318、0.281 | 第一次在 15 秒傳輸 3,571,264 bytes 後中止；另兩次完成 4 MiB | 0.299 MiB/s，2 個完整樣本 |
+| WARP | 3.537、11.279、10.601 | 三次均完成 4 MiB | 10.601 MiB/s，3 個完整樣本 |
+
+完整樣本中位數約相差 35 倍，但樣本少、cache 狀態不同，不能外推成所有網站或長期保證。`X-Served-By` 在 direct 樣本含 `SIN`、WARP 含 `NRT`；這是收到的 CDN header，不等於 traceroute 或物理路徑證明。WARP 的 `colo=EXAMPLE` 指 Cloudflare trace 的節點，與 GitHub CDN 的 header 分開解讀。
+
+六個 GitHub 網域的 HEAD 診斷亦完成。`api.github.com` 直連為 `200`，強制 WARP 測得 `403`，因此沒有把 GitHub origin/API 的預設固定直連改為 WARP。回傳 `301`／`302`／資產根目錄 `404` 可證明 TLS／HTTP 可達，不能當成檔案下載成功。
+
+### 部署後瀏覽器驗收
+
+隔離 Chrome profile 連上 VM HTTPS 管理介面，以英文／繁中、1440 × 1000／390 × 844 驗證登入與雙向語言切換。四個頁面共 32 次寬度檢查，均無頁面水平溢出；Noto Sans TC 與 Noto Color Emoji 字體都從同一服務取得 `200` 並載入。瀏覽器錯誤、失敗請求、外部請求均為 0，驗收沒有發送修改設定／VPN 的請求。
+
+瀏覽器的隔離 profile 使用自簽憑證例外；憑證與 VM IP 的身分檢查另由嚴格信任指定 cert 的 TLS 請求完成，沒有修改 Mac 系統信任庫。截圖保留於 Git 忽略的 `.local/servers/example/qa/`，不含管理 token。
+
+更新後亦從 Mac 啟動正式 binary 的遠端 TUI，使用 `--token-file` 與 `--ca` 連線 VM。繁中介面顯示設定 revision `2`、真實代理觀察資料，以及 WARP `已連線`、版本 `CURRENT_VERSION`、模式 `proxy`、listener `true`；正常離開，未更改設定。
 
 ## 中英介面、中文字體、Emoji 與品牌素材
 
@@ -89,12 +126,12 @@ mise exec -- go test ./internal/engine -run '^$' -fuzz FuzzRuleHostname -fuzztim
 
 以下項目明確為 **未驗證**，不能由一般測試通過推論為已完成：
 
-- Ubuntu 24.04／26.04 主機上的實際 systemd 安裝、開機啟動、服務帳號權限及移除。
+- Ubuntu 24.04 的實際服務安裝／啟動／移除；Ubuntu 26.04 已驗證安裝、權限、停止及啟動，但未重開 VM 或卸載正式服務。
 - macOS 主機上的 LaunchAgent 實際安裝，以及 Wi-Fi／Ethernet Proxy 套用與還原。一般測試只驗證產生內容與模擬的系統命令。
-- 真實 WARP+ Unlimited 授權、官方 Local Proxy 帳號相容性及端到端 tunnel。
+- 真實 WARP+ Unlimited 付費授權。Ubuntu 的免費 WARP Local Proxy 已通過上述端到端驗證；macOS 的實際 WARP tunnel 尚未驗證。
 - 公司 Tailscale 登入、ACL、MagicDNS、subnet route、與 Mac 原有 Tailscale 同時運作。
 - 外部 WireGuard 伺服器與實際 VPN 設定。一般測試中的本機 userspace WireGuard 互連不等同外部 provider 驗收。
-- HiNet 線路的 GitHub CDN 吞吐量與實際加速效果、Ubuntu 對外 IPv6 連線品質。
+- 長時間、多時段與其他 GitHub CDN 檔案的效能。上述單一檔案限量比較不能取代這些驗收；Ubuntu 對外 IPv6 連線品質亦未驗證。
 
 真實出口測試使用 `mise run test:live`，必須提供 `RILLWAY_LIVE_CONFIG`。缺少所需帳號或設定時回報 `NOT VERIFIED`／`SKIP`，不將跳過當成成功驗證。設定與限制詳見 [出口設定與驗證](providers.md)。
 

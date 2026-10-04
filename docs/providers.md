@@ -126,6 +126,6 @@ mise run test:live
 
 WARP 測試先確認 Local Proxy 與端到端 trace；`warp-plus` 子測試還必須取得真實 `Unlimited` 帳號狀態。只有免費 WARP 時，WARP+ 子測試明確跳過，不能視為付費功能已驗證。
 
-初始開發已確認套件可共同建置，也唯讀檢查過 macOS 官方 CLI `2026.7.1376.0` 的命令介面；尚未使用真實 WARP+ license、公司 tailnet 或外部 WireGuard profile 執行上述驗收。Ubuntu 的實際服務安裝與 HiNet 加速效果也必須在目標主機驗證。
+2026-10-04 已在 Ubuntu 26.04.1 LTS 實測官方 Linux client `CURRENT_VERSION`：免費 consumer 註冊可啟用 Local Proxy，使用 MASQUE，listener 僅在 `127.0.0.1:40000`，Cloudflare trace 回報 `warp=on`、`colo=EXAMPLE`。此版本設定行為 `Mode: WarpProxy on port 40000`，Rillway 已加入相容解析與回歸測試。這是本次版本／帳號實測結果，不保證其他帳號或版本；不能將免費 WARP 通過視為 WARP+ Unlimited 通過。Ubuntu 的正式 systemd 部署與限量 GitHub CDN 下載比較見 [驗證紀錄](verification.md)。WARP+ license、公司 tailnet 與外部 WireGuard profile 仍未提供，未完成這三項外部驗收。
 
 所有出口目前只支援 TCP。此版不提供 UDP ASSOCIATE、整機流量接管、HTTPS 解密，或「低下載速度就保證換到更快線路」；自適應比較成功率與建連時間。

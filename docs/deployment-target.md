@@ -1,6 +1,6 @@
 # NAS Ubuntu 部署目標
 
-使用者指定的部署主機，確認日期：2026-10-04。**目前只完成唯讀確認，尚未部署 Rillway。**
+使用者指定的部署主機，驗證日期：2026-10-04。**Rillway 已部署並由 systemd 持續執行。** 下列資訊是本次實測紀錄；來源 IP、可用磁碟與服務狀態仍可能隨環境變動。
 
 | 項目 | 已確認內容 |
 |---|---|
@@ -10,20 +10,24 @@
 | 架構 | x86_64，使用 `dist/rillway-linux-amd64` |
 | CPU | 4 vCPU |
 | VM 可見記憶體 | 5,408 MiB，約 5.3 GiB |
-| 根目錄檔案系統 | 31G，22G 可用 |
+| 根目錄檔案系統 | 31G，21G 可用 |
 | 網卡／IP | `vm-interface`，`192.0.2.21/24` |
 | 預設閘道 | `192.0.2.1`，經 `vm-interface` |
-| 本次 Mac 來源 IP | `192.0.2.70`，正式部署前再確認 |
+| 本次 Mac 來源 IP | `192.0.2.70` |
 | SSH 與 sudo | 指定金鑰可登入，`sudo -n true` 成功 |
-| 現有 Rillway | 未安裝 systemd unit，沒有 `/var/lib/rillway/config.json` |
-| 所需連接埠 | TCP 17890–17893 目前未被占用 |
-| VPN client | `warp-cli`、`tailscale` 均未在 PATH 找到 |
+| Rillway 服務 | `rillway.service` 為 enabled、active，使用低權限帳號 `rillway` |
+| Binary | `/usr/local/lib/rillway/rillway` |
+| 有效設定 | `/var/lib/rillway/config.json` |
+| 狀態與憑證權限 | `/var/lib/rillway` 為 `0700`；config、token、TLS cert/key 為 `0600` |
+| 來源 ACL | 僅 `192.0.2.70/32`、`192.0.2.21/32`、`127.0.0.0/8`、`::1/128` |
+| 管理憑證 | SAN 包含 `192.0.2.21`，已驗證 TLS 連線 |
+| WARP 官方 client | `CURRENT_VERSION`，由 Cloudflare 官方 `resolute` APT 來源安裝；免費帳號 Local Proxy 已完成端到端驗證，`warp=on`、`colo=EXAMPLE` |
 
 ```sh
 ssh -i ~/.ssh/id_ed25519_rillway operator@192.0.2.21
 ```
 
-後續部署的預定位置：
+目前提供服務的位置：
 
 - HTTP Proxy：`192.0.2.21:17890`
 - SOCKS5：`192.0.2.21:17891`
@@ -32,6 +36,15 @@ ssh -i ~/.ssh/id_ed25519_rillway operator@192.0.2.21
 - systemd 執行帳號：`rillway`
 - 有效設定：`/var/lib/rillway/config.json`
 
-上述網址尚未提供服務。正式部署時依當時 Mac IP 設定來源 ACL，憑證包含 VM IP，WARP 保留 Local Proxy 模式，公司流量繼續由 Mac 的 Tailscale 處理。WARP+ 授權碼與公司帳號尚未提供，不寫入 Git。
+HTTP Proxy、SOCKS5、HTTPS CONNECT 的真實傳輸，以及管理 API 未登入回傳 `401`、使用 token 登入，均已通過驗收。免費 WARP 的 Local Proxy 與端到端 trace 也已通過；WARP+ Unlimited、公司 tailnet 與外部 WireGuard 尚未驗證。`github.com` 命中直連規則，`raw.githubusercontent.com` 命中 WARP 規則，已在真實代理流量與統計中確認。
 
-部署程序見 [Ubuntu VM 與 Mac 部署](deployment.md)，驗收邊界見 [驗證紀錄](verification.md)。本次沒有修改 VM 網路、套件、服務或 Mac 的 Proxy 設定。
+Mac 的管理 token 與公開 CA 憑證副本位於專案已被 Git 忽略的 `.local/servers/example/admin.token`、`.local/servers/example/admin.crt`；沒有複製 TLS 私鑰。從專案目錄可啟動遠端 TUI：
+
+```sh
+./bin/rillway tui --url https://192.0.2.21:17892 \
+  --token-file .local/servers/example/admin.token --ca .local/servers/example/admin.crt
+```
+
+Mac 原有 Proxy 設定與 Tailscale，以及 VM 預設路由均未修改。公司流量繼續由 Mac 的 Tailscale 處理。WARP+ 授權碼與公司帳號尚未提供，不寫入 Git；完整外部出口狀態以 [驗證紀錄](verification.md) 為準。
+
+後續操作見 [Ubuntu VM 與 Mac 部署](deployment.md)。此主機已有正式安裝，更新 binary 時不要重新執行 `service install`，以免用舊來源設定覆寫有效設定；也不要執行會在結束時卸載服務的 `scripts/acceptance-ubuntu.sh`。
