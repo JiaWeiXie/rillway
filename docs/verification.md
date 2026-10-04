@@ -80,6 +80,9 @@ VM 原先沒有 Docker。為實測從官方來源取得 Docker **29.4.0** 靜態
 - 再於 VM 的暫存 `registry:2` 驗證 image push。只在 QA daemon 清空 NO_PROXY 並允許該測試 registry 的 HTTP，Rillway 觀察到目的 `192.0.2.21:25000` 的上傳，單筆含約 3.8 MB／5.8 MB layer 資料，push 成功。沒有上傳至公共或使用者私人 registry；公共認證 push 尚未驗證。
 - 第一次容器測試對固定 WARP 的 GitHub CDN 收到 502；唯讀確認官方 WARP 當時為 `Disconnected / Settings Changed`。沒有自行重新連線或將固定規則轉為 direct，後續 Docker 功能驗收使用 direct 公開目標。這次 Docker 驗收不代表 WARP+ 當時仍已連線。
 - 暫存 registry、Docker daemon、子程序、QA mount、Unix socket forwarding 及 VM 測試資料均已清除，正式 Rillway 保持 active。沒有安裝 Docker systemd unit、修改 Mac 系統 Proxy、OrbStack 或公司 Tailscale。
+- 功能 commit 為 `005a25f`。四平台 `mise run release` 成功；NAS 以備份加原子替換更新，Linux amd64 artifact SHA-256 為 `145341b29d7dbb5d5073825a2d51c4e1665440ac4089a84a5b984fab13223dc7`。有效 config、管理 token 與 TLS cert/key 的 hash 前後相同，服務為低權限 `rillway`、active/running、`NRestarts=0`；官方 WARP 仍維持原本的 disconnected 狀態。
+- 更新後嚴格驗證 VM TLS 的 Docker API GET／POST 通過，四份匯出不包含 token、明確空 bypass 保留、設定 revision 不變。HTTP、SOCKS5、HTTPS CONNECT 亦再次完成真實傳輸。
+- 已部署的 Web UI 在隔離 Chrome，以英文／繁中、1440 × 1000／390 × 844 驗證面板、四格式切換、16 次實際下載及內容比對、clipboard、產生設定、loopback 提醒、錯誤雙向翻譯與保留未儲存輸入。無水平溢出、未預期瀏覽器錯誤為 0，僅生成設定的 POST，revision 不變。自動化快速連續下載測試曾逾時，降低下載頻率後全部通過，未因此修改產品程式碼。截圖與本機驗收紀錄保留在 Git 忽略的 `.local/docker-qa/`。
 
 此實測使用 host network 以避免改動 VM bridge／防火牆；一般 bridge、Docker Desktop、OrbStack 實際代理套用、獨立／遠端 BuildKit 與公司 DNS／Tailscale 連線仍未驗證。設定方法與範圍見 [Docker 文件](docker.md)。
 
