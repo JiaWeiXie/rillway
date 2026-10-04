@@ -4,7 +4,7 @@
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 12 個 package 通過，包含新增的 agent helper 與 hook 測試；lint 0 issues，race detector 未發現競態，總 statement coverage **61.7%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- 最新 `mise run check`：全部 13 個 package 通過，包含 agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **61.8%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
 - `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（約 21–22 MiB）、SHA256SUMS、module 清單與第三方授權檔。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
@@ -27,6 +27,14 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 - wrapper 測試涵蓋 Go 環境清理、輸入原樣保留、不執行輸入命令、工具缺失／啟動失敗時的 JSON 提示、RTK 有無兩種環境。helper 測試確認檢查期間改檔不會快取到錯誤版本。
 - 此 checkout 已執行 `mise run hooks:install`，repo-local `core.hooksPath` 為 `.githooks`。新 clone 仍須自行啟用。
 - Codex／Claude session 中的自動觸發尚未驗證；Codex 的新 hook 仍需在 `/hooks` 完成信任。手動 wrapper 成功不能視為已完成平台信任。啟用方式見 [Agent 工作流程](agent-workflow.md)。
+
+## Git commit 訊息與 git-cliff
+
+- git-cliff 2.13.1 已由 mise 管理，lockfile 包含 Linux／macOS amd64、arm64 四個平台的下載校驗。
+- `mise run hooks:install` 已啟用 `pre-commit` 與 `commit-msg`。真實 checkout 手動驗證合法中文 Conventional Commit 放行、一般非規範主旨拒絕，未建立額外提交。
+- 使用真實 git-cliff 的臨時 repository 測試通過：合法／非法／空訊息、多行 breaking change、選項形狀的訊息，以及合併／fixup 的非規範主旨。檔案與 stdin 原始內容、尾端空行、真實 repository 的 refs/config 均保持原狀。
+- Changelog 整合測試確認歷史非規範提交保留、功能／修正與 scope 分組、兩種 breaking 標記、正式版／prerelease／Unreleased 分段，以及非版本 tag 不改動發布界線。這些測試在 mise 環境中實際執行，沒有因缺少 git-cliff 而略過。
+- `mise run changelog:check` 與 `CHANGELOG.md` 產生成功；CI 已加入完整歷史取得及相同檢查，遠端 CI 尚未執行。這些任務不連外、不執行自訂外部命令，也不建立 release 或部署。
 
 ## 已完成的核心與 daemon 測試
 

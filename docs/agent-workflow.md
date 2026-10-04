@@ -9,6 +9,7 @@
 | Codex 完成編輯／Shell 工具 | `.codex/hooks.json` 的 `PostToolUse` | 呼叫共用的 `scripts/hooks/post-edit.sh` |
 | Claude Code 完成編輯／Shell 工具 | `.claude/settings.json` 的 `PostToolUse` | 呼叫相同的檢查程式 |
 | Git commit 前 | `.githooks/pre-commit` | 檢查即將提交的 staged snapshot |
+| Git commit 訊息確認 | `.githooks/commit-msg` | 用 git-cliff 驗證 Conventional Commits 格式 |
 
 編輯後檢查會找出修改、新增及刪除的 Go 原始碼，執行相關 package 的 Lint／格式檢查與一般測試。module 或工具設定變更時擴大到整個專案。Web UI 的 embedded assets 變更也會檢查所屬 package。
 
@@ -30,7 +31,7 @@ mise install
 mise run hooks:install
 ```
 
-安裝器只修改本 repository 的 `core.hooksPath=.githooks`。若原本有其他 hook manager 或 active pre-commit script，會保留原設定並說明需要整合的位置。每個新 clone 需執行一次；Git 不會從 repository 檔案自動安裝 hooks。
+安裝器只修改本 repository 的 `core.hooksPath=.githooks`。若原本有其他 hook manager 或啟用中的 Git hook，會保留原設定並說明需要整合的位置。每個新 clone 需執行一次；Git 不會從 repository 檔案自動安裝 hooks。
 
 Codex 需在以 Rillway 為工作目錄的 session 中開啟 `/hooks`，檢查並信任此專案的 `PostToolUse` 定義。新 hook 或定義變更後，Codex 的信任機制會先略過，直到使用者完成審閱；安裝器不繞過此機制。這是 Codex 的產品要求。[官方 hooks 文件](https://developers.openai.com/codex/hooks)
 
@@ -54,3 +55,5 @@ mise run check
 若編輯檢查沒有自動執行，先在 Agent 的 `/hooks` 看它是否已載入與信任，再確認工作目錄是 Rillway。不要用停用 sandbox 或 bypass hook trust 的方式處理。
 
 Git hook 是本機開發回饋，仍可能被 Git 的跳過選項略過；GitHub Actions 的完整檢查是另一道獨立驗證。
+
+Commit 訊息格式、git-cliff 分類與 changelog 任務見 [Git hooks 與 changelog](changelog.md)。

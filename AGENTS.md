@@ -50,6 +50,9 @@ Bootstrap with `mise trust` and `mise install`. Run tools through `mise exec -- 
 | `mise run release` | Cross-build release artifacts; this does not deploy them |
 | `mise run hooks:install` | Enable the repository-local Git hook, preserving existing hook managers |
 | `mise run hooks:check` | Validate the exact staged snapshot without changing the index |
+| `mise run changelog:preview` | Preview committed history with git-cliff without rewriting files |
+| `mise run changelog` | Regenerate the changelog before a release |
+| `mise run changelog:check` | Validate changelog configuration against the current Git history |
 | `mise run test:live` | Explicit external-account validation; see below |
 
 - LSP entry point: `mise exec -- gopls`; editor wrapper: `scripts/gopls`.
@@ -60,6 +63,8 @@ Bootstrap with `mise trust` and `mise install`. Run tools through `mise exec -- 
 - Hook tasks and their implementations are defined in `mise.toml` and repository scripts; inspect the current definitions instead of inventing a parallel validation pipeline.
 - Codex/Claude post-edit hooks and Git pre-commit hooks share the mise environment, lint configuration, and repository scripts. Hooks must not deploy, alter VPNs, run live acceptance, or download speed-test data.
 - Distinguish checks actually run, checks skipped, and checks blocked. Coverage and cross-compilation do not prove target-machine or paid-account behavior.
+- New commit messages follow Conventional Commits: `type(scope): description`, with optional scope and `!` for breaking changes. Use the same format for merges and reverts. The `commit-msg` hook uses git-cliff's parser; do not bypass it to submit a malformed message.
+- Keep legacy history intact. `cliff.toml` retains non-conventional historical commits. Generate release notes explicitly; hooks do not stage or rewrite them. See `docs/changelog.md` for release preparation and the shared mise tasks.
 
 ## Routing, privacy, and lifecycle invariants
 
@@ -105,4 +110,5 @@ An explicit `/org/project` ID from the user can skip resolution. Prefer fetched 
 `README.md` is the entry point; `docs/architecture.md` defines routing/API behavior; `docs/providers.md` covers VPN setup and limitations.
 `docs/deployment.md` describes operations, `docs/deployment-target.md` records the intended environment, and `docs/verification.md` records dated evidence.
 `docs/agent-workflow.md` describes local agent hooks, Git hook installation, and agent-side trust requirements.
+`docs/changelog.md` describes commit message conventions and git-cliff release notes.
 Keep examples free of real credentials and use `THIRD_PARTY.md` plus release scripts for dependency/license information.

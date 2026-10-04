@@ -1,0 +1,13 @@
+# Dedicated validation config: changelog grouping must not hide invalid commits.
+[changelog]
+header = ""
+body = ""
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+require_conventional = true
+split_commits = false
+filter_commits = false
+commit_parsers = []

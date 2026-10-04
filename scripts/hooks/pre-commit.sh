@@ -54,7 +54,7 @@ run git -C "$repository" diff --cached --name-only --no-renames -z > "$scratch/c
 needs_go=0
 while IFS= read -r -d '' path; do
   case "$path" in
-    *.go|go.mod|go.sum|go.work|go.work.sum|mise.toml|mise.lock|.mise.toml|.golangci.yml|.golangci.yaml|.golangci.toml|.golangci.json)
+    *.go|go.mod|go.sum|go.work|go.work.sum|mise.toml|mise.lock|.mise.toml|cliff.toml|.golangci.yml|.golangci.yaml|.golangci.toml|.golangci.json)
       needs_go=1
       ;;
     cmd/*|internal/*|tests/*|testdata/*|.githooks/*|scripts/hooks/*)

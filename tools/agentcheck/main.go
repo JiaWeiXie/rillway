@@ -264,12 +264,12 @@ func relevant(path string) bool {
 	if ignored(path) {
 		return false
 	}
-	return strings.HasSuffix(path, ".go") || fullCheckFile(path) || hookScript(path) || strings.HasPrefix(filepath.ToSlash(path), "internal/control/web/")
+	return strings.HasSuffix(path, ".go") || fullCheckFile(path) || hookScript(path) || path == "cliff.toml" || strings.HasPrefix(filepath.ToSlash(path), "internal/control/web/")
 }
 
 func hookScript(path string) bool {
 	path = filepath.ToSlash(path)
-	return path == ".githooks/pre-commit" || (strings.HasPrefix(path, "scripts/hooks/") && strings.HasSuffix(path, ".sh"))
+	return path == ".githooks/pre-commit" || path == ".githooks/commit-msg" || path == "scripts/hooks/commit-cliff.toml" || (strings.HasPrefix(path, "scripts/hooks/") && strings.HasSuffix(path, ".sh"))
 }
 
 func fullCheckFile(path string) bool {
@@ -328,6 +328,10 @@ func (c checker) selectChanges(changed []string) ([]string, []string, error) {
 		}
 		if hookScript(path) {
 			packages["./scripts/hooks"] = true
+			continue
+		}
+		if path == "cliff.toml" {
+			packages["./scripts/changelog"] = true
 			continue
 		}
 		if strings.HasPrefix(filepath.ToSlash(path), "internal/control/web/") {

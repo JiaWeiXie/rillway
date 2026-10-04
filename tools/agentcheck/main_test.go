@@ -243,6 +243,9 @@ func TestDeletedPackagesConfigurationAndEmbeddedAssets(t *testing.T) {
 		{"hook shell", "scripts/hooks/post-edit.sh", "", "./scripts/hooks"},
 		{"nested hook shell", "scripts/hooks/lib/check.sh", "", "./scripts/hooks"},
 		{"pre-commit hook", ".githooks/pre-commit", "", "./scripts/hooks"},
+		{"commit-msg hook", ".githooks/commit-msg", "", "./scripts/hooks"},
+		{"commit cliff config", "scripts/hooks/commit-cliff.toml", "", "./scripts/hooks"},
+		{"changelog cliff config", "cliff.toml", "", "./scripts/changelog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, f := fixture(t)
@@ -259,8 +262,8 @@ func TestDeletedPackagesConfigurationAndEmbeddedAssets(t *testing.T) {
 	}
 }
 
-func TestHookScriptChangesInvalidatePreviousCache(t *testing.T) {
-	for _, path := range []string{"scripts/hooks/post-edit.sh", ".githooks/pre-commit"} {
+func TestHookAndChangelogInputsInvalidatePreviousCache(t *testing.T) {
+	for _, path := range []string{"scripts/hooks/post-edit.sh", ".githooks/pre-commit", ".githooks/commit-msg", "scripts/hooks/commit-cliff.toml", "cliff.toml"} {
 		t.Run(path, func(t *testing.T) {
 			c, f := fixture(t)
 			putFile(t, c.root, "scripts/hooks/hooks_test.go", "package hooks\n")
@@ -274,7 +277,26 @@ func TestHookScriptChangesInvalidatePreviousCache(t *testing.T) {
 			putFile(t, c.root, path, "#!/bin/sh\nexit 1\n")
 			_ = c.check(context.Background())
 			if len(f.checks()) != 4 {
-				t.Fatal("shell content was not included in tree hash")
+				t.Fatal("hook or changelog content was not included in tree hash")
+			}
+		})
+	}
+}
+
+func TestNewCommitAndChangelogInputsSelectTheirTestPackage(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{".githooks/commit-msg", "./scripts/hooks"},
+		{"scripts/hooks/commit-cliff.toml", "./scripts/hooks"},
+		{"cliff.toml", "./scripts/changelog"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			c, f := fixture(t)
+			putFile(t, c.root, tc.path, "# newly added input\n")
+			f.untracked = tc.path + "\x00"
+			_ = c.check(context.Background())
+			checks := f.checks()
+			if len(checks) != 2 || checks[0][len(checks[0])-1] != tc.want || checks[1][len(checks[1])-1] != tc.want {
+				t.Fatalf("wrong scope for new input: %#v", checks)
 			}
 		})
 	}

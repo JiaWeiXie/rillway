@@ -11,7 +11,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: jdx/mise-action@v3
+      - run: mise run changelog:check
       - run: mise run check
       - run: mise run build
       - run: mise run fuzz

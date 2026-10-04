@@ -142,3 +142,44 @@ func TestHookInstallerRequiresExecutableRunner(t *testing.T) {
 		})
 	}
 }
+
+func TestHookInstallerPreservesOtherActiveHooks(t *testing.T) {
+	for _, name := range []string{"commit-msg", "pre-push", "post-commit"} {
+		t.Run(name, func(t *testing.T) {
+			f := newHookFixture(t)
+			path := filepath.Join(f.root, ".git", "hooks", name)
+			wanted := []byte("#!/bin/sh\nprintf original\n")
+			if err := os.WriteFile(path, wanted, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			before := f.localConfig(t)
+			output, err := f.install(t)
+			if err == nil || !strings.Contains(output, "existing "+name+" hook") {
+				t.Fatalf("existing hook ignored: %v\n%s", err, output)
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil || string(after) != string(wanted) || f.localConfig(t) != before {
+				t.Fatal("installer modified/bypassed another hook")
+			}
+		})
+	}
+}
+
+func TestHookInstallerRequiresCommitMessageFiles(t *testing.T) {
+	for _, path := range []string{".githooks/commit-msg", "scripts/hooks/commit-msg.sh", "scripts/hooks/commit-cliff.toml"} {
+		t.Run(path, func(t *testing.T) {
+			f := newHookFixture(t)
+			if err := os.Remove(filepath.Join(f.root, path)); err != nil {
+				t.Fatal(err)
+			}
+			before := f.localConfig(t)
+			output, err := f.install(t)
+			if err == nil || !strings.Contains(output, path) {
+				t.Fatalf("incomplete commit-msg hook installed: %v\n%s", err, output)
+			}
+			if f.localConfig(t) != before {
+				t.Fatal("failed install changed local configuration")
+			}
+		})
+	}
+}

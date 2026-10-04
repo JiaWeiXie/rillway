@@ -2,6 +2,7 @@
 go = "1.27.1"
 "go:golang.org/x/tools/gopls" = "v0.23.0"
 golangci-lint = "2.14.0"
+"aqua:orhun/git-cliff" = "2.13.1"
 
 [settings]
 lockfile = true
@@ -43,9 +44,21 @@ run = ["go test ./internal/config -run=^$ -fuzz=FuzzDecode -fuzztime=10s", "go t
 run = "sh scripts/release.sh"
 
 [tasks."hooks:install"]
-description = "Enable this repository's Git pre-commit hook"
+description = "Enable this repository's Git pre-commit and commit-msg hooks"
 run = "sh scripts/hooks/install.sh"
 
 [tasks."hooks:check"]
 description = "Check the Git staged snapshot without changing files"
 run = "bash scripts/hooks/pre-commit.sh"
+
+[tasks.changelog]
+description = "Regenerate CHANGELOG.md from committed history"
+run = "git-cliff --offline --no-exec --config cliff.toml --output CHANGELOG.md"
+
+[tasks."changelog:preview"]
+description = "Preview the changelog without changing files"
+run = "git-cliff --offline --no-exec --config cliff.toml"
+
+[tasks."changelog:check"]
+description = "Validate changelog configuration against Git history"
+run = "git-cliff --offline --no-exec --config cliff.toml --output /dev/null"

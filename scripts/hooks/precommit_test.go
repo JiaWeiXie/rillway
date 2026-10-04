@@ -29,7 +29,7 @@ func newHookFixture(t *testing.T) *hookFixture {
 			t.Fatal(err)
 		}
 	}
-	for _, tool := range []string{"git", "bash", "sh", "dirname", "mktemp", "mkdir", "rm"} {
+	for _, tool := range []string{"git", "bash", "sh", "cat", "dirname", "mktemp", "mkdir", "rm"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Fatalf("hook test requires %s: %v", tool, err)
@@ -42,7 +42,7 @@ func newHookFixture(t *testing.T) *hookFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range []struct{ source, destination string }{{filepath.Join(cwd, "pre-commit.sh"), filepath.Join(root, "scripts", "hooks", "pre-commit.sh")}, {filepath.Join(cwd, "install.sh"), filepath.Join(root, "scripts", "hooks", "install.sh")}, {filepath.Join(cwd, "..", "..", ".githooks", "pre-commit"), filepath.Join(root, ".githooks", "pre-commit")}} {
+	for _, file := range []struct{ source, destination string }{{filepath.Join(cwd, "pre-commit.sh"), filepath.Join(root, "scripts", "hooks", "pre-commit.sh")}, {filepath.Join(cwd, "install.sh"), filepath.Join(root, "scripts", "hooks", "install.sh")}, {filepath.Join(cwd, "commit-msg.sh"), filepath.Join(root, "scripts", "hooks", "commit-msg.sh")}, {filepath.Join(cwd, "commit-cliff.toml"), filepath.Join(root, "scripts", "hooks", "commit-cliff.toml")}, {filepath.Join(cwd, "..", "..", ".githooks", "commit-msg"), filepath.Join(root, ".githooks", "commit-msg")}, {filepath.Join(cwd, "..", "..", ".githooks", "pre-commit"), filepath.Join(root, ".githooks", "pre-commit")}} {
 		content, err := os.ReadFile(file.source)
 		if err != nil {
 			t.Fatal(err)

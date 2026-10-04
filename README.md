@@ -61,6 +61,7 @@ LSP 共通入口是 `mise exec -- gopls`。VS Code 設定使用 repository 的 `
 - [測試與驗收狀態](docs/verification.md)
 - [第三方元件](THIRD_PARTY.md)
 - [AI Agent 規範與本機 hooks](docs/agent-workflow.md)
+- [Git hooks、提交格式與 changelog](docs/changelog.md)
 
 基本瀏覽器 Proxy：HTTP 與 HTTPS Proxy 均填 `127.0.0.1:17890`；SOCKS5 填 `127.0.0.1:17891`。遠端 VM 改填其 LAN IP。使用 SOCKS 時讓瀏覽器透過 Proxy 解析 DNS，才保留網域分流與出口 DNS 語意。
 
