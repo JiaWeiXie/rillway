@@ -4,11 +4,11 @@
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 13 個 package 通過，包含 agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **61.8%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
-- `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（約 21–22 MiB）、SHA256SUMS、module 清單與第三方授權檔。
+- 最新 `mise run check`：全部 14 個 package 通過，包含 i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **66.0%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.3–46.0 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
-- Web UI 在 Chrome 檢查登入及總覽版面；JavaScript 語法及 API／UI 契約測試通過。
+- Web UI 在 Chrome 實測英文與繁中登入、總覽、規則及設定；桌面與手機版均完成互動驗證，詳見下方。
 - `mise run test:live`：缺少明確指定的真實設定，正確回報 `NOT VERIFIED / SKIP`。
 
 GitHub Actions 已設定 Linux／macOS 的 `check`、build、fuzz，及 Ubuntu 24.04 的 systemd 驗收工作；尚未推送／在遠端 CI 執行。Ubuntu 26.04 可在新建 VM 上執行以下相同驗收腳本：
@@ -18,6 +18,21 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 ```
 
 腳本只接受全新、沒有既有 Rillway 安裝的 Ubuntu 24.04／26.04，會實際安裝並測試服務。這次沒有在目前 Mac 執行該腳本。
+
+## 中英介面、中文字體、Emoji 與品牌素材
+
+- 實際啟動編譯後的 HTTPS daemon，在隔離 Chrome profile 測試 1440 × 1000 與 390 × 844。瀏覽器自身語言為 `zh-TW`，首次開啟仍遵守產品預設英文；選擇繁中後重新整理保留偏好。
+- 登入前切換語言保留輸入；登入後切換保留頁面、規則識別碼與未儲存的 PAC 表單及進階 JSON 內容。使用 `公司服務 🚀 👨‍👩‍👧‍👦 🇹🇼 é` 驗證中文、家庭 Emoji、國旗及組合字原樣保留，並目視確認顯示。
+- 以真正的 loopback HTTP origin 經 HTTP Proxy 傳輸 8 KiB，確認連線出現在管理畫面；建立與刪除規則成功，中英按鈕及對應操作均驗證。
+- Noto Sans TC 與 Noto Color Emoji 兩個內建 font-face 均成功載入。全程沒有外部請求、失敗請求、瀏覽器錯誤或警告；權杖只保存在 `sessionStorage`，沒有寫入 `localStorage`。
+- 桌面與手機的登入／連線／規則對話框均無頁面水平溢出。修正了隱藏的可存取文字在寬表格內造成溢出的定位，沒有以隱藏整頁水平捲動掩蓋問題。
+- CLI 實際執行 `--lang zh-Hant help`；TUI 連上本機測試 daemon，以中文顯示真實觀察資料，再按 `L` 切回英文。測試終端正常結束。
+- 單元與本機 HTTP 測試包含語系權重、catalog parity、來源訊息遮罩、錯誤切換語言、資料保留、物件原型名稱 fallback，以及中文字寬、Emoji 字素截斷與授權碼中的大寫 `L`。locale parser 另做有時間上限的 fuzz，141,358 個輸入通過。
+- 完整 race／shuffle 檢查中，i18n package 的 statement coverage 為 **97.1%**，control 為 **91.1%**，TUI 為 **63.7%**。
+- Logo、登入插圖、封面與字體均已保存於 repository；透明 Logo 的 alpha channel、圖片尺寸與 HTTP 類型已驗證。來源與授權見 [品牌素材](brand/README.md) 及 [字體清單](brand/fonts.md)。
+
+預覽：[繁中登入](screenshots/login-zh-Hant.png)、[繁中桌面](screenshots/web-zh-Hant.png)、[英文桌面](screenshots/web-en.png)、[繁中手機](screenshots/web-zh-Hant-mobile.png)。
+這次瀏覽器實測限 macOS Chrome；Safari、Ubuntu 瀏覽器與不同終端字體的實際渲染尚未驗證。
 
 ## 本機 AI Agent hooks
 

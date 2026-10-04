@@ -33,7 +33,7 @@ func EnsureCredentials(c config.Config) (string, string, error) {
 		return "", "", err
 	}
 	if len(strings.TrimSpace(string(token))) < 32 {
-		return "", "", fmt.Errorf("admin token must contain at least 32 characters")
+		return "", "", fmt.Errorf("management token must contain at least 32 characters")
 	}
 	_, certErr := os.Stat(c.Security.TLSCertFile)
 	_, keyErr := os.Stat(c.Security.TLSKeyFile)

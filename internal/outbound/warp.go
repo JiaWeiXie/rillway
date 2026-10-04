@@ -56,18 +56,18 @@ func (w *warp) cli(ctx context.Context, args ...string) (string, error) {
 	// Output can contain license keys, account identifiers and registration data.
 	// Never return arbitrary CLI output to a caller; inspect it only locally.
 	if err != nil {
-		message := "官方 WARP client 操作失敗，請確認 daemon 已安裝並可由目前帳號使用。"
+		message := "The official WARP client could not complete the operation. Check that its daemon is installed and accessible to the current user."
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
-			message = "找不到 warp-cli。請先安裝官方 Cloudflare WARP，或設定正確的執行檔路徑。"
+			message = "warp-cli was not found. Install the official Cloudflare WARP client or configure its executable path."
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			message = "官方 WARP client 回應逾時，請檢查 warp-svc 是否正常執行。"
+			message = "The official WARP client timed out. Check that warp-svc is running."
 			err = errors.Join(err, ctx.Err())
 		}
 		return "", config.PublicError{Message: message, Err: err}
 	}
 	if len(b) > 65536 {
-		return "", config.PublicError{Message: "官方 WARP client 回應超過大小限制。"}
+		return "", config.PublicError{Message: "The official WARP client response exceeded the size limit."}
 	}
 	return string(b), nil
 }
@@ -181,34 +181,34 @@ func (w *warp) Action(ctx context.Context, action, value string) error {
 	switch action {
 	case "register":
 		_, err := w.cli(ctx, "registration", "new")
-		return warpFailure("WARP 裝置註冊失敗。請確認官方 daemon 可用及裝置是否已註冊。", err)
+		return warpFailure("WARP device registration failed. Check that the official daemon is available and whether the device is already registered.", err)
 	case "license":
 		value = strings.TrimSpace(value)
 		if value == "" || len(value) > 512 || strings.ContainsAny(value, "\r\n\x00") {
-			return config.PublicError{Message: "WARP+ 授權碼格式不正確，請重新貼上不含換行的授權碼。"}
+			return config.PublicError{Message: "The WARP+ license key format is invalid. Paste the key without line breaks."}
 		}
 		_, err := w.cli(ctx, "registration", "license", value)
-		return warpFailure("WARP+ 授權碼未成功套用。請確認裝置已註冊，並使用有效的 Unlimited 訂閱授權碼。", err)
+		return warpFailure("The WARP+ license key could not be applied. Check that the device is registered and the key has a valid Unlimited subscription.", err)
 	case "connect":
 		// Validate before changing anything. Only a loopback local SOCKS listener is
 		// supported; never fall back to full-device tunnel mode.
 		host, port, err := net.SplitHostPort(w.cfg.ProxyAddress)
 		if err != nil {
-			return config.PublicError{Message: "WARP Proxy 位址格式不正確，請使用 127.0.0.1:連接埠。", Err: err}
+			return config.PublicError{Message: "The WARP Proxy address is invalid. Use 127.0.0.1:<port>.", Err: err}
 		}
 		ip := net.ParseIP(host)
 		n, e := strconv.Atoi(port)
 		if ip == nil || !ip.Equal(net.ParseIP("127.0.0.1")) || e != nil || n < 1 || n > 65535 {
-			return config.PublicError{Message: "WARP Local Proxy 必須使用 127.0.0.1，連接埠範圍為 1–65535。"}
+			return config.PublicError{Message: "WARP Local Proxy must use 127.0.0.1 with a port from 1 to 65535."}
 		}
 		if _, err = w.cli(ctx, "mode", "proxy"); err != nil {
-			return warpFailure("無法啟用 WARP 的 Local Proxy 模式。請確認 client 版本及帳號支援 proxy 模式；Rillway 未切換為全機 tunnel。", err)
+			return warpFailure("Could not enable WARP Local Proxy mode. Check that your client version and account support proxy mode. Rillway has not enabled a full-device tunnel.", err)
 		}
 		if _, err = w.cli(ctx, "proxy", "port", port); err != nil {
-			return warpFailure("WARP 已切換為 Local Proxy 模式，但無法設定代理連接埠，尚未送出連線指令。", err)
+			return warpFailure("WARP switched to Local Proxy mode, but the proxy port could not be set. No connection command was sent.", err)
 		}
 		if _, err = w.cli(ctx, "connect"); err != nil {
-			return warpFailure("WARP 連線指令失敗。請檢查官方 daemon、裝置註冊及網路狀態。", err)
+			return warpFailure("The WARP connection command failed. Check the official daemon, device registration, and network status.", err)
 		}
 		w.mu.Lock()
 		w.manualStop = false
@@ -222,14 +222,14 @@ func (w *warp) Action(ctx context.Context, action, value string) error {
 		w.verified = time.Time{}
 		w.mu.Unlock()
 		_, err := w.cli(ctx, "disconnect")
-		return warpFailure("Rillway 已停止使用 WARP，但官方 daemon 未確認斷線。請檢查 WARP client 狀態。", err)
+		return warpFailure("Rillway stopped using WARP, but the official daemon did not confirm disconnection. Check the WARP client status.", err)
 	case "verify":
 		err := w.verify(ctx)
 		var safe interface{ PublicMessage() string }
 		if errors.As(err, &safe) {
 			return err
 		}
-		return warpFailure("WARP 端到端驗證未完成，請確認 Local Proxy 已連線且能存取 Cloudflare。", err)
+		return warpFailure("WARP end-to-end verification did not complete. Check that Local Proxy is connected and can reach Cloudflare.", err)
 	case "version":
 		_, err := w.cli(ctx, "--version")
 		return err
@@ -261,20 +261,20 @@ func (w *warp) verify(ctx context.Context) error {
 		var certErr *tls.CertificateVerificationError
 		var unknownCA x509.UnknownAuthorityError
 		if errors.As(err, &certErr) || errors.As(err, &unknownCA) {
-			return config.PublicError{Message: "WARP 驗證的 TLS 憑證無法通過檢查；此次連線不會標記為已驗證。", Err: err}
+			return config.PublicError{Message: "TLS certificate validation failed during WARP verification. This connection will not be marked as verified.", Err: err}
 		}
-		return config.PublicError{Message: "無法經 WARP Proxy 連到 Cloudflare 驗證網址；請檢查代理連接埠與 tunnel 連線。", Err: err}
+		return config.PublicError{Message: "Could not reach the Cloudflare verification endpoint through WARP Proxy. Check the proxy port and tunnel connection.", Err: err}
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return config.PublicError{Message: fmt.Sprintf("Cloudflare 驗證網址回傳 HTTP %d，尚未確認 WARP 出口。", res.StatusCode)}
+		return config.PublicError{Message: fmt.Sprintf("The Cloudflare verification endpoint returned HTTP %d. The WARP outbound has not been verified.", res.StatusCode)}
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, 8193))
 	if err != nil {
 		return err
 	}
 	if len(b) > 8192 {
-		return config.PublicError{Message: "Cloudflare 驗證回應超過大小限制，無法確認 WARP 出口。"}
+		return config.PublicError{Message: "The Cloudflare verification response exceeded the size limit. The WARP outbound could not be verified."}
 	}
 	active := false
 	for _, line := range strings.Split(string(b), "\n") {
@@ -283,7 +283,7 @@ func (w *warp) verify(ctx context.Context) error {
 		}
 	}
 	if !active {
-		return config.PublicError{Message: "Proxy 可以連線，但 Cloudflare 回應未確認使用 WARP；不能視為 tunnel 驗證成功。"}
+		return config.PublicError{Message: "The proxy is reachable, but Cloudflare did not confirm WARP usage. Tunnel verification did not succeed."}
 	}
 	w.mu.Lock()
 	w.verified = time.Now().UTC()

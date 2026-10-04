@@ -2,13 +2,19 @@ package tui
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"rillway/internal/config"
+	"rillway/internal/control"
 	"rillway/internal/engine"
+	"rillway/internal/i18n"
 	"strings"
 	"testing"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rivo/uniseg"
 )
 
 func TestEngineSnapshotJSONContract(t *testing.T) {
@@ -25,7 +31,7 @@ func TestEngineSnapshotJSONContract(t *testing.T) {
 		t.Fatalf("bad engine snapshot: %+v", decoded)
 	}
 	m := model{ready: true, height: 30, flows: decoded.Flows}
-	if !strings.Contains(m.View(), "已結束") {
+	if !strings.Contains(m.View(), "Closed") {
 		t.Fatal("closed flow rendered as active")
 	}
 }
@@ -97,8 +103,37 @@ func TestNavigationAndFlowSelection(t *testing.T) {
 
 func TestUnknownRemoteDNSIsNotInvented(t *testing.T) {
 	m := model{ready: true, height: 30, flows: []flow{{Host: "github.com", Outbound: "warp"}}}
-	if !strings.Contains(m.View(), "上游未提供實際 IP") {
+	if !strings.Contains(m.View(), "IP not reported by upstream") {
 		t.Fatal("unknown upstream DNS not displayed")
+	}
+}
+
+func TestEnglishNavigationAndForms(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		model model
+		want  []string
+	}{
+		{"loading", model{}, []string{"Connecting to the management service"}},
+		{"connections", model{ready: true}, []string{"[Connections]", "No connections yet", "Enter Create routing rule"}},
+		{"outbounds", model{ready: true, page: 1}, []string{"[Outbounds & VPNs]", "c Connect", "d Disconnect", "v Verify"}},
+		{"settings", model{ready: true, page: 2}, []string{"[Service settings]", "Management UI", "Press i to install"}},
+		{"rule", model{form: "rule", ruleFlow: flow{Host: "example.com"}}, []string{"Create routing rule for example.com", "Automatic (dual stack)", "Enter Save", "Esc Cancel"}},
+		{"license", model{form: "license"}, []string{"WARP+ license key", "Enter Apply", "Esc Cancel"}},
+		{"install", model{form: "install"}, []string{"Install the Rillway background service", "Enter Install", "Esc Cancel"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := tc.model.View()
+			for _, want := range append([]string{"≈ Rillway   Routing console", "Adaptive routing:"}, tc.want...) {
+				if !strings.Contains(view, want) {
+					t.Errorf("missing English control %q in:\n%s", want, view)
+				}
+			}
+			// Fixtures have no user-provided text; this checks only the UI chrome.
+			if strings.ContainsFunc(view, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+				t.Errorf("untranslated UI text in:\n%s", view)
+			}
+		})
 	}
 }
 
@@ -123,5 +158,150 @@ func TestInstallCommandRequiresConfirmation(t *testing.T) {
 	next, command = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if calls != 1 || command == nil || next.(model).form != "" {
 		t.Fatal("confirmation did not hand installer to Bubble Tea")
+	}
+}
+
+func TestLanguageSwitchPreservesFormsAndUserText(t *testing.T) {
+	for _, form := range []string{"", "rule", "license", "install"} {
+		t.Run(form, func(t *testing.T) {
+			m := model{
+				ctx: t.Context(), ready: true, page: 1, form: form, input: "secret-L-🚀", licenseID: "公司👨‍👩‍👧‍👦", ruleChoice: 2, ruleFamily: 1,
+				ruleFlow: flow{Host: "公司.example"}, cfg: config.Config{Outbounds: []config.Outbound{{ID: "公司👨‍👩‍👧‍👦", Type: "warp"}}},
+			}
+			for _, locale := range []i18n.Locale{i18n.TraditionalChinese, i18n.English} {
+				key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
+				if form == "license" {
+					key = tea.KeyMsg{Type: tea.KeyCtrlL}
+				}
+				next, command := m.Update(key)
+				m = next.(model)
+				if command != nil || m.locale != locale || i18n.FromContext(m.ctx) != locale {
+					t.Fatal("language did not switch without an action")
+				}
+				if m.form != form || m.input != "secret-L-🚀" || m.licenseID != "公司👨‍👩‍👧‍👦" || m.ruleChoice != 2 || m.ruleFamily != 1 || m.page != 1 {
+					t.Fatal("switching language changed user input or navigation")
+				}
+				want := "Routing console"
+				if locale == i18n.TraditionalChinese {
+					want = "網路分流控制台"
+				}
+				if !strings.Contains(m.View(), want) || strings.Contains(m.View(), m.input) {
+					t.Fatal("view language did not update or license leaked")
+				}
+			}
+		})
+	}
+	m := model{page: 1, cfg: config.Config{Outbounds: []config.Outbound{{ID: "warp", Type: "warp"}}}}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if next.(model).form != "license" {
+		t.Fatal("lowercase l no longer opens the license form")
+	}
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = next.(model)
+	if m.input != "L" || m.locale == i18n.TraditionalChinese {
+		t.Fatal("uppercase L was consumed by the language shortcut")
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = next.(model)
+	if m.input != "L" || m.form != "license" || m.locale != i18n.TraditionalChinese || !strings.Contains(m.View(), "Ctrl+L 語言") {
+		t.Fatal("Ctrl+L did not preserve license input and show the form shortcut")
+	}
+}
+
+func TestLicenseBackspaceRemovesWholeGrapheme(t *testing.T) {
+	m := model{form: "license", input: "x👨‍👩‍👧‍👦"}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if next.(model).input != "x" {
+		t.Fatal("backspace split an emoji grapheme")
+	}
+}
+
+func TestLanguageSwitchUpdatesAPIRequests(t *testing.T) {
+	headers := make(chan string, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headers <- r.Header.Get("Accept-Language")
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+	client, err := control.NewClient(server.URL, "test-token", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := model{ctx: t.Context(), client: client}
+	for _, locale := range []i18n.Locale{i18n.TraditionalChinese, i18n.English} {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+		m = next.(model)
+		if result := m.load()().(loadedMsg); result.err != nil {
+			t.Fatal(result.err)
+		}
+		for range 2 {
+			if got := <-headers; got != string(locale) {
+				t.Fatalf("Accept-Language = %q, want %q", got, locale)
+			}
+		}
+	}
+}
+
+func TestAPIErrorFollowsLanguageSwitch(t *testing.T) {
+	const source = "Enter a valid management token to sign in."
+	chinese := i18n.Message(i18n.TraditionalChinese, source)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": chinese, "error_source": source})
+	}))
+	defer server.Close()
+	client, err := control.NewClient(server.URL, "test-token", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := i18n.WithLocale(t.Context(), i18n.TraditionalChinese)
+	_, err = client.Config(ctx)
+	if err == nil {
+		t.Fatal("API error was not returned")
+	}
+	m := model{ctx: ctx, locale: i18n.TraditionalChinese, err: err}
+	for _, tc := range []struct {
+		want, absent string
+	}{{chinese, source}, {source, chinese}, {chinese, source}} {
+		view := m.View()
+		if !strings.Contains(view, tc.want) || strings.Contains(view, tc.absent) {
+			t.Fatalf("API error did not follow locale %q: %s", m.locale, view)
+		}
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+		m = next.(model)
+	}
+	for _, source := range []string{"", "Unknown upstream diagnostic 🚀"} {
+		apiError := &control.APIError{Status: http.StatusBadGateway, Message: "舊版伺服器訊息 🚀", Source: source}
+		want := source
+		if want == "" {
+			want = apiError.Message
+		}
+		for _, locale := range []i18n.Locale{i18n.English, i18n.TraditionalChinese} {
+			m.locale = locale
+			if !strings.Contains(m.errorText(apiError), want) {
+				t.Fatal("unknown or legacy error text was rewritten")
+			}
+		}
+	}
+}
+
+func TestCellPreservesGraphemesAndDisplayWidth(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+		width       int
+	}{
+		{"中文", "中文", 4},
+		{"中文測試", "中… ", 4},
+		{"👨‍👩‍👧‍👦🚀", "👨‍👩‍👧‍👦🚀", 4},
+		{"👨‍👩‍👧‍👦🚀X", "👨‍👩‍👧‍👦… ", 4},
+		{"🚀X", "… ", 2},
+		{"e\u0301中文", "e\u0301… ", 3},
+		{"🚀", "…", 1},
+		{"中文", "", 0},
+	} {
+		if got := cell(tc.input, tc.width); got != tc.want || uniseg.StringWidth(got) != tc.width {
+			t.Errorf("cell(%q, %d) = %q (width %d), want %q", tc.input, tc.width, got, uniseg.StringWidth(got), tc.want)
+		}
 	}
 }

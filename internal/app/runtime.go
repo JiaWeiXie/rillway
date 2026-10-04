@@ -70,10 +70,10 @@ func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 		return config.ErrConflict
 	}
 	if err := config.Validate(c); err != nil {
-		return config.PublicError{Message: "設定驗證失敗：" + err.Error(), Err: err}
+		return config.PublicError{Message: "Configuration validation failed: " + err.Error(), Err: err}
 	}
 	if !reflect.DeepEqual(c.Listeners, r.cfg.Listeners) || !reflect.DeepEqual(c.Security, r.cfg.Security) {
-		return config.PublicError{Message: "監聽位址與安全設定需要在主機修改設定檔後重啟 daemon"}
+		return config.PublicError{Message: "To change listener addresses or security settings, edit the configuration file on the host and restart the daemon."}
 	}
 	old := map[string]config.Outbound{}
 	for _, o := range r.cfg.Outbounds {
@@ -91,7 +91,7 @@ func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 			for _, v := range created {
 				_ = v.Close()
 			}
-			return config.PublicError{Message: fmt.Sprintf("出口 %s 使用中的 Tailscale state directory 需要重啟 daemon 才能變更", o.ID)}
+			return config.PublicError{Message: fmt.Sprintf("Restart the daemon to change outbound %s while its Tailscale state directory is in use.", o.ID)}
 		}
 		p := create(ctx, o)
 		if u, ok := p.(*unavailable); ok && o.Enabled {

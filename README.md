@@ -1,5 +1,7 @@
 # Rillway
 
+![Rillway — Choose your route.](docs/brand/rillway-cover.png)
+
 Rillway 是以 Go 實作的多出口 TCP Proxy。名稱結合 **rill**（小溪）與 **way**（路徑）：讓每條連線選擇適合的出口，並看得到選擇結果。
 
 適用情境是 Mac 保留公司的 Tailscale，公開網站經 PAC 送到 Ubuntu VM，再由 Rillway 選擇直連、WARP 或 WireGuard。核心、Web UI、TUI、Tailscale 與 WireGuard 引擎都編入同一個 binary；WARP 使用另外安裝的官方 client。
@@ -10,6 +12,7 @@ Rillway 是以 Go 實作的多出口 TCP Proxy。名稱結合 **rill**（小溪�
 - WARP／WARP+ 官方 Local Proxy 管理、嵌入式 Tailscale `tsnet`、WireGuard userspace netstack。
 - 網域、suffix、IP literal／CIDR 分流；固定規則失敗不會偷偷改走直連。
 - HTTPS Web UI 與 Bubble Tea TUI 共用 `/api/v1`，具 token 登入、設定版本衝突檢查與原子更新。
+- Web UI、TUI、CLI 支援英文與繁體中文 `zh-Hant`；Web UI 內建離線中文字體及 Emoji 備援字體。
 - 每秒更新連線、上下載速率、流量、建連時間、已知目的 IP、出口及命中規則。HTTPS 僅知道目的主機，不解密網址路徑。
 - 使用者啟用的自適應，依建連延遲及成功／逾時樣本選擇出口。
 - Ubuntu systemd、macOS LaunchAgent、Mac network service PAC 套用及還原。
@@ -37,6 +40,10 @@ mise run dev
 
 TUI 按 `i`、Enter 安裝背景服務；Ubuntu 透過 sudo 顯示權限提示，完成後 daemon 以 `rillway` 帳號執行。Mac 安裝目前使用者的 LaunchAgent。開發期間也可以維持 `serve` 在前景執行。
 
+Web UI 可在登入畫面或側欄切換語言。CLI／TUI 加上 `--lang zh-Hant` 或設定
+`RILLWAY_LANG=zh-Hant`；TUI 按大寫 `L` 即時切換中英。預設為英文，詳細行為見
+[語言、中文字體與 Emoji](docs/i18n.md)。
+
 | 任務 | 用途 |
 |---|---|
 | `mise run dev` | 本機服務與 Web UI |
@@ -62,6 +69,8 @@ LSP 共通入口是 `mise exec -- gopls`。VS Code 設定使用 repository 的 `
 - [第三方元件](THIRD_PARTY.md)
 - [AI Agent 規範與本機 hooks](docs/agent-workflow.md)
 - [Git hooks、提交格式與 changelog](docs/changelog.md)
+- [Logo、圖片素材與品牌使用方式](docs/brand/README.md)
+- [中英介面、中文字體與 Emoji](docs/i18n.md)
 
 基本瀏覽器 Proxy：HTTP 與 HTTPS Proxy 均填 `127.0.0.1:17890`；SOCKS5 填 `127.0.0.1:17891`。遠端 VM 改填其 LAN IP。使用 SOCKS 時讓瀏覽器透過 Proxy 解析 DNS，才保留網域分流與出口 DNS 語意。
 

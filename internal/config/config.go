@@ -91,7 +91,7 @@ func Validate(c Config) error {
 	}
 	for _, s := range []string{c.Security.AdminTokenFile, c.Security.TLSCertFile, c.Security.TLSKeyFile} {
 		if s == "" {
-			return errors.New("admin token and TLS file paths are required")
+			return errors.New("management token and TLS file paths are required")
 		}
 	}
 	if (c.Security.ProxyUsername == "") != (c.Security.ProxyPasswordFile == "") {

@@ -1,35 +1,54 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const i18n = globalThis.RillwayI18n;
+const t = (source,values) => i18n.t(source,values);
+const et = (source,values) => esc(t(source,values));
+i18n.capture(document.body);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const lines = value => value.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
 const bytes = n => { n = Number(n) || 0; const units = ['B','KiB','MiB','GiB','TiB']; let i = 0; while(n >= 1024 && i < units.length-1){ n /= 1024; i++; } return `${n.toFixed(i ? 1 : 0)} ${units[i]}`; };
 const rate = n => `${bytes(n)}/s`;
-const typeName = t => ({direct:'直接連線',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[t] || t);
+const typeName = value => { const source = ({direct:'Direct',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[value]); return source ? t(source) : value; };
 const stateKey = t => String(t || '').toLowerCase();
-const stateName = t => ({ready:'可用',connected:'已連線',running:'執行中',starting:'啟動中',stopped:'已停止',disconnected:'已斷線',disabled:'已停用',error:'發生錯誤',unavailable:'無法使用',needslogin:'等待登入',needsmachineauth:'等待管理員批准',needs_login:'等待登入',needs_auth:'等待登入',unsupported_account:'帳號不支援',unsupported_client:'版本不支援'}[stateKey(t)] || t || '尚未取得狀態');
+const stateName = value => { const source = ({ready:'Available',connected:'Connected',running:'Running',starting:'Starting',stopped:'Stopped',disconnected:'Disconnected',disabled:'Disabled',error:'Error',unavailable:'Unavailable',needslogin:'Sign-in required',needsmachineauth:'Awaiting admin approval',needs_login:'Sign-in required',needs_auth:'Sign-in required',unsupported_account:'Account unsupported',unsupported_client:'Version unsupported'}[stateKey(value)]); return source ? t(source) : value || t('Status pending'); };
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
+let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
 
 async function api(path, options = {}) {
-  const headers = {'Authorization': `Bearer ${token}`, ...options.headers};
+  const headers = {'Authorization': `Bearer ${token}`, 'Accept-Language': i18n.locale, ...options.headers};
   if(options.body !== undefined) headers['Content-Type'] = 'application/json';
-  const response = await fetch(`/api/v1${path}`, {...options, headers, credentials:'omit', cache:'no-store', redirect:'error'});
+  let response;
+  try { response = await fetch(`/api/v1${path}`, {...options, headers, credentials:'omit', cache:'no-store', redirect:'error'}); }
+  catch (_) { throw sourceError('Could not reach the management service. Try again.'); }
   let data; try { data = await response.json(); } catch (_) { data = {}; }
   if(!response.ok) {
-    const error = new Error(data.error || `服務回應 ${response.status}`); error.status = response.status;
+    const error = new Error(data.error || t('Service returned {status}',{status:response.status})); error.status = response.status;
+    if(typeof data.error_source === 'string') error.source = data.error_source;
     if(response.status === 401 && active) logout();
     throw error;
   }
   return data;
 }
-function notice(message, failure = false) { $('notice').textContent = message; $('notice').className = `notice${failure ? ' failure' : ''}`; $('notice').hidden = false; }
-function errorIn(form, e) { form.querySelector('.form-error').textContent = e.message; }
-function clearError(form) { const error = form.querySelector('.form-error'); if(error) error.textContent = ''; }
-function connection(online) { $('connection-dot').className = `dot ${online ? 'online' : 'offline'}`; $('connection-label').textContent = online ? '服務已連線' : '暫時無法連線'; }
+function sourceError(source) { const error = new Error(t(source)); error.source = source; return error; }
+function errorText(error) { return error.source ? t(error.source) : error.message; }
+function notice(message, failure = false) {
+  lastNotice = {message,failure};
+  $('notice').textContent = typeof message === 'string' ? t(message) : errorText(message);
+  $('notice').className = `notice${failure ? ' failure' : ''}`; $('notice').hidden = false;
+}
+function displayError(node,error) {
+  if(error.source) node.dataset.errorSource = error.source;
+  else delete node.dataset.errorSource;
+  node.textContent = errorText(error);
+}
+function errorIn(form,error) { displayError(form.querySelector('.form-error'),error); }
+function clearError(form) { const error = form.querySelector('.form-error'); if(error) { error.textContent = ''; delete error.dataset.errorSource; } }
+function connection(online) { isOnline = online; $('connection-dot').className = `dot ${online ? 'online' : 'offline'}`; $('connection-label').textContent = t(online ? 'Service connected' : 'Service unavailable'); }
 function cloneConfig() { return structuredClone(cfg); }
 function candidates() { return (cfg?.outbounds || []).filter(o => o.enabled && o.public_internet && ['direct','warp','wireguard'].includes(o.type)); }
-function options(selected, withAdaptive = false) { return (withAdaptive ? `<option value="@adaptive"${selected === '@adaptive' ? ' selected' : ''}>自適應出口</option>` : '') + (cfg.outbounds || []).map(o => `<option value="${esc(o.id)}"${o.id === selected ? ' selected' : ''}>${esc(o.id)} · ${esc(typeName(o.type))}${o.enabled ? '' : '（停用）'}</option>`).join(''); }
-function candidateBoxes(container, selected, prefix) { container.innerHTML = candidates().map(o => `<label><input type="checkbox" name="${prefix}" value="${esc(o.id)}"${selected.includes(o.id) ? ' checked' : ''}>${esc(o.id)}</label>`).join('') || '<p class="hint">先啟用一個可連到公網的出口。</p>'; }
+function options(selected, withAdaptive = false) { return (withAdaptive ? `<option value="@adaptive"${selected === '@adaptive' ? ' selected' : ''}>${et('Adaptive routing')}</option>` : '') + (cfg.outbounds || []).map(o => `<option value="${esc(o.id)}"${o.id === selected ? ' selected' : ''}>${esc(o.id)} · ${esc(typeName(o.type))}${o.enabled ? '' : t(' (disabled)')}</option>`).join(''); }
+function candidateBoxes(container, selected, prefix) { container.innerHTML = candidates().map(o => `<label><input type="checkbox" name="${prefix}" value="${esc(o.id)}"${selected.includes(o.id) ? ' checked' : ''}>${esc(o.id)}</label>`).join('') || `<p class="hint">${et('Enable an outbound with Internet access first.')}</p>`; }
 function checked(container) { return [...container.querySelectorAll('input:checked')].map(i => i.value); }
 
 async function load() {
@@ -39,19 +58,16 @@ async function load() {
 }
 async function save(next) {
   cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
-  renderConfig(); notice('設定已儲存。新連線會使用更新後的規則。'); await poll();
+  renderConfig(); notice('Configuration saved. New connections will use the updated rules.'); await poll();
 }
 function renderConfig() {
-  $('revision').textContent = `設定版本 ${cfg.revision}`;
+  renderConfigText();
   $('adaptive-toggle').checked = !!cfg.adaptive.enabled;
-  $('adaptive-description').textContent = cfg.adaptive.enabled ? '依可用性與測試結果選擇新連線出口；手動規則仍優先。' : '關閉時依分流規則及預設出口連線。';
   candidateBoxes($('adaptive-candidates'), cfg.adaptive.candidates || [], 'global-candidate');
   $('default-outbound').innerHTML = options(cfg.default_outbound);
   $('pac-address').value = cfg.pac.proxy_address || '';
   $('pac-domains').value = (cfg.pac.bypass_domains || []).join('\n');
   $('pac-cidrs').value = (cfg.pac.bypass_cidrs || []).join('\n');
-  $('pac-hint').textContent = `PAC 服務監聽：${cfg.listeners.pac || '未設定'}。Mac 需使用能連到 Ubuntu 主機的位址。`;
-  $('listeners').innerHTML = Object.entries(cfg.listeners).map(([k,v]) => `<dt>${esc({http:'HTTP Proxy',socks5:'SOCKS5',admin:'管理介面',pac:'PAC'}[k] || k)}</dt><dd>${esc(v || '未設定')}</dd>`).join('');
   $('config-json').value = JSON.stringify(cfg, null, 2);
   renderRules(); renderOutbounds();
 }
@@ -59,19 +75,18 @@ async function poll() {
   if(!active || polling) return;
   polling = true;
   try {
-    const snapshot = await api('/stats');
+    const snapshot = await api('/stats'); latestSnapshot = snapshot;
     flows = Array.isArray(snapshot) ? snapshot : snapshot.flows || [];
-    $('applied-at').textContent = snapshot.applied_at ? `生效於 ${new Date(snapshot.applied_at).toLocaleString()}` : '';
-    if(snapshot.config_revision !== undefined) $('revision').textContent = `生效版本 ${snapshot.config_revision}`;
+    renderRevision();
     renderFlows(); connection(true);
-  } catch (e) { connection(false); if(e.status !== 401) notice(e.message, true); }
+  } catch (e) { connection(false); if(e.status !== 401) notice(e, true); }
   finally { polling = false; }
 }
 async function pollStatuses() {
   if(!active || statusPolling) return;
   statusPolling = true;
   try { const state = await api('/outbounds'); statuses = Array.isArray(state) ? state : state.outbounds || []; renderOutbounds(); }
-  catch(e) { if(e.status !== 401) notice(e.message,true); }
+  catch(e) { if(e.status !== 401) notice(e,true); }
   finally { statusPolling = false; }
 }
 function flowActive(f) { return !f.closed || f.closed === '0001-01-01T00:00:00Z'; }
@@ -85,14 +100,14 @@ function renderFlows() {
   const body = $('flows');
   const rows = new Map([...body.rows].map(row => [row.dataset.flowKey, row]));
   visible.forEach(({f,index}, position) => {
-    const host = f.host || f.domain || f.ip || '未提供';
-    const ip = f.ip ? `${f.ip}${f.family ? ` · ${f.family}` : ''}` : '目的 IP 未提供，由上游解析';
+    const host = f.host || f.domain || f.ip || t('Unknown');
+    const ip = f.ip ? `${f.ip}${f.family ? ` · ${f.family}` : ''}` : t('Destination IP unknown; resolved upstream');
     const sum = (Number(f.upload_bytes)||0)+(Number(f.download_bytes)||0);
     const key = String(f.id ?? `${host}:${f.port}:${index}`);
     let row = rows.get(key);
-    if(!row) { row = document.createElement('tr'); row.dataset.flowKey = key; for(let i = 0; i < 8; i++) row.append(document.createElement('td')); row.cells[7].innerHTML = '<button class="table-action">設定出口</button>'; }
-    rows.delete(key);
-    const cells = [`<span class="domain">${esc(host)}${f.port ? `:${esc(f.port)}` : ''}</span><span class="sub">${esc(ip)}</span>`, `<span class="badge">${esc(f.outbound || '未指定')}</span><span class="sub">${esc(f.rule || f.rule_id || '預設規則')}</span>`, rate(f.download_bytes_per_second || f.download_rate), rate(f.upload_bytes_per_second || f.upload_rate), bytes(sum), `${Number(f.connect_ms || 0).toFixed(1)} ms`, `<span class="badge${flowActive(f) ? ' good' : ''}">${flowActive(f) ? '連線中' : '已結束'}</span>`];
+    if(!row) { row = document.createElement('tr'); row.dataset.flowKey = key; for(let i = 0; i < 8; i++) row.append(document.createElement('td')); row.cells[7].innerHTML = '<button class="table-action"></button>'; }
+    rows.delete(key); row.cells[7].firstElementChild.textContent = t('Set outbound');
+    const cells = [`<span class="domain">${esc(host)}${f.port ? `:${esc(f.port)}` : ''}</span><span class="sub">${esc(ip)}</span>`, `<span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span>`, rate(f.download_bytes_per_second || f.download_rate), rate(f.upload_bytes_per_second || f.upload_rate), bytes(sum), `${Number(f.connect_ms || 0).toFixed(1)} ms`, `<span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span>`];
     cells.forEach((html,i) => { if(row.cells[i].innerHTML !== html) row.cells[i].innerHTML = html; if(i >= 2 && i <= 5) row.cells[i].className = 'numeric'; });
     row.cells[7].firstElementChild.dataset.flow = index;
     if(body.rows[position] !== row) body.insertBefore(row,body.rows[position] || null);
@@ -102,8 +117,8 @@ function renderFlows() {
 function renderRules() {
   $('rules').innerHTML = (cfg.rules || []).map((r,index) => {
     const targets = [...(r.domains || []), ...(r.suffixes || []).map(s => `*.${s.replace(/^\./,'')}`), ...(r.cidrs || [])];
-    return `<tr><td><strong>${esc(r.id)}</strong><span class="sub">${esc(targets.join(', ') || '未設定比對目標')}</span></td><td><span class="badge">${esc(r.adaptive ? '自適應' : r.outbound)}</span>${r.adaptive ? `<span class="sub">${esc((r.candidates || []).join(', '))}</span>` : ''}</td><td>${esc(r.family || '雙棧')}</td><td><button class="table-action" data-edit-rule="${index}">編輯</button> <button class="table-action" data-up-rule="${index}"${index === 0 ? ' disabled' : ''} aria-label="將 ${esc(r.id)} 往上移">↑</button> <button class="table-action danger" data-delete-rule="${index}">刪除</button></td></tr>`;
-  }).join('') || '<tr><td colspan="4" class="muted">尚無規則。新增網域或 IP 規則，指定它的出口。</td></tr>';
+    return `<tr><td><strong>${esc(r.id)}</strong><span class="sub">${esc(targets.join(', ') || t('No matching destinations configured'))}</span></td><td><span class="badge">${esc(r.adaptive ? t('Adaptive routing') : r.outbound)}</span>${r.adaptive ? `<span class="sub">${esc((r.candidates || []).join(', '))}</span>` : ''}</td><td>${esc(r.family || t('Dual stack'))}</td><td><button class="table-action" data-edit-rule="${index}">${et('Edit')}</button> <button class="table-action" data-up-rule="${index}"${index === 0 ? ' disabled' : ''} aria-label="${et('Move {name} up',{name:r.id})}">↑</button> <button class="table-action danger" data-delete-rule="${index}">${et('Delete')}</button></td></tr>`;
+  }).join('') || `<tr><td colspan="4" class="muted">${et('No rules yet. Add a domain or IP rule to choose its outbound.')}</td></tr>`;
 }
 function renderOutbounds() {
   if(!cfg) return;
@@ -111,22 +126,22 @@ function renderOutbounds() {
     const s = statuses.find(s => s.id === o.id) || {};
     const good = ['ready','connected','running'].includes(stateKey(s.state)), bad = ['error','unavailable','unsupported_account','unsupported_client'].includes(stateKey(s.state));
     const authURL = typeof s.auth_url === 'string' && /^https:\/\//i.test(s.auth_url) ? s.auth_url : '';
-    const actionButtons = o.type === 'warp' ? [['connect','連線'],['disconnect','斷線'],['register','註冊'],['verify','驗證出口']] : ['tailscale','tsnet'].includes(o.type) ? [['connect','連線'],['disconnect','斷線'],['login','登入'],['logout','登出']] : o.type === 'wireguard' ? [['connect','連線'],['disconnect','斷線']] : [];
-    return `<article class="outbound-card"><div><div class="outbound-heading"><h3>${esc(o.id)}</h3><span class="badge${good ? ' good' : bad ? ' bad' : ' warn'}">${esc(o.enabled ? stateName(s.state) : '已停用')}</span></div><p class="detail">${esc(s.detail || typeName(o.type))}</p><div class="outbound-meta"><span>${esc(typeName(o.type))}</span><span>${o.public_internet ? '可作為公網出口' : '固定／私網出口'}</span>${s.account ? `<span>帳號：${esc(s.account)}</span>` : ''}${s.version ? `<span>版本 ${esc(s.version)}</span>` : ''}${s.mode ? `<span>模式 ${esc(s.mode)}</span>` : ''}${o.type === 'warp' ? `<span>Proxy listener：${s.listener ? '已啟動' : '未就緒'}</span>` : ''}${s.verified_at && !s.verified_at.startsWith('0001-') ? `<span>上次驗證 ${esc(new Date(s.verified_at).toLocaleString())}</span>` : ''}</div>${authURL ? `<p class="hint"><a href="${esc(authURL)}" target="_blank" rel="noopener noreferrer">開啟 Tailscale 登入頁</a></p>` : ''}</div><div class="outbound-actions">${actionButtons.map(([action,label]) => `<button class="quiet" data-action="${action}" data-id="${esc(o.id)}">${label}</button>`).join('')}${o.type === 'warp' ? `<button class="quiet" data-license="${esc(o.id)}">WARP+ 授權</button>` : ''}<button class="quiet" data-edit-outbound="${index}">編輯</button><button class="danger" data-delete-outbound="${index}">刪除</button></div></article>`;
-  }).join('') || '<div class="empty"><h3>先建立一個出口</h3><p>可從直接連線開始，再加入 WARP 或 WireGuard。</p></div>';
+    const actionButtons = o.type === 'warp' ? [['connect','Connect'],['disconnect','Disconnect'],['register','Register'],['verify','Verify outbound']] : ['tailscale','tsnet'].includes(o.type) ? [['connect','Connect'],['disconnect','Disconnect'],['login','Sign in'],['logout','Sign out']] : o.type === 'wireguard' ? [['connect','Connect'],['disconnect','Disconnect']] : [];
+    return `<article class="outbound-card"><div><div class="outbound-heading"><h3>${esc(o.id)}</h3><span class="badge${good ? ' good' : bad ? ' bad' : ' warn'}">${esc(o.enabled ? stateName(s.state) : t('Disabled'))}</span></div><p class="detail">${esc(s.detail_source ? t(s.detail_source) : s.detail || typeName(o.type))}</p><div class="outbound-meta"><span>${esc(typeName(o.type))}</span><span>${et(o.public_internet ? 'Internet access' : 'Fixed / private outbound')}</span>${s.account ? `<span>${et('Account: {value}',{value:s.account})}</span>` : ''}${s.version ? `<span>${et('Version {value}',{value:s.version})}</span>` : ''}${s.mode ? `<span>${et('Mode {value}',{value:s.mode})}</span>` : ''}${o.type === 'warp' ? `<span>${et('Proxy listener: {state}',{state:t(s.listener ? 'Listening' : 'Not ready')})}</span>` : ''}${s.verified_at && !s.verified_at.startsWith('0001-') ? `<span>${et('Last verified {date}',{date:i18n.date(s.verified_at)})}</span>` : ''}</div>${authURL ? `<p class="hint"><a href="${esc(authURL)}" target="_blank" rel="noopener noreferrer">${et('Open Tailscale sign-in')}</a></p>` : ''}</div><div class="outbound-actions">${actionButtons.map(([action,label]) => `<button class="quiet" data-action="${action}" data-id="${esc(o.id)}">${et(label)}</button>`).join('')}${o.type === 'warp' ? `<button class="quiet" data-license="${esc(o.id)}">${et('WARP+ license')}</button>` : ''}<button class="quiet" data-edit-outbound="${index}">${et('Edit')}</button><button class="danger" data-delete-outbound="${index}">${et('Delete')}</button></div></article>`;
+  }).join('') || `<div class="empty"><h3>${et('Add your first outbound')}</h3><p>${et('Start with Direct, then add WARP or WireGuard.')}</p></div>`;
 }
 
 function navigate(page) {
-  const names = {overview:['連線總覽','看見流量，決定去向'],outbounds:['出口與 VPN','管理每一條對外連線'],rules:['分流規則','為目的地選擇合適的路'],settings:['連線設定','連接瀏覽器與你的網路']};
-  if(!names[page]) page = 'overview';
+  const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.']};
+  if(!names[page]) page = 'overview'; currentPage = page;
   for(const el of document.querySelectorAll('.page')) el.hidden = el.id !== `page-${page}`;
   for(const el of document.querySelectorAll('[data-page]')) el.classList.toggle('selected',el.dataset.page === page);
-  [$('page-title').textContent,$('page-context').textContent] = names[page];
+  [$('page-title').textContent,$('page-context').textContent] = names[page].map(source => t(source));
 }
 function logout() { active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 function openOutbound(index = -1) {
   outboundIndex = index; const o = index >= 0 ? cfg.outbounds[index] : {type:'wireguard',enabled:true};
-  $('outbound-form-title').textContent = index >= 0 ? '編輯出口' : '新增出口';
+  $('outbound-form-title').textContent = t(index >= 0 ? 'Edit outbound' : 'Add outbound');
   const map = {id:'id',type:'type',address:'proxy_address',file:'config_file',hostname:'hostname',state:'state_dir',auth:'auth_key_file',binary:'warp_binary'};
   for(const [element,key] of Object.entries(map)) $(`out-${element}`).value = o[key] || '';
   $('out-id').disabled = index >= 0; $('out-enabled').checked = o.enabled; $('out-public').checked = !!o.public_internet; $('out-dns').value = (o.dns || []).join('\n');
@@ -155,9 +170,40 @@ function openRule(index = -1, flow = null) {
   clearError($('rule-form')); $('rule-dialog').showModal();
 }
 
-$('login-form').addEventListener('submit',async e => { e.preventDefault(); token = $('token').value.trim(); $('login-error').textContent = ''; try { await load(); sessionStorage.setItem('rillway-token',token); $('token').value = ''; } catch(error) { $('login-error').textContent = error.message; } });
+function renderRevision() {
+  const revision = latestSnapshot.config_revision ?? cfg?.revision;
+  $('revision').textContent = revision === undefined ? '' : t('Active revision {revision}',{revision});
+  $('applied-at').textContent = latestSnapshot.applied_at ? t('Applied {date}',{date:i18n.date(latestSnapshot.applied_at)}) : '';
+}
+function renderConfigText() {
+  if(!cfg) return;
+  renderRevision();
+  $('adaptive-description').textContent = t(cfg.adaptive.enabled ? 'Choose outbounds for new connections using availability and probe results. Explicit rules take priority.' : 'When disabled, connections use routing rules and the default outbound.');
+  $('pac-hint').textContent = t('PAC listener: {address}. Use an address your Mac can reach on the Ubuntu host.',{address:cfg.listeners.pac || t('Not configured')});
+  $('listeners').innerHTML = Object.entries(cfg.listeners).map(([k,v]) => `<dt>${esc(t({http:'HTTP Proxy',socks5:'SOCKS5',admin:'Management UI',pac:'PAC'}[k] || k))}</dt><dd>${esc(v || t('Not configured'))}</dd>`).join('');
+}
+function switchLocale(locale) {
+  i18n.setLocale(locale);
+  navigate(currentPage);
+  connection(isOnline);
+  if(cfg) {
+    renderConfigText(); renderFlows(); renderRules(); renderOutbounds();
+    for(const id of ['default-outbound','rule-outbound']) {
+      const select = $(id), selected = select.value;
+      if(select.options.length) { select.innerHTML = options(selected,id === 'rule-outbound'); select.value = selected; }
+    }
+  }
+  $('outbound-form-title').textContent = t(outboundIndex >= 0 ? 'Edit outbound' : 'Add outbound');
+  for(const node of document.querySelectorAll('[data-error-source]')) node.textContent = t(node.dataset.errorSource);
+  if(lastNotice) notice(lastNotice.message,lastNotice.failure);
+  for(const id of ['adaptive-candidates','rule-candidates']) { const hint = $(id).querySelector('.hint'); if(hint) hint.textContent = t('Enable an outbound with Internet access first.'); }
+  if(active) pollStatuses();
+}
+document.querySelectorAll('[data-locale]').forEach(select => select.addEventListener('change',() => switchLocale(select.value)));
+
+$('login-form').addEventListener('submit',async e => { e.preventDefault(); token = $('token').value.trim(); $('login-error').textContent = ''; delete $('login-error').dataset.errorSource; try { await load(); sessionStorage.setItem('rillway-token',token); $('token').value = ''; } catch(error) { displayError($('login-error'),error); } });
 $('logout').addEventListener('click',logout);
-$('refresh').addEventListener('click',() => load().catch(e => notice(e.message,true)));
+$('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));
 $('flow-search').addEventListener('input',renderFlows);
 document.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click',() => { navigate(b.dataset.page); history.replaceState(null,'',`#${b.dataset.page}`); }));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',() => $(b.dataset.close).close()));
@@ -167,12 +213,12 @@ $('out-type').addEventListener('change',outboundFields);
 $('add-rule').addEventListener('click',() => openRule());
 $('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
 $('flows').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) openRule(-1,flows[Number(b.dataset.flow)]); });
-$('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e.message,true); } });
-$('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e.message,true); } });
-$('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e.message,true); } });
-$('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = lines($('pac-domains').value); next.pac.bypass_cidrs = lines($('pac-cidrs').value); try { await save(next); } catch(error) { notice(error.message,true); } });
-$('save-json').addEventListener('click',async () => { try { const next = JSON.parse($('config-json').value); await save(next); } catch(e) { notice(e.message,true); } });
-$('reset-json').addEventListener('click',() => load().catch(e => notice(e.message,true)));
+$('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
+$('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
+$('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
+$('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = lines($('pac-domains').value); next.pac.bypass_cidrs = lines($('pac-cidrs').value); try { await save(next); } catch(error) { notice(error,true); } });
+$('save-json').addEventListener('click',async () => { try { const next = JSON.parse($('config-json').value); await save(next); } catch(e) { notice(e instanceof SyntaxError ? sourceError('Invalid JSON. Check the configuration syntax.') : e,true); } });
+$('reset-json').addEventListener('click',() => load().catch(e => notice(e,true)));
 $('outbound-form').addEventListener('submit',async e => {
   e.preventDefault(); const next = cloneConfig(); const original = outboundIndex >= 0 ? next.outbounds[outboundIndex] : {};
   const o = {...original,id:$('out-id').value.trim(),type:$('out-type').value,enabled:$('out-enabled').checked,public_internet:$('out-public').checked,proxy_address:$('out-address').value.trim(),config_file:$('out-file').value.trim(),hostname:$('out-hostname').value.trim(),state_dir:$('out-state').value.trim(),auth_key_file:$('out-auth').value.trim(),warp_binary:$('out-binary').value.trim(),dns:lines($('out-dns').value)};
@@ -193,22 +239,23 @@ $('rules').addEventListener('click',async e => {
   const up = e.target.closest('[data-up-rule]'), del = e.target.closest('[data-delete-rule]'); if(!up && !del) return;
   const next = cloneConfig(); const index = Number(up ? up.dataset.upRule : del.dataset.deleteRule);
   if(up && index > 0) [next.rules[index-1],next.rules[index]] = [next.rules[index],next.rules[index-1]];
-  if(del) { if(!confirm(`刪除規則「${next.rules[index].id}」？`)) return; next.rules.splice(index,1); }
-  try { await save(next); } catch(error) { notice(error.message,true); }
+  if(del) { if(!confirm(t('Delete rule "{name}"?',{name:next.rules[index].id}))) return; next.rules.splice(index,1); }
+  try { await save(next); } catch(error) { notice(error,true); }
 });
 $('outbound-list').addEventListener('click',async e => {
   const edit = e.target.closest('[data-edit-outbound]'); if(edit) { openOutbound(Number(edit.dataset.editOutbound)); return; }
   const license = e.target.closest('[data-license]'); if(license) { licenseID = license.dataset.license; $('license-value').value = ''; clearError($('license-form')); $('license-dialog').showModal(); return; }
   const del = e.target.closest('[data-delete-outbound]');
-  if(del) { const next = cloneConfig(); const index = Number(del.dataset.deleteOutbound); if(!confirm(`刪除出口「${next.outbounds[index].id}」？請先移除引用它的規則。`)) return; next.outbounds.splice(index,1); try { await save(next); } catch(error) { notice(error.message,true); } return; }
+  if(del) { const next = cloneConfig(); const index = Number(del.dataset.deleteOutbound); if(!confirm(t('Delete outbound "{name}"? Remove any rules that reference it first.',{name:next.outbounds[index].id}))) return; next.outbounds.splice(index,1); try { await save(next); } catch(error) { notice(error,true); } return; }
   const action = e.target.closest('[data-action]'); if(!action) return;
-  action.disabled = true; try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('出口操作已完成。'); await pollStatuses(); } catch(error) { notice(error.message,true); } finally { action.disabled = false; }
+  action.disabled = true; try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); } catch(error) { notice(error,true); } finally { action.disabled = false; }
 });
 $('license-form').addEventListener('submit',async e => {
   e.preventDefault(); const value = $('license-value').value.trim(); $('license-value').value = '';
-  try { await api(`/outbounds/${encodeURIComponent(licenseID)}/license`,{method:'POST',body:JSON.stringify({value})}); $('license-dialog').close(); notice('WARP+ 授權碼已套用。'); await pollStatuses(); } catch(error) { errorIn(e.target,error); }
+  try { await api(`/outbounds/${encodeURIComponent(licenseID)}/license`,{method:'POST',body:JSON.stringify({value})}); $('license-dialog').close(); notice('WARP+ license key applied.'); await pollStatuses(); } catch(error) { errorIn(e.target,error); }
 });
 navigate(location.hash.slice(1));
+i18n.ready.then(() => switchLocale(i18n.locale));
 setInterval(poll,1000);
 setInterval(pollStatuses,10000);
-if(token) load().catch(e => { $('login-error').textContent = e.message; logout(); });
+if(token) load().catch(e => { displayError($('login-error'),e); logout(); });

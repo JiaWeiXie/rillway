@@ -11,7 +11,9 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path"
 	"rillway/internal/config"
+	"rillway/internal/i18n"
 	"rillway/internal/outbound"
 	"strings"
 	"sync"
@@ -43,9 +45,11 @@ func New(backend Backend, adminToken string) http.Handler {
 	mux.HandleFunc("GET /api/v1/config", h.protect(h.getConfig))
 	mux.HandleFunc("PUT /api/v1/config", h.protect(h.putConfig))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
-	mux.HandleFunc("GET /api/v1/outbounds", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Statuses(r.Context())) }))
+	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))
 	mux.HandleFunc("POST /api/v1/outbounds/{id}/{action}", h.protect(h.action))
-	mux.HandleFunc("/api/", h.protect(func(w http.ResponseWriter, _ *http.Request) { writeError(w, 404, "找不到這個管理 API") }))
+	mux.HandleFunc("/api/", h.protect(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, r, 404, "Management API endpoint not found.")
+	}))
 	web, _ := fs.Sub(assets, "web")
 	files := http.FileServer(http.FS(web))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -53,9 +57,20 @@ func New(backend Backend, adminToken string) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/app.css" {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		brandType := brandContentType(name)
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/app.css" && r.URL.Path != "/i18n.js" && r.URL.Path != "/locales.json" && brandType == "" {
 			http.NotFound(w, r)
 			return
+		}
+		if brandType != "" {
+			info, err := fs.Stat(web, name)
+			if err != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", brandType)
+			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}
 		files.ServeHTTP(w, r)
 	})
@@ -63,26 +78,49 @@ func New(backend Backend, adminToken string) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Add("Vary", "Accept-Language")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Content-Language", string(i18n.FromAcceptLanguage(r.Header.Get("Accept-Language"))))
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func brandContentType(name string) string {
+	if !fs.ValidPath(name) {
+		return ""
+	}
+	if strings.HasPrefix(name, "fonts/") && strings.EqualFold(path.Ext(name), ".woff2") {
+		return "font/woff2"
+	}
+	if strings.HasPrefix(name, "fonts/") && strings.EqualFold(path.Ext(name), ".ttf") {
+		return "font/ttf"
+	}
+	if !strings.HasPrefix(name, "brand/") {
+		return ""
+	}
+	return map[string]string{
+		".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg",
+		".jpeg": "image/jpeg", ".ico": "image/x-icon",
+	}[strings.ToLower(path.Ext(name))]
 }
 
 func (h *handler) protect(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.backend == nil || h.token == "" {
-			writeError(w, 503, "管理服務尚未設定存取金鑰")
+			writeError(w, r, 503, "The management service has no configured token.")
 			return
 		}
 		provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || subtle.ConstantTimeCompare([]byte(provided), []byte(h.token)) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, 401, "管理金鑰不正確或尚未登入")
+			writeError(w, r, 401, "Enter a valid management token to sign in.")
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(r, origin) {
-				writeError(w, 403, "不接受其他網站發起的設定變更")
+				writeError(w, r, 403, "Configuration changes from another origin are not allowed.")
 				return
 			}
 		}
@@ -102,6 +140,22 @@ func sameOrigin(r *http.Request, origin string) bool {
 	return u.Scheme == scheme && strings.EqualFold(u.Host, r.Host)
 }
 
+func (h *handler) getOutbounds(w http.ResponseWriter, r *http.Request) {
+	type localizedStatus struct {
+		outbound.Status
+		DetailSource string `json:"detail_source,omitempty"`
+	}
+	originals := h.backend.Statuses(r.Context())
+	statuses := make([]localizedStatus, 0, len(originals))
+	locale := i18n.FromAcceptLanguage(r.Header.Get("Accept-Language"))
+	for _, original := range originals {
+		localized := localizedStatus{Status: original, DetailSource: original.Detail}
+		localized.Detail = i18n.Message(locale, original.Detail)
+		statuses = append(statuses, localized)
+	}
+	writeJSON(w, 200, statuses)
+}
+
 func (h *handler) getConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, h.backend.Config())
 }
@@ -114,14 +168,14 @@ func (h *handler) putConfig(w http.ResponseWriter, r *http.Request) {
 	h.applyMu.Lock()
 	defer h.applyMu.Unlock()
 	if next.Revision != h.backend.Config().Revision {
-		writeError(w, 409, "設定已在其他地方變更，請重新載入後再儲存")
+		writeError(w, r, 409, "Configuration changed elsewhere. Reload it before saving.")
 		return
 	}
 	if err := h.backend.Apply(r.Context(), next); err != nil {
 		if errors.Is(err, config.ErrConflict) {
-			writeError(w, 409, "設定已在其他地方變更，請重新載入後再儲存")
+			writeError(w, r, 409, "Configuration changed elsewhere. Reload it before saving.")
 		} else {
-			writeError(w, 422, publicMessage(err, "設定無法套用，請確認出口、規則與必要欄位；目前設定保持不變"))
+			writeError(w, r, 422, publicMessage(err, "Could not apply configuration. Check outbounds, rules, and required fields. Your previous configuration is unchanged."))
 		}
 		return
 	}
@@ -144,21 +198,21 @@ func (h *handler) action(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !found {
-		writeError(w, 404, "找不到這個出口")
+		writeError(w, r, 404, "Outbound not found.")
 		return
 	}
 	switch action {
 	case "connect", "disconnect", "register", "verify", "license", "login", "logout":
 	default:
-		writeError(w, 400, "不支援這個出口操作")
+		writeError(w, r, 400, "This outbound action is not supported.")
 		return
 	}
 	if action == "license" && strings.TrimSpace(body.Value) == "" {
-		writeError(w, 400, "請輸入 WARP+ 授權碼")
+		writeError(w, r, 400, "Enter a WARP+ license key.")
 		return
 	}
 	if err := h.backend.Action(r.Context(), id, action, body.Value); err != nil {
-		writeError(w, 422, publicMessage(err, "出口操作未完成，請檢查出口狀態與必要設定"))
+		writeError(w, r, 422, publicMessage(err, "Could not complete the action. Check the outbound status and required settings."))
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
@@ -166,7 +220,7 @@ func (h *handler) action(w http.ResponseWriter, r *http.Request) {
 
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
-		writeError(w, 415, "請使用 application/json")
+		writeError(w, r, 415, "Use application/json for the request body.")
 		return false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
@@ -182,9 +236,9 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any, limit int64) bo
 	}
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		writeError(w, 413, "設定內容超過大小限制")
+		writeError(w, r, 413, "The request body exceeds the size limit.")
 	} else {
-		writeError(w, 400, "JSON 格式或欄位不正確")
+		writeError(w, r, 400, "Invalid JSON or unsupported fields.")
 	}
 	return false
 }
@@ -195,8 +249,8 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+func writeError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": i18n.Message(i18n.FromAcceptLanguage(r.Header.Get("Accept-Language")), message), "error_source": message})
 }
 
 // Only explicitly public messages may cross the API boundary. An ordinary

@@ -28,6 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 }
+
 func generate() error {
 	data, err := exec.Command("go", "list", "-m", "-json", "all").Output()
 	if err != nil {
@@ -87,6 +88,20 @@ func generate() error {
 	}
 	if err = os.WriteFile("dist/MODULES.txt", []byte(index.String()), 0o644); err != nil {
 		return err
+	}
+	// Embedded fonts are distributed with every binary, independently of Go modules.
+	for _, name := range []string{"OFL-NotoSansTC.txt", "OFL-NotoColorEmoji.txt"} {
+		data, readErr := os.ReadFile(filepath.Join("internal", "control", "web", "fonts", name))
+		if readErr != nil {
+			return readErr
+		}
+		dir := filepath.Join("dist", "_licenses", "fonts")
+		if err = os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if err = os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			return err
+		}
 	}
 	var hashes strings.Builder
 	binaries, err := filepath.Glob("dist/rillway-*")

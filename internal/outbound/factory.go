@@ -25,13 +25,13 @@ func New(ctx context.Context, cfg config.Outbound) (Provider, error) {
 		return &direct{id: cfg.ID}, nil
 	case "warp":
 		if len(cfg.DNS) != 0 {
-			return nil, config.PublicError{Message: "WARP 由官方 Proxy 解析 DNS，請清空此出口的自訂 DNS 欄位。"}
+			return nil, config.PublicError{Message: "WARP resolves DNS through its official proxy. Clear the custom DNS field for this outbound."}
 		}
 		if cfg.ProxyAddress != "" {
 			host, port, err := net.SplitHostPort(cfg.ProxyAddress)
 			n, numberErr := strconv.Atoi(port)
 			if err != nil || host != "127.0.0.1" || numberErr != nil || n < 1 || n > 65535 {
-				return nil, config.PublicError{Message: "WARP Local Proxy 必須使用 127.0.0.1，連接埠範圍為 1–65535。"}
+				return nil, config.PublicError{Message: "WARP Local Proxy must use 127.0.0.1 with a port from 1 to 65535."}
 			}
 		}
 		return newWARP(cfg), nil

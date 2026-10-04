@@ -10,6 +10,7 @@ import (
 	"os"
 	"rillway/internal/config"
 	"rillway/internal/control"
+	"rillway/internal/i18n"
 	"rillway/internal/platform"
 	"rillway/internal/proxy"
 	"strings"
@@ -132,7 +133,7 @@ func Serve(ctx context.Context, path string, c config.Config, ready func(string)
 		go func() { defer wg.Done(); failures <- server.Serve(l) }()
 	}
 	if ready != nil {
-		ready(fmt.Sprintf("Web UI: https://%s\nPAC: http://%s/proxy.pac\nTLS SHA-256: %s\nAdmin token file: %s", c.Listeners.Admin, c.Listeners.PAC, fp, c.Security.AdminTokenFile))
+		ready(fmt.Sprintf(i18n.Message(i18n.FromContext(ctx), "Web UI: https://%s\nPAC: http://%s/proxy.pac\nTLS SHA-256: %s\nManagement token file: %s"), c.Listeners.Admin, c.Listeners.PAC, fp, c.Security.AdminTokenFile))
 	}
 	var serveErr error
 	select {

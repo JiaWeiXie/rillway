@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/rivo/uniseg v0.4.7
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.59.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
@@ -48,7 +49,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pires/go-proxyproto v0.15.0 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/safchain/ethtool v0.7.0 // indirect
 	github.com/tailscale/certstore v0.1.1-0.20260409135935-3638fb84b77d // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect

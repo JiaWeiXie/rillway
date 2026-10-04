@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"rillway/internal/config"
+	"rillway/internal/i18n"
 	"rillway/internal/outbound"
 	"strings"
 	"time"
@@ -26,35 +27,36 @@ type Client struct {
 type APIError struct {
 	Status  int
 	Message string
+	Source  string
 }
 
-func (e *APIError) Error() string { return fmt.Sprintf("管理 API (%d)：%s", e.Status, e.Message) }
+func (e *APIError) Error() string { return fmt.Sprintf("management API (%d): %s", e.Status, e.Message) }
 
 // NewClient verifies TLS normally; caFile adds a local CA without disabling verification.
 func NewClient(baseURL, token, caFile string) (*Client, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return nil, fmt.Errorf("管理網址格式不正確")
+		return nil, fmt.Errorf("invalid management URL")
 	}
 	if u.Scheme != "https" {
 		ip := net.ParseIP(u.Hostname())
 		local := u.Hostname() == "localhost" || ip != nil && ip.IsLoopback()
 		if u.Scheme != "http" || !local {
-			return nil, fmt.Errorf("遠端管理網址必須使用 HTTPS")
+			return nil, fmt.Errorf("remote management URLs must use HTTPS")
 		}
 	}
 	tc := &tls.Config{MinVersion: tls.VersionTLS12}
 	if caFile != "" {
 		pem, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, fmt.Errorf("讀取 CA 憑證：%w", err)
+			return nil, fmt.Errorf("read CA certificate: %w", err)
 		}
 		pool, _ := x509.SystemCertPool()
 		if pool == nil {
 			pool = x509.NewCertPool()
 		}
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("CA 憑證不含有效的 PEM certificate")
+			return nil, fmt.Errorf("CA file contains no valid PEM certificates")
 		}
 		tc.RootCAs = pool
 	}
@@ -76,6 +78,7 @@ func (c *Client) request(ctx context.Context, method, path string, body, dst any
 		return err
 	}
 	r.Header.Set("Authorization", "Bearer "+c.token)
+	r.Header.Set("Accept-Language", string(i18n.FromContext(ctx)))
 	if body != nil {
 		r.Header.Set("Content-Type", "application/json")
 	}
@@ -87,13 +90,14 @@ func (c *Client) request(ctx context.Context, method, path string, body, dst any
 	reader := io.LimitReader(res.Body, 8<<20)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		var e struct {
-			Error string `json:"error"`
+			Error  string `json:"error"`
+			Source string `json:"error_source"`
 		}
 		_ = json.NewDecoder(reader).Decode(&e)
 		if e.Error == "" {
 			e.Error = http.StatusText(res.StatusCode)
 		}
-		return &APIError{Status: res.StatusCode, Message: e.Error}
+		return &APIError{Status: res.StatusCode, Message: e.Error, Source: e.Source}
 	}
 	if dst != nil {
 		return json.NewDecoder(reader).Decode(dst)

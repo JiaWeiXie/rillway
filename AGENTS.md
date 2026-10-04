@@ -32,6 +32,9 @@ The user's current instructions and existing authorization take precedence. Cont
 
 The product is a Go binary with embedded Web UI and TUI. Avoid adding a separate frontend runtime or duplicating backend policy in either UI.
 WARP is an external official client; Tailscale and WireGuard run inside the binary. Preserve this separation and check dependency compatibility when upgrading networking libraries.
+Product UI, CLI help, TUI text, and known Rillway-owned status/error messages support English (`en`, default) and Traditional Chinese (`zh-Hant`). Keep both catalogs in sync. Preserve user-entered names and unknown upstream diagnostics verbatim; never translate arbitrary substrings of data or errors. Use consistent terms: outbound, routing rule, adaptive routing, and management token. See `docs/i18n.md` for locale selection and font behavior.
+Use grapheme-aware display width and truncation for terminal text, including CJK and emoji sequences. Web fonts must be bundled and licensed; do not require CDN access or silently install fonts on the host.
+Brand assets and their source prompts are documented in `docs/brand/README.md`. Keep runtime images under the embedded `internal/control/web/brand/` directory; do not add external font or image requests to the management UI.
 
 ## Development and checks
 

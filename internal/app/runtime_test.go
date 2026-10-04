@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"rillway/internal/config"
 	"rillway/internal/control"
+	"rillway/internal/i18n"
 	"rillway/internal/outbound"
 	"rillway/internal/platform"
 	"strings"
@@ -139,13 +140,16 @@ func TestDaemonTLSProxyPACAndShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(i18n.WithLocale(t.Context(), i18n.TraditionalChinese))
 	defer cancel()
-	ready := make(chan struct{})
+	ready := make(chan string, 1)
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, path, c, func(string) { close(ready) }) }()
+	go func() { done <- Serve(ctx, path, c, func(message string) { ready <- message }) }()
 	select {
-	case <-ready:
+	case message := <-ready:
+		if !strings.Contains(message, "管理權杖檔案："+c.Security.AdminTokenFile) || strings.Contains(message, token) {
+			t.Fatal("startup message must localize the label, preserve the path, and hide the token")
+		}
 	case err := <-done:
 		t.Fatal(err)
 	case <-time.After(15 * time.Second):

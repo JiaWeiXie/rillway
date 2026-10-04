@@ -10,28 +10,32 @@ import (
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/engine"
+	"rillway/internal/i18n"
 	"rillway/internal/outbound"
 	"strings"
 	"time"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rivo/uniseg"
 )
 
 type Options struct {
 	BaseURL        string
 	Token          string
 	CAFile         string
+	Locale         i18n.Locale
 	InstallService func(context.Context) error
 	InstallCommand func() *exec.Cmd
 }
 
 func Run(ctx context.Context, options Options) error {
+	ctx = i18n.WithLocale(ctx, options.Locale)
 	client, err := control.NewClient(options.BaseURL, options.Token, options.CAFile)
 	if err != nil {
 		return err
 	}
-	m := model{ctx: ctx, client: client, install: options.InstallService, installCommand: options.InstallCommand, width: 100, height: 30, loading: true, statusLoading: true, nextStatus: time.Now().Add(10 * time.Second)}
+	m := model{ctx: ctx, locale: options.Locale, client: client, install: options.InstallService, installCommand: options.InstallCommand, width: 100, height: 30, loading: true, statusLoading: true, nextStatus: time.Now().Add(10 * time.Second)}
 	_, err = tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
 	return err
 }
@@ -58,6 +62,7 @@ type tickMsg time.Time
 
 type model struct {
 	ctx            context.Context
+	locale         i18n.Locale
 	client         *control.Client
 	install        func(context.Context) error
 	installCommand func() *exec.Cmd
@@ -109,14 +114,14 @@ func (m model) loadStatuses() tea.Cmd {
 func (m model) apply(cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
 		_, err := m.client.Apply(m.ctx, cfg)
-		return resultMsg{message: "設定已儲存，只影響新連線。", err: err}
+		return resultMsg{message: "Configuration saved. Applies to new connections only.", err: err}
 	}
 }
 
 func (m model) action(id, action, value string) tea.Cmd {
 	return func() tea.Msg {
 		err := m.client.Action(m.ctx, id, action, value)
-		return resultMsg{message: "出口操作已完成。", err: err}
+		return resultMsg{message: "Outbound action completed.", err: err}
 	}
 }
 
@@ -167,6 +172,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			m.input = ""
 			return m, tea.Quit
+		}
+		if msg.String() == "ctrl+l" || msg.String() == "L" && m.form != "license" {
+			if m.locale == i18n.TraditionalChinese {
+				m.locale = i18n.English
+			} else {
+				m.locale = i18n.TraditionalChinese
+			}
+			if m.ctx == nil {
+				m.ctx = context.Background()
+			}
+			m.ctx = i18n.WithLocale(m.ctx, m.locale)
+			return m, nil
 		}
 		if m.form != "" {
 			return m.updateForm(msg)
@@ -245,10 +262,12 @@ func (m model) updateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.form = ""
 			return m, m.action(id, "license", value)
 		case "backspace", "ctrl+h":
-			r := []rune(m.input)
-			if len(r) > 0 {
-				m.input = string(r[:len(r)-1])
+			graphemes := uniseg.NewGraphemes(m.input)
+			last := 0
+			for graphemes.Next() {
+				last, _ = graphemes.Positions()
 			}
+			m.input = m.input[:last]
 		default:
 			if key.Type == tea.KeyRunes && len(m.input) < 1024 {
 				for _, r := range key.Runes {
@@ -264,12 +283,12 @@ func (m model) updateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.installCommand != nil {
 				cmd := m.installCommand()
 				if cmd == nil {
-					m.err = fmt.Errorf("未提供服務安裝指令")
+					m.err = fmt.Errorf("service installation command is unavailable")
 					return m, nil
 				}
-				return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return resultMsg{message: "背景服務已安裝。", err: err} })
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return resultMsg{message: "Background service installed.", err: err} })
 			}
-			return m, func() tea.Msg { return resultMsg{message: "背景服務已安裝。", err: m.install(m.ctx)} }
+			return m, func() tea.Msg { return resultMsg{message: "Background service installed.", err: m.install(m.ctx)} }
 		}
 	case "rule":
 		count := len(m.cfg.Outbounds) + 1
@@ -313,7 +332,7 @@ func ruleForFlow(f flow, id, outboundID, family string, candidates []string) (co
 		host = f.IP
 	}
 	if host == "" {
-		return config.Rule{}, fmt.Errorf("這條連線沒有可用的目的地")
+		return config.Rule{}, fmt.Errorf("this connection has no destination")
 	}
 	r := config.Rule{ID: id, Outbound: outboundID, Family: family}
 	if ip, err := netip.ParseAddr(host); err == nil {
@@ -323,7 +342,7 @@ func ruleForFlow(f flow, id, outboundID, family string, candidates []string) (co
 	}
 	if outboundID == "" {
 		if len(candidates) == 0 {
-			return config.Rule{}, fmt.Errorf("先在 Web UI 設定自適應候選出口")
+			return config.Rule{}, fmt.Errorf("set up adaptive routing candidates in the Web UI first")
 		}
 		r.Adaptive = true
 		r.Candidates = append([]string(nil), candidates...)
@@ -349,21 +368,22 @@ func (m *model) clamp() {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString("\n  ≈ Rillway   網路分流控制台\n\n")
-	for i, name := range []string{"連線總覽", "出口與 VPN", "服務設定"} {
+	b.WriteString(m.text("\n  ≈ Rillway   Routing console\n\n"))
+	for i, name := range []string{"Connections", "Outbounds & VPNs", "Service settings"} {
+		name = m.text(name)
 		if m.page == i {
 			fmt.Fprintf(&b, "  [%s]", name)
 		} else {
 			fmt.Fprintf(&b, "   %s ", name)
 		}
 	}
-	fmt.Fprintf(&b, "\n\n  自適應：%s   設定版本：%d\n", map[bool]string{true: "啟用", false: "關閉"}[m.cfg.Adaptive.Enabled], m.cfg.Revision)
+	fmt.Fprintf(&b, m.text("\n\n  Adaptive routing: %s   Configuration revision: %d\n"), m.text(map[bool]string{true: "Enabled", false: "Disabled"}[m.cfg.Adaptive.Enabled]), m.cfg.Revision)
 	if m.form != "" {
 		b.WriteString(m.formView())
 		return b.String()
 	}
 	if !m.ready && m.err == nil {
-		b.WriteString("\n  正在連接管理服務…\n")
+		b.WriteString(m.text("\n  Connecting to the management service…\n"))
 	} else {
 		switch m.page {
 		case 0:
@@ -371,30 +391,31 @@ func (m model) View() string {
 		case 1:
 			b.WriteString(m.outboundsView())
 		case 2:
-			fmt.Fprintf(&b, "\n  HTTP Proxy    %s\n  SOCKS5        %s\n  管理介面      %s\n  PAC           %s\n\n  Mac 的公司服務請由 PAC bypass 保留給本機 Tailscale。\n  輸入 i 可透過 CLI 安裝背景服務；Web UI 可編輯 PAC 與完整規則。\n", m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
+			fmt.Fprintf(&b, m.text("\n  HTTP proxy    %s\n  SOCKS5        %s\n  Management UI %s\n  PAC           %s\n\n  Use PAC bypass for company services on Mac to keep using local Tailscale.\n  Press i to install the background service.\n  Edit PAC and all routing rules in the Web UI.\n"), m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
 		}
 	}
 	if m.err != nil {
-		fmt.Fprintf(&b, "\n  錯誤：%s\n", m.err.Error())
+		fmt.Fprintf(&b, m.text("\n  Error: %s\n"), m.errorText(m.err))
 	} else if m.message != "" {
-		fmt.Fprintf(&b, "\n  %s\n", m.message)
+		fmt.Fprintf(&b, "\n  %s\n", m.text(m.message))
 	}
-	b.WriteString("\n  Tab 換頁   ↑↓ 選擇   a 切換自適應   r 更新   q 離開\n")
+	b.WriteString(m.text("\n  Tab Switch tab   ↑↓ Select   a Toggle adaptive routing   r Refresh   q Quit\n"))
+	b.WriteString(m.languageHelp())
 	if m.page == 0 {
-		b.WriteString("  Enter 為選定連線建立規則；既有連線保留原出口。\n")
+		b.WriteString(m.text("  Enter Create routing rule; existing connections keep their outbound.\n"))
 	}
 	if m.page == 1 {
-		b.WriteString("  c 連線   d 斷線   v 驗證   n 註冊   l 輸入 WARP+ 授權碼\n")
+		b.WriteString(m.text("  c Connect   d Disconnect   v Verify   n Register   l WARP+ license key\n"))
 	}
 	return b.String()
 }
 
 func (m model) flowsView() string {
 	if len(m.flows) == 0 {
-		return "\n  等待第一條連線。請將瀏覽器或 Mac 指向 Rillway Proxy。\n"
+		return m.text("\n  No connections yet. Point your browser or Mac at the Rillway proxy.\n")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n    %s %s %s %s\n", cell("目的地", 34), cell("出口", 15), cell("下載", 13), "上傳")
+	fmt.Fprintf(&b, "\n    %s %s %s %s\n", cell(m.text("Destination"), 34), cell(m.text("Outbound"), 15), cell(m.text("Download"), 13), m.text("Upload"))
 	start, end := m.visible(len(m.flows))
 	for i := start; i < end; i++ {
 		f := m.flows[i]
@@ -411,26 +432,26 @@ func (m model) flowsView() string {
 	f := m.flows[m.selected]
 	ip := f.IP
 	if ip == "" {
-		ip = "上游未提供實際 IP"
+		ip = m.text("IP not reported by upstream")
 	}
-	status := "連線中"
+	status := "Active"
 	if f.Closed {
-		status = "已結束"
+		status = "Closed"
 	}
-	fmt.Fprintf(&b, "\n  %s · %s · 規則 %s · 建連 %.1f ms\n  累計下載 %s / 上傳 %s\n", ip, status, f.Rule, f.ConnectMillis, humanBytes(float64(f.DownloadBytes)), humanBytes(float64(f.UploadBytes)))
+	fmt.Fprintf(&b, m.text("\n  %s · %s · Routing rule %s · Connect %.1f ms\n  Downloaded %s / Uploaded %s\n"), ip, m.text(status), f.Rule, f.ConnectMillis, humanBytes(float64(f.DownloadBytes)), humanBytes(float64(f.UploadBytes)))
 	return b.String()
 }
 
 func (m model) outboundsView() string {
 	if len(m.cfg.Outbounds) == 0 {
-		return "\n  尚無出口，請在 Web UI 新增。\n"
+		return m.text("\n  No outbounds configured. Add one in the Web UI.\n")
 	}
 	var b strings.Builder
 	b.WriteString("\n")
 	start, end := m.visible(len(m.cfg.Outbounds))
 	for i := start; i < end; i++ {
 		o := m.cfg.Outbounds[i]
-		state := "等待狀態"
+		state := "Waiting for status"
 		for _, s := range m.statuses {
 			if s.ID == o.ID {
 				state = s.State
@@ -443,17 +464,17 @@ func (m model) outboundsView() string {
 		if i == m.selected {
 			marker = "›"
 		}
-		fmt.Fprintf(&b, "  %s %s %s %s\n", marker, cell(o.ID, 25), cell(o.Type, 16), state)
+		fmt.Fprintf(&b, "  %s %s %s %s\n", marker, cell(o.ID, 25), cell(m.text(o.Type), 16), m.text(state))
 	}
 	o := m.cfg.Outbounds[m.selected]
 	for _, s := range m.statuses {
 		if s.ID == o.ID {
-			fmt.Fprintf(&b, "\n  %s\n", s.Detail)
+			fmt.Fprintf(&b, "\n  %s\n", i18n.Message(m.locale, s.Detail))
 			if s.Version != "" || s.Mode != "" {
-				fmt.Fprintf(&b, "  版本 %s · 模式 %s · Proxy listener %t\n", s.Version, s.Mode, s.Listener)
+				fmt.Fprintf(&b, m.text("  Version %s · Mode %s · Proxy listener %t\n"), s.Version, s.Mode, s.Listener)
 			}
 			if s.AuthURL != "" && strings.HasPrefix(s.AuthURL, "https://") {
-				fmt.Fprintf(&b, "  登入：%s\n", s.AuthURL)
+				fmt.Fprintf(&b, m.text("  Sign in: %s\n"), s.AuthURL)
 			}
 		}
 	}
@@ -478,27 +499,28 @@ func (m model) visible(count int) (int, int) {
 
 func (m model) formView() string {
 	if m.form == "license" {
-		return fmt.Sprintf("\n  WARP+ 授權碼 · %s\n\n  %s▏\n\n  Enter 套用   Esc 取消\n  授權碼不會顯示或保存在 TUI。\n", m.licenseID, strings.Repeat("•", len([]rune(m.input))))
+		return fmt.Sprintf(m.text("\n  WARP+ license key · %s\n\n  %s▏\n\n  Enter Apply   Esc Cancel\n  The key is masked and is not saved by this TUI.\n"), m.licenseID, strings.Repeat("•", uniseg.GraphemeClusterCount(m.input))) + m.languageHelp()
 	}
 	if m.form == "install" {
-		return "\n  安裝 Rillway 背景服務\n\n  這會透過 CLI 建立系統服務。\n  Enter 安裝   Esc 取消\n"
+		return m.text("\n  Install the Rillway background service\n\n  This creates a system service.\n  Enter Install   Esc Cancel\n") + m.languageHelp()
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  為 %s 建立規則\n\n", m.ruleFlow.Host)
+	fmt.Fprintf(&b, m.text("\n  Create routing rule for %s\n\n"), m.ruleFlow.Host)
 	for i, o := range m.cfg.Outbounds {
 		marker := " "
 		if m.ruleChoice == i {
 			marker = "›"
 		}
-		fmt.Fprintf(&b, "  %s %s (%s)\n", marker, o.ID, o.Type)
+		fmt.Fprintf(&b, "  %s %s (%s)\n", marker, o.ID, m.text(o.Type))
 	}
 	marker := " "
 	if m.ruleChoice == len(m.cfg.Outbounds) {
 		marker = "›"
 	}
-	fmt.Fprintf(&b, "  %s 自適應出口\n\n  位址類型：%s\n\n  ↑↓ 選出口   f 換位址類型   Enter 儲存   Esc 取消\n", marker, []string{"雙棧自動", "IPv4", "IPv6"}[m.ruleFamily])
+	fmt.Fprintf(&b, m.text("  %s Adaptive routing\n\n  IP version: %s\n\n  ↑↓ Select outbound   f Change IP version   Enter Save   Esc Cancel\n"), marker, m.text([]string{"Automatic (dual stack)", "IPv4", "IPv6"}[m.ruleFamily]))
+	b.WriteString(m.languageHelp())
 	if m.err != nil {
-		fmt.Fprintf(&b, "\n  %s\n", m.err.Error())
+		fmt.Fprintf(&b, "\n  %s\n", m.errorText(m.err))
 	}
 	return b.String()
 }
@@ -517,21 +539,25 @@ func humanBytes(n float64) string {
 }
 
 func cell(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if used := uniseg.StringWidth(s); used <= width {
+		return s + strings.Repeat(" ", width-used)
+	}
 	var b strings.Builder
 	used := 0
-	for _, r := range s {
-		n := 1
-		if r >= 0x1100 && (r <= 0x115f || r >= 0x2e80) {
-			n = 2
-		}
+	graphemes := uniseg.NewGraphemes(s)
+	for graphemes.Next() {
+		n := graphemes.Width()
 		if used+n > width-1 {
-			b.WriteRune('…')
-			used++
 			break
 		}
-		b.WriteRune(r)
+		b.WriteString(graphemes.Str())
 		used += n
 	}
+	b.WriteRune('…')
+	used++
 	if used < width {
 		b.WriteString(strings.Repeat(" ", width-used))
 	}

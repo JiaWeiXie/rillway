@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode"
 )
 
 type fakeBackend struct {
@@ -24,6 +26,7 @@ type fakeBackend struct {
 	cfg                    config.Config
 	failApply, errorAction error
 	lastAction, lastValue  string
+	statuses               []outbound.Status
 }
 
 func newBackend() *fakeBackend {
@@ -49,6 +52,9 @@ func (b *fakeBackend) Snapshot() any {
 }
 
 func (b *fakeBackend) Statuses(context.Context) []outbound.Status {
+	if b.statuses != nil {
+		return b.statuses
+	}
 	return []outbound.Status{{ID: "warp", State: "ready"}}
 }
 
@@ -212,9 +218,72 @@ func TestEmbeddedUIAndSecurityHeaders(t *testing.T) {
 		t.Fatal("unexpected asset exposed")
 	}
 	w := request(h, "GET", "/", "", "", "")
-	for _, text := range []string{"lang=\"zh-Hant\"", "id=\"flows\"", "id=\"license-value\" type=\"password\"", "/app.js"} {
+	for _, text := range []string{"lang=\"en\"", "id=\"flows\"", "id=\"license-value\" type=\"password\"", "/app.js", "Management token", "Connections", "Outbounds", "Routing rules", "Settings", "Adaptive routing", "value=\"direct\">Direct", "rel=\"icon\" type=\"image/png\" href=\"/brand/rillway-mark.png\""} {
 		if !strings.Contains(w.Body.String(), text) {
 			t.Fatalf("missing UI contract %s", text)
+		}
+	}
+}
+
+func TestEmbeddedEnglishCopyAndDateLocale(t *testing.T) {
+	h := New(newBackend(), "token")
+	for _, path := range []string{"/", "/app.js", "/i18n.js"} {
+		w := request(h, "GET", path, "", "", "")
+		for _, r := range strings.ReplaceAll(w.Body.String(), "繁體中文", "") {
+			if unicode.Is(unicode.Han, r) {
+				t.Fatalf("non-English built-in copy remains in %s", path)
+			}
+		}
+		if path == "/i18n.js" && (!strings.Contains(w.Body.String(), "'en-US'") || !strings.Contains(w.Body.String(), "'zh-TW'")) {
+			t.Fatal("dates do not follow the selected locale")
+		}
+	}
+	w := request(h, "GET", "/api/v1/config", "", "", "")
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "valid management token") || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("English authentication error or private response cache policy changed")
+	}
+}
+
+func TestEmbeddedBrandAssets(t *testing.T) {
+	h := New(newBackend(), "hidden-admin-secret")
+	for _, path := range []string{"/brand/rillway-mark.png", "/brand/rillway-flow.png"} {
+		w := request(h, "GET", path, "", "", "")
+		if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/png" || w.Header().Get("Cache-Control") != "public, max-age=3600" {
+			t.Fatalf("invalid brand response: %s %d %v", path, w.Code, w.Header())
+		}
+		imageConfig, err := png.DecodeConfig(bytes.NewReader(w.Body.Bytes()))
+		if err != nil || imageConfig.Width == 0 || imageConfig.Height == 0 {
+			t.Fatalf("invalid embedded PNG %s: %v", path, err)
+		}
+		embedded, err := assets.ReadFile("web" + path)
+		if err != nil || !bytes.Equal(embedded, w.Body.Bytes()) {
+			t.Fatal("brand route did not serve the embedded asset")
+		}
+		if !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatal("brand routes lost security headers")
+		}
+		head := request(h, "HEAD", path, "", "", "")
+		if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Type") != "image/png" {
+			t.Fatal("invalid HEAD response for brand asset")
+		}
+	}
+	for _, path := range []string{"/brand/", "/brand/missing.png", "/brand/secret.json", "/brand/rillway-mark.png/source"} {
+		if w := request(h, "GET", path, "", "", ""); w.Code != http.StatusNotFound {
+			t.Fatalf("unexpected brand route exposed: %s = %d", path, w.Code)
+		}
+	}
+	if w := request(h, "POST", "/brand/rillway-mark.png", "", "", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatal("brand route allowed mutation method")
+	}
+}
+
+func TestBrandNamespaceAllowsOnlyImageFiles(t *testing.T) {
+	for path, want := range map[string]string{
+		"brand/nested/mark.png": "image/png", "brand/cover.webp": "image/webp",
+		"brand/../app.js": "", "brand/config.json": "", "web/brand/mark.png": "",
+	} {
+		if got := brandContentType(path); got != want {
+			t.Fatalf("%s MIME = %q, want %q", path, got, want)
 		}
 	}
 }
@@ -277,8 +346,8 @@ func TestExplicitPublicErrorsReachAPIWithoutPrivateCause(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, path, body, message string
 	}{
-		{"apply", "PUT", "/api/v1/config", `{"revision":7}`, "監聽位置變更需要重新啟動服務"},
-		{"action", "POST", "/api/v1/outbounds/warp/connect", `{}`, "目前 WARP 版本不支援 Proxy 模式，請更新官方用戶端"},
+		{"apply", "PUT", "/api/v1/config", `{"revision":7}`, "Changing listener addresses requires a service restart."},
+		{"action", "POST", "/api/v1/outbounds/warp/connect", `{}`, "This WARP version does not support proxy mode. Update the official client."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newBackend()
