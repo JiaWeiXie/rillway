@@ -45,6 +45,18 @@ mise run fuzz
 
 ## 外部環境
 
+### 2026-10-05：既有 Ubuntu VM 的 binary 更新驗收
+
+已在既有 Ubuntu 26.04.1 LTS／x86_64 VM 更新 Linux amd64 binary。來源 commit 為 `36958c0d046a14faf609432f8a0dd20c00444072`；更新後 SHA-256 為 `85f60dde8cb1f60aea497aec3c9dfe98d554cba7c95412c3be4732d75516268e`。先停止 Rillway，再備份有效設定與 state，原子替換 binary，使用既有 unit 重新啟動。
+
+- systemd 為 `active/running/enabled`，執行帳號 `rillway`，更新後 `NRestarts=0`；運行中 executable 的 SHA-256 與新 binary 相同。
+- 設定、unit、管理 Token 與 TLS 憑證的雜湊均保持不變；既有設定版本保留。備份目錄 `0700`、state archive `0600`。
+- VM 的 HTTP forwarding、HTTPS CONNECT 與 SOCKS5 TCP 實際傳輸通過；Mac 的 HTTPS CONNECT、SOCKS5、明確信任憑證的 Web UI、PAC 與內建中文字型／Emoji 字型可取得，未登入 API 正確回傳 `401`。
+- VM 與 NAS 經 Proxy 對 GHCR 的 `GET /v2/` 得到預期的未登入 `401`；觀察紀錄確認 GHCR 使用既有 WARP 出口，GitHub 主站使用 direct。WARP 顯示 `connected`、`Unlimited`、`proxy` 且 listener 可用，未重新註冊或修改 license。
+- 此次未驗證首次安裝、重開機、備份還原、Docker 私有映像授權、真實 Tailscale／WireGuard 或下載效能。以下外部環境清單仍保留其未驗證範圍。
+
+私人主機資料、完整操作紀錄與備份位置保存在 repository 之外或已被 Git 忽略的受限資料夾，未加入 Git。
+
 真實出口測試使用 `mise run test:live`，必須明確提供 `RILLWAY_LIVE_CONFIG`。缺少帳號、設定或目標時應回報 `NOT VERIFIED`／`SKIP`，不能把跳過視為成功。
 
 下列項目必須在各自的受控環境重新驗證，repository 不宣稱目前狀態：
