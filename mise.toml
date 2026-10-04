@@ -41,3 +41,11 @@ run = ["go test ./internal/config -run=^$ -fuzz=FuzzDecode -fuzztime=10s", "go t
 
 [tasks.release]
 run = "sh scripts/release.sh"
+
+[tasks."hooks:install"]
+description = "Enable this repository's Git pre-commit hook"
+run = "sh scripts/hooks/install.sh"
+
+[tasks."hooks:check"]
+description = "Check the Git staged snapshot without changing files"
+run = "bash scripts/hooks/pre-commit.sh"

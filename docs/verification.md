@@ -4,7 +4,7 @@
 
 ## 整體交付檢查
 
-- `mise run check`：全部 10 個 package 通過，lint 0 issues，race detector 未發現競態，總 statement coverage **59.6%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- 最新 `mise run check`：全部 12 個 package 通過，包含新增的 agent helper 與 hook 測試；lint 0 issues，race detector 未發現競態，總 statement coverage **61.7%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
 - `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（約 21–22 MiB）、SHA256SUMS、module 清單與第三方授權檔。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
@@ -18,6 +18,15 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 ```
 
 腳本只接受全新、沒有既有 Rillway 安裝的 Ubuntu 24.04／26.04，會實際安裝並測試服務。這次沒有在目前 Mac 執行該腳本。
+
+## 本機 AI Agent hooks
+
+- `AGENTS.md`、Claude 共用入口、Codex／Claude `PostToolUse` 設定已建立；JSON 與 shell 語法檢查通過，mise 可載入新增的 hook tasks。
+- 編輯後 wrapper 實際回傳「lint 與相關 Go 測試通過」的標準 JSON；同一棵來源樹再次執行時命中快取，不重跑檢查。helper 的 statement coverage 為 **84.4%**。
+- 暫存副本測試涵蓋部分暫存、alternate index、異常檔名、私密路徑、shell／embedded assets 變更、檢查失敗及暫存清理；installer 測試確認保留既有 hook manager 與 hook 內容。
+- wrapper 測試涵蓋 Go 環境清理、輸入原樣保留、不執行輸入命令、工具缺失／啟動失敗時的 JSON 提示、RTK 有無兩種環境。helper 測試確認檢查期間改檔不會快取到錯誤版本。
+- 此 checkout 已執行 `mise run hooks:install`，repo-local `core.hooksPath` 為 `.githooks`。新 clone 仍須自行啟用。
+- Codex／Claude session 中的自動觸發尚未驗證；Codex 的新 hook 仍需在 `/hooks` 完成信任。手動 wrapper 成功不能視為已完成平台信任。啟用方式見 [Agent 工作流程](agent-workflow.md)。
 
 ## 已完成的核心與 daemon 測試
 

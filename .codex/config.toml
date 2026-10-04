@@ -1,0 +1,3 @@
+# Project-local capabilities only; inherit the user's model and permissions.
+[features]
+hooks = true

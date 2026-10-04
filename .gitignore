@@ -18,3 +18,4 @@
 *.prof
 .rillway-proxy-backup.json
 rillway-proxy-backup.json
+/.claude/settings.local.json

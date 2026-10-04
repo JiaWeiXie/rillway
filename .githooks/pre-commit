@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if command -v rtk >/dev/null 2>&1; then
+  repository=$(rtk proxy git rev-parse --show-toplevel)
+else
+  repository=$(git rev-parse --show-toplevel)
+fi
+
+exec "$repository/scripts/hooks/pre-commit.sh"

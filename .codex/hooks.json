@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^(apply_patch|Edit|Write|Bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$(git rev-parse --show-toplevel)/scripts/hooks/post-edit.sh\"",
+            "timeout": 120,
+            "statusMessage": "Checking changed Rillway code"
+          }
+        ]
+      }
+    ]
+  }
+}
