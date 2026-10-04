@@ -24,7 +24,7 @@ func TestDockerExportAPIAuthenticationValidationAndNoMutation(t *testing.T) {
 		{"GET", "", "correct", "", "en", 200},
 		{"POST", `{"proxy_url":"http://proxy:80","no_proxy":"corp.example"}`, "correct", "http://other.example", "en", 403},
 		{"POST", `{"proxy_url":"http://proxy:80","no_proxy":"corp.example"}`, "correct", "", "en", 200},
-		{"POST", `{"proxy_url":"http://user@proxy:80","no_proxy":""}`, "correct", "", "zh-Hant", 422},
+		{"POST", `{"proxy_url":"http://user:` + `secret@proxy:80","no_proxy":""}`, "correct", "", "zh-Hant", 422},
 		{"POST", `{"proxy_url":"http://proxy:80","no_proxy":"","license":"secret"}`, "correct", "", "en", 400},
 	} {
 		r := httptest.NewRequest(tc.method, "/api/v1/integrations/docker", strings.NewReader(tc.body))

@@ -12,9 +12,9 @@ Web UI 的 **Settings → Docker proxy** 可產生、複製或下載四種格式
 | Build 的 `RUN` 下載 | Docker client 的 `proxies.default` 或明確的 build args | 同左 |
 | 新容器內 HTTP／HTTPS | Docker client 設定、`--env-file` 或 Compose environment | 同左 |
 
-目前 NAS Proxy 是 `http://192.0.2.21:17890`。HTTP_PROXY 與 HTTPS_PROXY 都用這個 **HTTP** URL；HTTPS 目的地經 CONNECT 傳輸，不能將 Proxy URL 改成管理介面的 HTTPS 埠。Docker 不讀瀏覽器 PAC，因此須另外設定。
+下列範例 Proxy 是 `http://192.0.2.20:17890`；`192.0.2.0/24` 是文件保留網段，請換成實際位址。HTTP_PROXY 與 HTTPS_PROXY 都用這個 **HTTP** URL；HTTPS 目的地經 CONNECT 傳輸，不能將 Proxy URL 改成管理介面的 HTTPS 埠。Docker 不讀瀏覽器 PAC，因此須另外設定。
 
-容器中的 `127.0.0.1` 通常指容器自己。使用能從 Docker daemon、builder 及容器抵達的 LAN 位址；本機 host gateway 名稱與網路模式須依 Docker 平台確認。Proxy 的來源 ACL 也須允許實際來源。目前 NAS 只允許既有 Mac、VM 與 loopback；其他主機需另加明確來源。
+容器中的 `127.0.0.1` 通常指容器自己。使用能從 Docker daemon、builder 及容器抵達的 LAN 位址；本機 host gateway 名稱與網路模式須依 Docker 平台確認。Proxy 的來源 ACL 也須允許實際來源，請只加入必要的明確來源。
 
 ## 產生及合併 JSON
 
@@ -24,10 +24,10 @@ Web UI 的 **Settings → Docker proxy** 可產生、複製或下載四種格式
 umask 077
 mkdir -p .local/docker
 # 不需載入本機 Rillway 設定，也能指定遠端 Proxy。
-rillway docker export --proxy-url http://192.0.2.21:17890 --target client > .local/docker/config.json
-rillway docker export --proxy-url http://192.0.2.21:17890 --target daemon > .local/docker/daemon.json
+rillway docker export --proxy-url http://192.0.2.20:17890 --target client > .local/docker/config.json
+rillway docker export --proxy-url http://192.0.2.20:17890 --target daemon > .local/docker/daemon.json
 # 已有 client 設定時，合併保留 auths、credsStore 及其他欄位。
-rillway docker export --proxy-url http://192.0.2.21:17890 --target client --input "$HOME/.docker/config.json" > .local/docker/config-merged.json
+rillway docker export --proxy-url http://192.0.2.20:17890 --target client --input "$HOME/.docker/config.json" > .local/docker/config-merged.json
 # 也可從 Rillway 設定讀取公布的 Proxy 位址與 PAC bypass 清單。
 rillway docker export --config /path/to/rillway/config.json --target client
 ```
@@ -41,9 +41,9 @@ client 格式為 `proxies.default.httpProxy`／`httpsProxy`／`noProxy`；daemon
 ## Build、docker run 與 Compose
 
 ```sh
-rillway docker export --proxy-url http://192.0.2.21:17890 --target env > .local/docker/rillway-docker.env
+rillway docker export --proxy-url http://192.0.2.20:17890 --target env > .local/docker/rillway-docker.env
 docker run --rm --env-file .local/docker/rillway-docker.env curlimages/curl:8.14.1 https://example.com
-rillway docker export --proxy-url http://192.0.2.21:17890 --target compose > .local/docker/compose.yaml
+rillway docker export --proxy-url http://192.0.2.20:17890 --target compose > .local/docker/compose.yaml
 ```
 
 Compose 匯出是範例，將 `your-image:tag` 換成你的映像，再把 environment 區塊合併進既有服務。環境變數檔使用沒有引號的 `KEY=value`，適合 `docker run --env-file`；不需要用 shell 執行它。
@@ -51,10 +51,10 @@ Compose 匯出是範例，將 `your-image:tag` 換成你的映像，再把 envir
 若 client JSON 尚未套用，可明確傳 Build 的參數：
 
 ```sh
-docker build --build-arg HTTP_PROXY=http://192.0.2.21:17890 \
-  --build-arg HTTPS_PROXY=http://192.0.2.21:17890 \
-  --build-arg http_proxy=http://192.0.2.21:17890 \
-  --build-arg https_proxy=http://192.0.2.21:17890 \
+docker build --build-arg HTTP_PROXY=http://192.0.2.20:17890 \
+  --build-arg HTTPS_PROXY=http://192.0.2.20:17890 \
+  --build-arg http_proxy=http://192.0.2.20:17890 \
+  --build-arg https_proxy=http://192.0.2.20:17890 \
   --build-arg NO_PROXY=localhost,.corp.example,10.0.0.0/8 \
   --build-arg no_proxy=localhost,.corp.example,10.0.0.0/8 .
 ```
@@ -69,7 +69,7 @@ OrbStack 預設跟隨 macOS Proxy，也可明確設定：
 
 ```sh
 orb config get network_proxy
-orb config set network_proxy http://192.0.2.21:17890
+orb config set network_proxy http://192.0.2.20:17890
 orb config set network.proxy.exclude "localhost,.corp.example,10.0.0.0/8,192.168.0.0/16,100.64.0.0/10"
 # 恢復跟隨系統設定；若原本是自訂值，應恢復原值。
 orb config set network_proxy auto
@@ -89,14 +89,14 @@ Docker Hub 的 `registry-1.docker.io`、`auth.docker.io` 及實際下載 CDN 會
 
 `GET /api/v1/integrations/docker` 回傳預設 Proxy URL、NO_PROXY、loopback／認證提示與四份匯出。`POST` 接受 `{"proxy_url":"http://host:17890","no_proxy":"localhost,.corp.example"}`，只驗證並產生設定；需管理 token、來源 ACL 與同源請求，不更改 revision、VPN 或設定檔。
 
-測試及 NAS 實機結果見 [驗證紀錄](verification.md)。官方設定語意參考 [Docker daemon Proxy](https://docs.docker.com/engine/daemon/proxy/)、[Docker client Proxy](https://docs.docker.com/engine/cli/proxy/)、[OrbStack networking](https://docs.orbstack.dev/docker/network)。
+可重跑的測試範圍見 [驗證紀錄](verification.md)。官方設定語意參考 [Docker daemon Proxy](https://docs.docker.com/engine/daemon/proxy/)、[Docker client Proxy](https://docs.docker.com/engine/cli/proxy/)、[OrbStack networking](https://docs.orbstack.dev/docker/network)。
 
-## virtualization host NAS 與同機 VM 的連線
+## 虛擬化主機與同機 VM 的連線
 
-同一台 NAS 上的 VM 若使用 macvtap 接到實體網卡，主機直接從那張網卡連 VM 可能無法互通，見 [libvirt 的 macvtap 說明](https://wiki.libvirt.org/TroubleshootMacvtapHostFail.html)。先確認 NAS 的來源介面、路由與 VM 的來源限制；不要直接開放整個區網或清除防火牆。
+同一台主機上的 VM 若使用 macvtap 接到實體網卡，主機直接從那張網卡連 VM 可能無法互通，見 [libvirt 的 macvtap 說明](https://wiki.libvirt.org/TroubleshootMacvtapHostFail.html)。先確認主機的來源介面、路由與 VM 的來源限制；不要直接開放整個區網或清除防火牆。
 
-本次 virtualization host 的 VM 使用 `vm-uplink` 的 macvtap，NAS 另有能連 VM 的 `host-interface`。實際修正只新增 VM 的 `/32` 路由，從 `host-interface`、NAS `192.0.2.22` 連 `192.0.2.21`；VM 的 Rillway ACL 只新增 NAS `192.0.2.22/32`。NAS 的 `/etc/systemd/system/rillway-vm-route.service` 已啟用並執行，未變更預設路由、兩張網卡的設定或 Docker 設定。此配置僅適用於這台已確認介面的 NAS，其他機器需先核對。
+若主機有另一張能到達 VM 網段的介面，可為 VM 加入單一 `/32` host route，並在 Rillway ACL 只加入實際需要的主機來源。介面名稱、來源位址、下一跳與持久化方式必須先在該主機核對；不要從本文件複製未驗證的路由命令。
 
-若要還原這次 NAS 路由，可停止並停用該 unit；其 `ExecStop` 只刪除此 `/32` 路由。原路由快照保留在 NAS 的 root 私有資料夾 `/var/lib/rillway-network-backup/`。VM 的 ACL 修改前設定備份為 `/var/backups/rillway-nas-access-20261004/config-before.json`。ACL 還原需合併當前設定，避免覆寫之後新增的規則。
+若將 host route 做成 systemd unit，`ExecStop` 應只刪除該 `/32` 路由。套用前把路由快照與 Rillway 設定備份放在 repository 外的 root 私有目錄；ACL 還原需合併目前設定，避免覆寫之後新增的規則。
 
-已從 NAS 成功拉取 `curlimages/curl:8.14.1`；沒有建立測試容器。Private GHCR 映像仍須有可用的 GitHub token 與套件讀取權限；本次登入失敗由使用者確認是 token 過期，更新後恢復正常。工具不讀取或管理 GHCR token。路由 unit 的開機與 NAS 韌體更新後行為尚未實測。
+Private GHCR 映像仍須有可用的 GitHub token 與套件讀取權限。Rillway 不讀取或管理 GHCR token；登入結果與虛擬化主機的路由持久化必須在各自環境驗證。

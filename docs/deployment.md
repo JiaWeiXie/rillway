@@ -1,12 +1,12 @@
 # Ubuntu VM 與 Mac 部署
 
-此專案已於 2026-10-04 部署至 `operator@192.0.2.21`，Rillway 以低權限帳號執行，systemd 服務為 enabled、active。HTTP／SOCKS5／HTTPS CONNECT 與管理 API 登入已通過實機驗收。實際位址、來源限制、管理憑證位置與 WARP 驗證狀態見 [NAS Ubuntu 部署目標](deployment-target.md)；下列 `192.0.2.20`／`.30` 為新安裝的操作範例。
+本文件說明 Ubuntu VM 與 Mac 的通用部署流程，不記錄任何正式環境的位置或狀態。[部署目標範本](deployment-target.md) 使用 RFC 5737 文件位址；所有 `192.0.2.0/24` 值都必須換成實際環境資料，且實際值不得提交 Git。
 
-## NAS VM 配額
+## VM 配額
 
-個人使用起始配置：**Ubuntu Server 26.04 LTS、2 vCPU、4 GB RAM、32 GB 磁碟、1 張橋接虛擬網卡**。若也在 VM 編譯與跑 race，建議 8 GB／64 GB。這是工程起始配額，未宣稱已在你的 NAS 上量測吞吐；需依 CPU 與同時連線數調整。
+個人使用起始配置：**Ubuntu Server 26.04 LTS、2 vCPU、4 GB RAM、32 GB 磁碟、1 張橋接虛擬網卡**。若也在 VM 編譯與跑 race，建議 8 GB／64 GB。這是工程起始配額，需依 CPU 與同時連線數調整。
 
-使用 NAS 的有線 LAN 虛擬交換器／bridge，VirtIO 網卡優先。透過路由器 DHCP reservation 固定 VM IP。先保留一張虛擬網卡、一個 default gateway；不需要 PCI passthrough。第二張實體網卡只有在 NAS 檔案流量占滿第一張、或有 VLAN 隔離需求時才有價值。橋接本身足以讓 VM 與 Mac 在 LAN 直接通信。
+使用主機的有線 LAN 虛擬交換器／bridge，VirtIO 網卡優先。透過路由器 DHCP reservation 固定 VM IP。先保留一張虛擬網卡、一個 default gateway；不需要 PCI passthrough。第二張實體網卡只有在主機流量占滿第一張、或有 VLAN 隔離需求時才有價值。橋接本身足以讓 VM 與 Mac 在 LAN 直接通信。
 
 更換實體網卡不會改變 ISP 到 GitHub 的上游路由；改善路徑由 WARP 或遠端 WireGuard 出口提供。公司網路繼續由 Mac 既有 Tailscale 處理。
 
@@ -34,7 +34,7 @@ VM 與 Mac 位址是範例，請使用實際位址。預設只聽 loopback；引
 
 新安裝的有效設定在 **`/etc/rillway/config.json`**，私有 token、TLS 與 VPN state 在 `/var/lib/rillway/`；設定與 state 目錄 `0700`，秘密與設定檔 `0600`。Binary 位於 `/usr/local/lib/rillway/rillway`，PATH 連結 `/usr/local/bin/rillway`。systemd unit 啟用開機啟動並立即 start，只允許 daemon 寫入其設定／state。原暫存的使用者設定保留，安裝後服務不會讀取它。
 
-現有 NAS 部署仍使用 **`/var/lib/rillway/config.json`**，新版 binary 可直接使用，不會搬移檔案或修改既有 unit。請先查看 `systemctl cat rillway`，再對實際設定操作。
+舊版安裝可能仍使用 **`/var/lib/rillway/config.json`**。新版 binary 可直接使用，不會自行搬移檔案或修改既有 unit。請先查看 `systemctl cat rillway`，再對實際設定操作。
 
 安裝印出 TLS 指紋與權杖檔案路徑，不輸出秘密內容。核對後信任自簽憑證或改用有效 TLS 憑證，於本機讀取 token 登入 Web UI。HTTP／SOCKS listener 是標準明文 Proxy，限制於可信任 LAN／VPN；ACL 不取代加密，不要公開 port forwarding。setup 不會修改防火牆、Mac proxy、公司 Tailscale、WARP 註冊／license 或 Docker。
 
@@ -61,7 +61,7 @@ rillway tui --url https://192.0.2.20:17892 --token-file ./admin.token --ca ./adm
 
 更新現有安裝的 binary 時，先記錄目前版本並備份 binary、有效設定及必要狀態；確認新檔案的架構與 SHA-256。只替換 `/usr/local/lib/rillway/rillway`，保留原有設定、憑證及 VPN state，再重新啟動服務並完成上述驗收。不要重新執行 `setup`／`service install`：新版會拒絕既有安裝及保留檔案，不能當作更新指令。若需一致的 VPN state 備份，應在停止服務後進行，避免複製正在寫入的檔案。
 
-單獨更新 binary 不會更新既有 systemd unit。若版本包含 unit 修正，須另備份並修改 `/etc/systemd/system/rillway.service`。目前 NAS 已使用 `StateDirectoryMode=0700`。新版首次安裝另外使用 `/etc/rillway` 與 `ConfigurationDirectoryMode=0700`，不會在 binary 更新時強制搬移舊設定。不需要為了更新 unit 重跑安裝器。
+單獨更新 binary 不會更新既有 systemd unit。若版本包含 unit 修正，須另備份並修改 `/etc/systemd/system/rillway.service`。新版首次安裝使用 `StateDirectoryMode=0700`、`/etc/rillway` 與 `ConfigurationDirectoryMode=0700`，不會在 binary 更新時強制搬移舊設定。不需要為了更新 unit 重跑安裝器。
 
 更新失敗時停止服務、還原先前 binary，再使用保留的有效設定啟動；若新版本已改變設定或 state 格式，必須同時使用相容的備份。不要以重新初始化設定取代還原。正式的 WARP／WARP+、Tailscale、WireGuard 與下載品質測試依 [VPN 出口文件](providers.md) 分開驗收，結果記錄於 [驗證紀錄](verification.md)。
 

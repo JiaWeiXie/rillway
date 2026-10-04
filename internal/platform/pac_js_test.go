@@ -28,7 +28,7 @@ const tests=[
  ['github.com','PROXY 127.0.0.1:17890'],
  ['api.corp.example','DIRECT'],['corp.example.attacker.net','PROXY 127.0.0.1:17890'],
 	 ['printer','DIRECT'],['machine.tail.ts.net','PROXY 127.0.0.1:17890'],
- ['100.64.0.7','DIRECT'],['192.0.2.1','DIRECT'],['8.8.8.8','PROXY 127.0.0.1:17890'],
+ ['100.64.0.7','DIRECT'],['192.168.50.1','DIRECT'],['8.8.8.8','PROXY 127.0.0.1:17890'],
  ['[fd00::1]','DIRECT'],['[::1]','DIRECT'],['[::ffff:192.168.1.1]','DIRECT'],
  ['[2606:4700:4700::1111]','PROXY 127.0.0.1:17890'],
  ['private.example','DIRECT'],['v6-private.example','DIRECT'],['missing.example','PROXY 127.0.0.1:17890']

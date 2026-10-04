@@ -64,7 +64,7 @@ func TestDockerAddressAndBypassValidation(t *testing.T) {
 			t.Fatal(s)
 		}
 	}
-	for _, endpoint := range []string{"", "socks5://proxy:80", "https://proxy:80", "http://proxy", "http://proxy:0", "http://proxy:65536", "http://user@proxy:80", "http://proxy:80/", "http://proxy:80?x=secret", "http://proxy:80#", "http://0.0.0.0:80", "http://[::]:80", "http://a$(echo):80", "http://proxy\n:80"} {
+	for _, endpoint := range []string{"", "socks5://proxy:80", "https://proxy:80", "http://proxy", "http://proxy:0", "http://proxy:65536", "http://user:" + "secret@proxy:80", "http://proxy:80/", "http://proxy:80?x=secret", "http://proxy:80#", "http://0.0.0.0:80", "http://[::]:80", "http://a$(echo):80", "http://proxy\n:80"} {
 		if _, err := New(endpoint, ""); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("unsafe URL accepted or echoed: %q", endpoint)
 		}
