@@ -26,6 +26,7 @@ The user's current instructions and existing authorization take precedence. Cont
 | `internal/tui` | Bubble Tea client of the same management API |
 | `internal/platform` | systemd/LaunchAgent, TLS credentials, PAC, macOS proxy snapshot/restore |
 | `internal/diagnostic` | Explicit GitHub diagnostics and bounded download comparisons |
+| `internal/dockerproxy` | Validated Docker daemon/client/env/Compose exports and non-destructive JSON merge |
 | `tests/live` | Opt-in tests using existing external VPN configuration |
 | `tools/agentcheck`, `scripts/hooks` | Advisory agent checks and Git staged-snapshot validation |
 | `scripts`, `.github/workflows` | Shared build, release, acceptance, and CI entry points |
@@ -114,4 +115,5 @@ An explicit `/org/project` ID from the user can skip resolution. Prefer fetched 
 `docs/deployment.md` describes operations, `docs/deployment-target.md` records the intended environment, and `docs/verification.md` records dated evidence.
 `docs/agent-workflow.md` describes local agent hooks, Git hook installation, and agent-side trust requirements.
 `docs/changelog.md` describes commit message conventions and git-cliff release notes.
+`docs/docker.md` distinguishes Docker Engine, client/build/container, Desktop, and OrbStack proxy settings. Exports must not mutate Docker settings, leak credentials, or imply container DNS/VPN access was verified.
 Keep examples free of real credentials and use `THIRD_PARTY.md` plus release scripts for dependency/license information.

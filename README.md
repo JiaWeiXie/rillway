@@ -17,6 +17,7 @@ Rillway 是以 Go 實作的多出口 TCP Proxy。名稱結合 **rill**（小溪�
 - 使用者啟用的自適應，依建連延遲及成功／逾時樣本選擇出口。
 - Ubuntu systemd、macOS LaunchAgent、Mac network service PAC 套用及還原。
 - 明確啟動的 GitHub 診斷與限量下載比較。
+- Docker pull／push、Build 與容器 HTTP／HTTPS 代理設定匯出；Web UI 與 CLI 提供 Engine、client、環境變數及 Compose 格式，CLI 可合併既有 JSON。
 
 不提供整機 TUN、SOCKS5 UDP、HTTPS 解密或透明代理。初始 WARP profile 停用；GitHub CDN 固定規則會在 WARP 尚未啟用時失敗，請完成 WARP 設定或手動修改該規則。
 
@@ -71,6 +72,7 @@ LSP 共通入口是 `mise exec -- gopls`。VS Code 設定使用 repository 的 `
 - [Git hooks、提交格式與 changelog](docs/changelog.md)
 - [Logo、圖片素材與品牌使用方式](docs/brand/README.md)
 - [中英介面、中文字體與 Emoji](docs/i18n.md)
+- [Docker、Build、Compose 與 OrbStack 代理](docs/docker.md)
 
 基本瀏覽器 Proxy：HTTP 與 HTTPS Proxy 均填 `127.0.0.1:17890`；SOCKS5 填 `127.0.0.1:17891`。遠端 VM 改填其 LAN IP。使用 SOCKS 時讓瀏覽器透過 Proxy 解析 DNS，才保留網域分流與出口 DNS 語意。
 

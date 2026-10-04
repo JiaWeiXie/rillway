@@ -11,6 +11,7 @@ const rate = n => `${bytes(n)}/s`;
 const typeName = value => { const source = ({direct:'Direct',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[value]); return source ? t(source) : value; };
 const stateKey = t => String(t || '').toLowerCase();
 const stateName = value => { const source = ({ready:'Available',connected:'Connected',running:'Running',starting:'Starting',stopped:'Stopped',disconnected:'Disconnected',disabled:'Disabled',error:'Error',unavailable:'Unavailable',needslogin:'Sign-in required',needsmachineauth:'Awaiting admin approval',needs_login:'Sign-in required',needs_auth:'Sign-in required',unsupported_account:'Account unsupported',unsupported_client:'Version unsupported'}[stateKey(value)]); return source ? t(source) : value || t('Status pending'); };
+let dockerBundle = null;
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
@@ -54,7 +55,7 @@ function checked(container) { return [...container.querySelectorAll('input:check
 async function load() {
   cfg = await api('/config');
   active = true; $('login').hidden = true; $('app').hidden = false;
-  renderConfig(); await poll(); pollStatuses();
+  renderConfig(); await poll(); pollStatuses(); loadDocker();
 }
 async function save(next) {
   cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
@@ -131,6 +132,22 @@ function renderOutbounds() {
   }).join('') || `<div class="empty"><h3>${et('Add your first outbound')}</h3><p>${et('Start with Direct, then add WARP or WireGuard.')}</p></div>`;
 }
 
+async function loadDocker() {
+  try {
+    dockerBundle = await api('/integrations/docker');
+    $('docker-proxy-url').value = dockerBundle.proxy_url;
+    $('docker-no-proxy').value = dockerBundle.no_proxy;
+    renderDockerExport();
+  } catch(error) { displayError($('docker-error'),error); }
+}
+function renderDockerExport() {
+  if(!dockerBundle) return;
+  $('docker-config').value = dockerBundle.exports[$('docker-target').value] || '';
+  $('docker-loopback-hint').hidden = !dockerBundle.loopback;
+  $('docker-loopback-hint').textContent = t('Loopback points to Docker itself inside a container. Use a reachable host or LAN address.');
+  $('docker-auth-hint').hidden = !dockerBundle.auth_required;
+  $('docker-auth-hint').textContent = t('This Proxy requires authentication. Exports omit credentials; configure them separately.');
+}
 function navigate(page) {
   const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.']};
   if(!names[page]) page = 'overview'; currentPage = page;
@@ -184,6 +201,7 @@ function renderConfigText() {
 }
 function switchLocale(locale) {
   i18n.setLocale(locale);
+  renderDockerExport();
   navigate(currentPage);
   connection(isOnline);
   if(cfg) {
@@ -249,6 +267,27 @@ $('outbound-list').addEventListener('click',async e => {
   if(del) { const next = cloneConfig(); const index = Number(del.dataset.deleteOutbound); if(!confirm(t('Delete outbound "{name}"? Remove any rules that reference it first.',{name:next.outbounds[index].id}))) return; next.outbounds.splice(index,1); try { await save(next); } catch(error) { notice(error,true); } return; }
   const action = e.target.closest('[data-action]'); if(!action) return;
   action.disabled = true; try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); } catch(error) { notice(error,true); } finally { action.disabled = false; }
+});
+$('docker-form').addEventListener('submit',async e => {
+  e.preventDefault();
+  try {
+    dockerBundle = await api('/integrations/docker',{method:'POST',body:JSON.stringify({proxy_url:$('docker-proxy-url').value.trim(),no_proxy:$('docker-no-proxy').value})});
+    $('docker-error').textContent = ''; delete $('docker-error').dataset.errorSource;
+    renderDockerExport(); notice('Docker settings generated. Apply them in Docker to enable Proxy connections.');
+  } catch(error) { displayError($('docker-error'),error); }
+});
+$('docker-target').addEventListener('change',renderDockerExport);
+$('docker-copy').addEventListener('click',async () => {
+  if(!$('docker-config').value) return;
+  try { await navigator.clipboard.writeText($('docker-config').value); notice('Configuration copied.'); }
+  catch(_) { notice(sourceError('Could not copy. Select and copy the configuration manually.'),true); }
+});
+$('docker-download').addEventListener('click',() => {
+  if(!$('docker-config').value) return;
+  const names = {daemon:'daemon.json',client:'config.json',env:'rillway-docker.env',compose:'compose.yaml'};
+  const blob = new Blob([$('docker-config').value],{type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob), link = document.createElement('a');
+  link.href = url; link.download = names[$('docker-target').value]; link.click(); URL.revokeObjectURL(url);
 });
 $('license-form').addEventListener('submit',async e => {
   e.preventDefault(); const value = $('license-value').value.trim(); $('license-value').value = '';

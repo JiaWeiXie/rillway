@@ -123,6 +123,8 @@ func runLocalized(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	case "client":
 		return clientCommand(ctx, args, out)
+	case "docker":
+		return dockerCommand(ctx, args, out)
 	case "pac":
 		fs, path := flags(ctx, command, out)
 		if err := fs.Parse(args); err != nil {
@@ -271,6 +273,8 @@ const usage = `Rillway — observable split proxy
   rillway client apply --service Wi-Fi --pac-url URL --backup FILE
   rillway client restore --backup FILE
   rillway pac --config FILE                Export PAC to stdout
+  rillway docker export --target daemon|client|env|compose --config FILE
+  rillway docker export --target client --proxy-url http://HOST:PORT [--input FILE]
   rillway diagnose --config FILE --outbound direct [--family ipv4|ipv6]
   rillway diagnose --config FILE --outbound warp --download-url HTTPS_URL
   rillway version

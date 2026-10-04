@@ -3,6 +3,14 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"Docker proxy URL must be http://host:port without credentials, a path, query or fragment.":                 "Docker Proxy 網址須為 http://主機:連接埠，不含帳密、路徑、查詢或片段。",
+	"Docker bypass entries must be comma-separated domains, IPs or CIDRs without spaces or control characters.": "Docker 略過清單須為逗號分隔的網域、IP 或 CIDR，不含空白或控制字元。",
+	"Existing Docker settings must be a JSON object no larger than 1 MiB.":                                      "現有 Docker 設定須為不超過 1 MiB 的 JSON 物件。",
+	"Docker export target must be daemon, client, env or compose.":                                              "Docker 匯出格式須為 daemon、client、env 或 compose。",
+	"Enable the HTTP Proxy listener before exporting Docker settings.":                                          "匯出 Docker 設定前，請先啟用 HTTP Proxy 監聽端點。",
+	"Existing Docker settings can only be merged for daemon or client exports.":                                 "只有 daemon 或 client 匯出格式能合併現有 Docker 設定。",
+	"Could not export Docker settings.":                                                                         "無法匯出 Docker 設定。",
+
 	"Web UI: https://%s\nPAC: http://%s/proxy.pac\nTLS SHA-256: %s\nManagement token file: %s": "Web 管理介面：https://%s\nPAC：http://%s/proxy.pac\nTLS SHA-256：%s\n管理權杖檔案：%s",
 	// Management API and client.
 	"Management API endpoint not found.":                         "找不到管理 API 端點。",

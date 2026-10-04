@@ -12,6 +12,12 @@ import (
 )
 
 var catalog = map[string]string{
+	"docker requires export":                                     "docker 需要指定 export",
+	"export format: daemon, client, env or compose":              "匯出格式：daemon、client、env 或 compose",
+	"Docker-reachable Rillway HTTP Proxy URL":                    "Docker 能連線的 Rillway HTTP Proxy 網址",
+	"comma-separated Docker bypass domains, IPs or CIDRs":        "以逗號分隔的 Docker 略過網域、IP 或 CIDR",
+	"existing Docker JSON to merge; source file is not modified": "要合併的現有 Docker JSON；來源檔案維持原狀",
+
 	"configuration file":               "設定檔",
 	"configuration already exists: %s": "設定檔已存在：%s",
 	"Configuration: %s\nManagement token: %s\nWARP is disabled until explicitly enabled and connected.\n": "設定檔：%s\n管理權杖：%s\nWARP 預設停用，請手動啟用並連線。\n",
@@ -52,6 +58,8 @@ var catalog = map[string]string{
   rillway client apply --service Wi-Fi --pac-url URL --backup FILE
   rillway client restore --backup FILE
   rillway pac --config FILE                將 PAC 輸出至標準輸出
+  rillway docker export --target daemon|client|env|compose --config FILE
+  rillway docker export --target client --proxy-url http://HOST:PORT [--input FILE]
   rillway diagnose --config FILE --outbound direct [--family ipv4|ipv6]
   rillway diagnose --config FILE --outbound warp --download-url HTTPS_URL
   rillway version
@@ -134,7 +142,7 @@ func languageArguments(args []string, preference string) (i18n.Locale, []string,
 		remaining = append(remaining, arg)
 		name := strings.TrimLeft(arg, "-")
 		switch name {
-		case "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup":
+		case "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input":
 			if strings.HasPrefix(arg, "-") && i+1 < len(args) {
 				i++
 				remaining = append(remaining, args[i])

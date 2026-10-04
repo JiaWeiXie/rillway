@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"rillway/internal/config"
+	"rillway/internal/dockerproxy"
 	"rillway/internal/i18n"
 	"rillway/internal/outbound"
 	"strings"
@@ -46,6 +47,8 @@ func New(backend Backend, adminToken string) http.Handler {
 	mux.HandleFunc("PUT /api/v1/config", h.protect(h.putConfig))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
 	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))
+	mux.HandleFunc("GET /api/v1/integrations/docker", h.protect(h.dockerExport))
+	mux.HandleFunc("POST /api/v1/integrations/docker", h.protect(h.dockerExport))
 	mux.HandleFunc("POST /api/v1/outbounds/{id}/{action}", h.protect(h.action))
 	mux.HandleFunc("/api/", h.protect(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, 404, "Management API endpoint not found.")
@@ -158,6 +161,35 @@ func (h *handler) getOutbounds(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) getConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, h.backend.Config())
+}
+
+func (h *handler) dockerExport(w http.ResponseWriter, r *http.Request) {
+	c := h.backend.Config()
+	s, err := dockerproxy.FromConfig(c)
+	if err != nil {
+		writeError(w, r, 422, publicMessage(err, "Could not export Docker settings."))
+		return
+	}
+	if r.Method == http.MethodPost {
+		var body struct {
+			ProxyURL string `json:"proxy_url"`
+			NoProxy  string `json:"no_proxy"`
+		}
+		if !decodeBody(w, r, &body, 16384) {
+			return
+		}
+		s, err = dockerproxy.New(body.ProxyURL, body.NoProxy)
+		if err != nil {
+			writeError(w, r, 422, publicMessage(err, "Could not export Docker settings."))
+			return
+		}
+	}
+	bundle, err := s.Bundle(c.Security.ProxyUsername != "")
+	if err != nil {
+		writeError(w, r, 422, publicMessage(err, "Could not export Docker settings."))
+		return
+	}
+	writeJSON(w, 200, bundle)
 }
 
 func (h *handler) putConfig(w http.ResponseWriter, r *http.Request) {

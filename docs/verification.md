@@ -4,7 +4,7 @@
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 14 個 package 通過，包含新版 WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **66.3%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- 最新 `mise run check`：全部 15 個 package 通過，包含 Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **67.3%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
 - `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.3–46.0 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
@@ -67,6 +67,21 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 瀏覽器的隔離 profile 使用自簽憑證例外；憑證與 VM IP 的身分檢查另由嚴格信任指定 cert 的 TLS 請求完成，沒有修改 Mac 系統信任庫。截圖保留於 Git 忽略的 `.local/servers/example/qa/`，不含管理 token。
 
 更新後亦從 Mac 啟動正式 binary 的遠端 TUI，使用 `--token-file` 與 `--ca` 連線 VM。繁中介面顯示設定 revision `2`、真實代理觀察資料，以及 WARP `已連線`、版本 `CURRENT_VERSION`、模式 `proxy`、listener `true`；正常離開，未更改設定。
+
+## Docker 代理匯出與 NAS 實測
+
+2026-10-04 新增 CLI 與中英 Web UI 的 Engine、client、env、Compose 四種匯出。一般測試包含 URL／bypass 驗證、malformed JSON、合併保留認證與大整數、冪等性、空 bypass、秘密遮罩、API 認證／同源限制及設定 revision 不變。`internal/dockerproxy` statement coverage 為 **97.7%**，完整 check 的 15 個 package、lint、race 均通過。
+
+VM 原先沒有 Docker。為實測從官方來源取得 Docker **29.4.0** 靜態 binary，啟動只監聽私有 Unix socket 的暫存 daemon，使用獨立 data／exec root、vfs、無 bridge、無 iptables／IP forwarding 修改。Mac 透過 SSH Unix socket forwarding 操作；未修改 Mac 現有 OrbStack context 或設定。
+
+- daemon 使用實際匯出的 HTTP／HTTPS Proxy，兩者均為 `http://192.0.2.21:17890`。Docker Hub pull `curlimages/curl:8.14.1` 成功，digest 為 `sha256:9a1ed35addb45476afa911696297f8e115993df459278ed036182dd2cd22b67b`。Rillway 觀察到 `registry-1.docker.io`、`auth.docker.io` 與 `production.cloudfront.docker.com` 的真實傳輸。
+- client 使用實際匯出的 JSON。新容器與 BuildKit 預設 `docker` driver 的 `RUN` 均透過 Rillway 成功取得 `https://example.com`；建置步驟另確認自動注入的 `HTTPS_PROXY` 正確。建置後 image environment 沒有 Proxy URL，沒有用 `ENV` 固化代理。
+- Compose 匯出以 `docker compose config --quiet` 驗證成功。
+- 再於 VM 的暫存 `registry:2` 驗證 image push。只在 QA daemon 清空 NO_PROXY 並允許該測試 registry 的 HTTP，Rillway 觀察到目的 `192.0.2.21:25000` 的上傳，單筆含約 3.8 MB／5.8 MB layer 資料，push 成功。沒有上傳至公共或使用者私人 registry；公共認證 push 尚未驗證。
+- 第一次容器測試對固定 WARP 的 GitHub CDN 收到 502；唯讀確認官方 WARP 當時為 `Disconnected / Settings Changed`。沒有自行重新連線或將固定規則轉為 direct，後續 Docker 功能驗收使用 direct 公開目標。這次 Docker 驗收不代表 WARP+ 當時仍已連線。
+- 暫存 registry、Docker daemon、子程序、QA mount、Unix socket forwarding 及 VM 測試資料均已清除，正式 Rillway 保持 active。沒有安裝 Docker systemd unit、修改 Mac 系統 Proxy、OrbStack 或公司 Tailscale。
+
+此實測使用 host network 以避免改動 VM bridge／防火牆；一般 bridge、Docker Desktop、OrbStack 實際代理套用、獨立／遠端 BuildKit 與公司 DNS／Tailscale 連線仍未驗證。設定方法與範圍見 [Docker 文件](docker.md)。
 
 ## 中英介面、中文字體、Emoji 與品牌素材
 
