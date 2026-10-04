@@ -108,8 +108,8 @@ async function browser(initialLocale) {
   assert.match(b.get('outbound-list').innerHTML,/data-delete-outbound="1"/);
 
   const grouped=JSON.parse(vm.runInContext(`JSON.stringify(groupFlows([
-    {index:0,f:{host:'github.com',port:'443',download_bytes:1024,download_bytes_per_second:100,closed:false}},
-    {index:1,f:{host:'github.com',port:'80',upload_bytes:512,upload_bytes_per_second:20,closed:true}},
+    {index:0,f:{id:10,host:'github.com',port:'443',outbound:'warp-plus',rule:'rule-ghcr',download_bytes:1024,download_bytes_per_second:100,closed:false}},
+    {index:1,f:{id:11,host:'github.com',port:'80',outbound:'direct',rule:'default',upload_bytes:512,upload_bytes_per_second:20,closed:true}},
     {index:2,f:{ip:'2001:db8::1',port:'443',download_bytes:256,closed:false}},
     {index:3,f:{ip:'2001:db8::1',port:'8443',upload_bytes:128,closed:false}}
   ]))`,b.context));
@@ -117,10 +117,35 @@ async function browser(initialLocale) {
   assert.equal(github.connections.length,2,'domain ports should share one destination group');
   assert.equal(github.active,1);
   assert.equal(github.transferred,1536);
+  const githubRoute=JSON.parse(vm.runInContext(`JSON.stringify(groupRouteSummary(${JSON.stringify(github)}))`,b.context));
+  assert.equal(githubRoute.outboundCount,2);
+  assert.equal(githubRoute.routeCount,2);
+  assert.equal(githubRoute.index,0,'the group action should use an active connection as its rule template');
   assert(grouped.some(group=>group.destination==='[2001:db8::1]:443'));
   assert(grouped.some(group=>group.destination==='[2001:db8::1]:8443'),'IP destinations must include the port in their group');
   const hostIP=JSON.parse(vm.runInContext(`JSON.stringify(groupFlows([{index:0,f:{host:'192.0.2.8',ip:'192.0.2.8',port:'443'}}]))`,b.context));
   assert.equal(hostIP[0].destination,'192.0.2.8:443','an IP in the host field must still include its port');
+  vm.runInContext(`
+    i18n.setLocale('zh-Hant');
+    flows=[
+      {id:10,host:'github.com',port:'443',outbound:'warp-plus',rule:'rule-ghcr',download_bytes:1024,closed:false},
+      {id:11,host:'github.com',port:'80',outbound:'direct',rule:'default',upload_bytes:512,closed:true}
+    ];
+    renderFlows();
+  `,b.context);
+  assert.match(b.get('flow-groups').innerHTML,/多個出口/);
+  assert.match(b.get('flow-groups').innerHTML,/2 條路由/);
+  assert.equal((b.get('flow-groups').innerHTML.match(/data-flow=/g)||[]).length,1,'set-outbound belongs to the group header');
+  assert.match(b.get('flow-groups').innerHTML,/data-group-action="true"/,'group action needs a stable focus identity');
+  let restoredGroupActionFocus=0;
+  const stableGroup={dataset:{groupKey:'domain%3Agithub.com'},querySelectorAll(){return [];},querySelector(selector){
+    return selector === '[data-group-action]' ? {focus(){restoredGroupActionFocus++;}} : null;
+  }};
+  b.get('flow-groups').querySelectorAll=()=>[stableGroup];
+  b.document.activeElement={dataset:{groupAction:'true'},closest(selector){return selector === '.flow-group' ? stableGroup : null;}};
+  vm.runInContext("flows.unshift({id:12,host:'github.com',port:'443',outbound:'warp-plus',rule:'rule-ghcr',closed:false});renderFlows();",b.context);
+  assert.equal(restoredGroupActionFocus,1,'group refresh must restore focus after its representative flow changes');
+  b.document.activeElement=null;
   vm.runInContext(`
     deletingOutbound={id:'warp',config:{outbounds:[
       {id:'direct',type:'direct',enabled:true,public_internet:true},

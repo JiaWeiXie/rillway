@@ -75,7 +75,7 @@ orb config set network.proxy.exclude "localhost,.corp.example,10.0.0.0/8,192.168
 orb config set network_proxy auto
 ```
 
-執行前保存現有值，依你實際公司網域調整略過清單。本次開發沒有修改 Mac 的 OrbStack、系統 Proxy 或 Tailscale。
+執行前保存現有值，依實際公司網域調整略過清單。這些命令會修改主機設定，Rillway 不會自動執行。
 
 ## 略過公司服務與出口選擇
 

@@ -169,6 +169,49 @@ func TestProviderRetirementKeepsActiveStream(t *testing.T) {
 	}
 }
 
+func TestTailscaleStateDirectoryRemainsOwnedByRetiredProvider(t *testing.T) {
+	c := config.Default(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(t.Context(), path, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	stateDir := filepath.Join(t.TempDir(), "shared-tailscale-state")
+	retired := &managed{Provider: &testProvider{}, active: 1, retired: true}
+	r.tailscaleOwners[tailscaleStateKey(stateDir)] = retired
+	next := r.Config()
+	profile := config.DefaultsForForms(next).Outbounds["tailscale"]
+	profile.ID = "company-new"
+	profile.Enabled = true
+	profile.StateDir = stateDir
+	next.Outbounds = append(next.Outbounds, profile)
+	if err = r.Apply(t.Context(), next); err == nil || !strings.Contains(err.Error(), "still in use") {
+		t.Fatalf("second owner was accepted for a live Tailscale state directory: %v", err)
+	}
+	if r.Config().Revision != c.Revision {
+		t.Fatal("rejected Tailscale update changed the active configuration")
+	}
+}
+
+func TestClosedTailscaleStateOwnerIsReleased(t *testing.T) {
+	r := &Runtime{tailscaleOwners: map[string]*managed{}}
+	stateDir := filepath.Join(t.TempDir(), "reusable-tailscale-state")
+	owner := &managed{Provider: &testProvider{}, retired: true, closed: true}
+	r.tailscaleOwners[tailscaleStateKey(stateDir)] = owner
+	profile := config.Outbound{ID: "company-new", Type: "tailscale", Enabled: true, StateDir: stateDir}
+	if err := r.ensureTailscaleStateAvailable(profile); err != nil {
+		t.Fatalf("closed owner blocked state directory reuse: %v", err)
+	}
+	if len(r.tailscaleOwners) != 0 {
+		t.Fatal("closed Tailscale owner remained retained")
+	}
+}
+
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

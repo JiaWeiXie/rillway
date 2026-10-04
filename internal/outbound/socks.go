@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -96,7 +97,7 @@ func dialSOCKS(ctx context.Context, proxy, network, address string) (net.Conn, e
 		return nil, errors.New("invalid upstream SOCKS5 reply")
 	}
 	if head[1] != 0 {
-		return nil, fmt.Errorf("upstream SOCKS5 connect rejected (code %d)", head[1])
+		return nil, socksReplyError(head[1])
 	}
 	n := 0
 	switch head[3] {
@@ -124,4 +125,23 @@ func dialSOCKS(ctx context.Context, proxy, network, address string) (net.Conn, e
 	}
 	good = true
 	return &destinationConn{Conn: conn, ip: destinationIP}, nil
+}
+
+func socksReplyError(code byte) error {
+	message := fmt.Sprintf("upstream SOCKS5 connect rejected (code %d)", code)
+	var cause error
+	switch code {
+	case 3:
+		cause = syscall.ENETUNREACH
+	case 4:
+		cause = syscall.EHOSTUNREACH
+	case 5:
+		cause = syscall.ECONNREFUSED
+	case 6:
+		cause = syscall.ETIMEDOUT
+	}
+	if cause == nil {
+		return errors.New(message)
+	}
+	return fmt.Errorf("%s: %w", message, cause)
 }

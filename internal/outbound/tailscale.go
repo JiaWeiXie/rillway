@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"rillway/internal/config"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,14 +19,18 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
+	"tailscale.com/wgengine/netstack"
 )
 
 type tailscale struct {
-	cfg      config.Outbound
-	server   *tsnet.Server
-	mu       sync.RWMutex
-	actionMu sync.Mutex
-	stopped  bool
+	cfg          config.Outbound
+	server       *tsnet.Server
+	status       func(context.Context) (*ipnstate.Status, error)
+	addresses    func() (netip.Addr, netip.Addr)
+	dialNetstack func(context.Context, netip.Addr, netip.AddrPort) (net.Conn, error)
+	mu           sync.RWMutex
+	actionMu     sync.Mutex
+	stopped      bool
 }
 
 func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error) {
@@ -79,7 +84,20 @@ func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error)
 		_ = s.Close()
 		return nil, err
 	}
-	return &tailscale{cfg: cfg, server: s}, nil
+	ns, ok := s.Sys().Netstack.Get().(*netstack.Impl)
+	if !ok {
+		_ = s.Close()
+		return nil, errors.New("embedded Tailscale netstack is unavailable")
+	}
+	return &tailscale{
+		cfg:       cfg,
+		server:    s,
+		status:    lc.Status,
+		addresses: s.TailscaleIPs,
+		dialNetstack: func(ctx context.Context, source netip.Addr, destination netip.AddrPort) (net.Conn, error) {
+			return ns.DialContextTCPWithBind(ctx, source, destination)
+		},
+	}, nil
 }
 func (t *tailscale) ID() string   { return t.cfg.ID }
 func (t *tailscale) Close() error { return t.server.Close() }
@@ -157,6 +175,10 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 	if err != nil {
 		return nil, err
 	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
+		return nil, errors.New("invalid destination port")
+	}
 	ips := []netip.Addr{}
 	if ip, e := netip.ParseAddr(host); e == nil {
 		ips = append(ips, ip)
@@ -214,7 +236,7 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 		if !familyAllows(network, ip) || !routePermitted(st, ip) {
 			continue
 		}
-		c, e := t.server.Dial(ctx, network, net.JoinHostPort(ip.String(), port))
+		c, e := t.dialTunnel(ctx, netip.AddrPortFrom(ip, uint16(portNumber)))
 		if e == nil {
 			return &destinationConn{Conn: c, ip: ip.String()}, nil
 		}
@@ -224,6 +246,32 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 		last = errors.New("no matching destination within active Tailscale peer/subnet routes (host fallback disabled)")
 	}
 	return nil, last
+}
+
+// dialTunnel bypasses tsnet.Server.Dial because its user dialer can fall back
+// to the host network when a route disappears. The embedded netstack has no
+// host-network transport; a withdrawn route therefore fails closed.
+func (t *tailscale) dialTunnel(ctx context.Context, destination netip.AddrPort) (net.Conn, error) {
+	status, err := t.status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !routePermitted(status, destination.Addr()) {
+		return nil, errors.New("destination is no longer within an active Tailscale peer/subnet route")
+	}
+	v4, v6 := t.addresses()
+	source := v4
+	if destination.Addr().Is6() {
+		source = v6
+	}
+	if !source.IsValid() {
+		return nil, errors.New("embedded Tailscale node has no source address for the requested family")
+	}
+	conn, err := t.dialNetstack(ctx, source, destination)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
 
 func (t *tailscale) queryDNS(ctx context.Context, server netip.Addr, host string, typ dnsmessage.Type) ([]byte, error) {
@@ -236,7 +284,7 @@ func (t *tailscale) queryDNS(ctx context.Context, server netip.Addr, host string
 	if err != nil {
 		return nil, err
 	}
-	conn, err := t.server.Dial(ctx, "tcp", net.JoinHostPort(server.String(), "53"))
+	conn, err := t.dialTunnel(ctx, netip.AddrPortFrom(server.Unmap(), 53))
 	if err != nil {
 		return nil, err
 	}

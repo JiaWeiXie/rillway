@@ -19,6 +19,9 @@ func CheckListeners(ctx context.Context, c config.Config) error {
 		}
 	}()
 	for _, address := range []string{c.Listeners.HTTP, c.Listeners.SOCKS5, c.Listeners.Admin, c.Listeners.PAC} {
+		if address == "" {
+			continue
+		}
 		parsed, err := netip.ParseAddrPort(address)
 		if err != nil || parsed.Port() < 1024 {
 			return fmt.Errorf(i18n.Message(i18n.FromContext(ctx), "service listener %s must use a literal IP and a port between 1024 and 65535"), address)

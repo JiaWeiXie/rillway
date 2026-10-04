@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"reflect"
 	"rillway/internal/config"
 	"rillway/internal/engine"
@@ -15,24 +16,74 @@ import (
 )
 
 type Runtime struct {
-	mu        sync.Mutex
-	cfg       config.Config
-	path      string
-	providers map[string]outbound.Provider
-	Engine    *engine.Engine
-	appliedAt time.Time
+	mu              sync.Mutex
+	cfg             config.Config
+	path            string
+	providers       map[string]outbound.Provider
+	tailscaleOwners map[string]*managed
+	Engine          *engine.Engine
+	appliedAt       time.Time
 }
 
 func New(ctx context.Context, path string, c config.Config) (*Runtime, error) {
 	if err := config.Validate(c); err != nil {
 		return nil, err
 	}
-	r := &Runtime{cfg: clone(c), path: path, providers: map[string]outbound.Provider{}, appliedAt: time.Now().UTC()}
+	r := &Runtime{cfg: clone(c), path: path, providers: map[string]outbound.Provider{}, tailscaleOwners: map[string]*managed{}, appliedAt: time.Now().UTC()}
 	for _, o := range c.Outbounds {
-		r.providers[o.ID] = create(ctx, o)
+		if err := r.ensureTailscaleStateAvailable(o); err != nil {
+			_ = r.closeProviders()
+			return nil, err
+		}
+		p := create(ctx, o)
+		r.providers[o.ID] = p
+		r.trackTailscaleOwner(o, p)
 	}
 	r.Engine = engine.New(c, r.providers)
 	return r, nil
+}
+
+func tailscaleStateKey(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		return filepath.Join(parent, filepath.Base(abs))
+	}
+	return abs
+}
+
+func (r *Runtime) ensureTailscaleStateAvailable(o config.Outbound) error {
+	if o.Type != "tailscale" || !o.Enabled {
+		return nil
+	}
+	r.pruneTailscaleOwners()
+	key := tailscaleStateKey(o.StateDir)
+	if owner := r.tailscaleOwners[key]; owner != nil && !owner.isClosed() {
+		return config.PublicError{Message: fmt.Sprintf("Restart the daemon to use outbound %s because its Tailscale state directory is still in use.", o.ID)}
+	}
+	return nil
+}
+
+func (r *Runtime) pruneTailscaleOwners() {
+	for key, owner := range r.tailscaleOwners {
+		if owner.isClosed() {
+			delete(r.tailscaleOwners, key)
+		}
+	}
+}
+
+func (r *Runtime) trackTailscaleOwner(o config.Outbound, p outbound.Provider) {
+	if o.Type != "tailscale" || !o.Enabled {
+		return
+	}
+	if owner, ok := p.(*managed); ok {
+		r.tailscaleOwners[tailscaleStateKey(o.StateDir)] = owner
+	}
 }
 
 func create(ctx context.Context, c config.Outbound) outbound.Provider {
@@ -86,28 +137,31 @@ func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 			next[o.ID] = r.providers[o.ID]
 			continue
 		}
-		previous := old[o.ID]
-		if o.Type == "tailscale" && o.Enabled && previous.Enabled && previous.Type == "tailscale" && o.StateDir == previous.StateDir {
+		if err := r.ensureTailscaleStateAvailable(o); err != nil {
 			for _, v := range created {
 				_ = v.Close()
 			}
-			return config.PublicError{Message: fmt.Sprintf("Restart the daemon to change outbound %s while its Tailscale state directory is in use.", o.ID)}
+			r.pruneTailscaleOwners()
+			return err
 		}
 		p := create(ctx, o)
 		if u, ok := p.(*unavailable); ok && o.Enabled {
 			for _, v := range created {
 				_ = v.Close()
 			}
+			r.pruneTailscaleOwners()
 			return fmt.Errorf("outbound %s: %s", o.ID, u.reason)
 		}
 		next[o.ID] = p
 		created = append(created, p)
+		r.trackTailscaleOwner(o, p)
 	}
 	c.Revision++
 	if err := config.Save(r.path, c); err != nil {
 		for _, p := range created {
 			_ = p.Close()
 		}
+		r.pruneTailscaleOwners()
 		return err
 	}
 	r.Engine.Update(c, next)
@@ -116,6 +170,7 @@ func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 			_ = p.Close()
 		}
 	}
+	r.pruneTailscaleOwners()
 	r.cfg = clone(c)
 	r.providers = next
 	r.appliedAt = time.Now().UTC()
@@ -159,10 +214,24 @@ func (r *Runtime) Close() error {
 	_ = r.Engine.Close()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.closeProviders()
+}
+
+func (r *Runtime) closeProviders() error {
 	var errs []error
+	closed := map[*managed]bool{}
 	for _, p := range r.providers {
 		errs = append(errs, p.Close())
+		if owner, ok := p.(*managed); ok {
+			closed[owner] = true
+		}
 	}
+	for _, owner := range r.tailscaleOwners {
+		if !closed[owner] {
+			errs = append(errs, owner.Close())
+		}
+	}
+	r.pruneTailscaleOwners()
 	return errors.Join(errs...)
 }
 
@@ -229,6 +298,12 @@ func (m *managed) Close() error {
 		return m.Provider.Close()
 	}
 	return nil
+}
+
+func (m *managed) isClosed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed
 }
 
 func (m *managed) Action(ctx context.Context, a, v string) error {

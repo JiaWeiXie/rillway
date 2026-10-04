@@ -63,6 +63,9 @@ func installLinux(ctx context.Context, source string, paths linuxPaths, run Runn
 	}
 	requiredFiles := []string{c.Security.ProxyPasswordFile}
 	for _, o := range c.Outbounds {
+		if !o.Enabled {
+			continue
+		}
 		requiredFiles = append(requiredFiles, o.ConfigFile, o.AuthKeyFile)
 	}
 	for _, path := range requiredFiles {
@@ -131,6 +134,13 @@ func installLinux(ctx context.Context, source string, paths linuxPaths, run Runn
 		if o.StateDir != "" {
 			dst := filepath.Join(state, "outbounds", o.ID)
 			if filepath.Clean(o.StateDir) != dst {
+				if _, statErr := os.Stat(o.StateDir); statErr != nil {
+					if os.IsNotExist(statErr) {
+						o.StateDir = dst
+						continue
+					}
+					return "", statErr
+				}
 				if err = copyDirectory(o.StateDir, dst); err != nil {
 					return "", err
 				}

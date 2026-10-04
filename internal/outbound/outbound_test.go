@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"rillway/internal/config"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -278,6 +279,20 @@ func TestSOCKSRejectsUnsupportedFamilyBeforeDial(t *testing.T) {
 	}
 }
 
+func TestSOCKSReplyErrorsPreserveNetworkFailureCauses(t *testing.T) {
+	for _, tc := range []struct {
+		code byte
+		want error
+	}{{3, syscall.ENETUNREACH}, {4, syscall.EHOSTUNREACH}, {5, syscall.ECONNREFUSED}, {6, syscall.ETIMEDOUT}} {
+		if err := socksReplyError(tc.code); !errors.Is(err, tc.want) {
+			t.Fatalf("SOCKS reply %d did not preserve %v: %v", tc.code, tc.want, err)
+		}
+	}
+	if err := socksReplyError(1); errors.Is(err, syscall.EHOSTUNREACH) {
+		t.Fatalf("general SOCKS failure was misclassified: %v", err)
+	}
+}
+
 func TestUnsupportedResolverConfigurationFailsExplicitly(t *testing.T) {
 	for _, kind := range []string{"direct", "warp"} {
 		if _, err := New(context.Background(), config.Outbound{ID: kind, Type: kind, Enabled: true, DNS: []string{"1.1.1.1"}}); err == nil {
@@ -327,6 +342,30 @@ func TestTailscaleRouteGuardRejectsHostAndExitNodeFallback(t *testing.T) {
 		if got := routePermitted(st, netip.MustParseAddr(tc.ip)); got != tc.want {
 			t.Fatalf("%s = %v", tc.ip, got)
 		}
+	}
+}
+
+func TestTailscaleTunnelDialFailsClosedWhenRouteIsWithdrawn(t *testing.T) {
+	dialed := false
+	provider := &tailscale{
+		status: func(context.Context) (*ipnstate.Status, error) {
+			return &ipnstate.Status{}, nil
+		},
+		addresses: func() (netip.Addr, netip.Addr) {
+			return netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("fd7a:115c:a1e0::1")
+		},
+		dialNetstack: func(context.Context, netip.Addr, netip.AddrPort) (net.Conn, error) {
+			dialed = true
+			left, right := net.Pipe()
+			t.Cleanup(func() { _ = right.Close() })
+			return left, nil
+		},
+	}
+	if _, err := provider.dialTunnel(t.Context(), netip.MustParseAddrPort("192.0.2.9:443")); err == nil {
+		t.Fatal("withdrawn route was accepted")
+	}
+	if dialed {
+		t.Fatal("withdrawn route reached a network transport")
 	}
 }
 

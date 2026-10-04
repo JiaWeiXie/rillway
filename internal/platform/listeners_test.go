@@ -43,3 +43,16 @@ func TestListenerErrorLocalizesWithoutChangingAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestListenerCheckAllowsOptionalListenersToBeDisabled(t *testing.T) {
+	c := config.Default(t.TempDir())
+	c.Listeners.HTTP = ""
+	c.Listeners.SOCKS5 = ""
+	c.Listeners.PAC = ""
+	if err := config.Validate(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckListeners(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+}

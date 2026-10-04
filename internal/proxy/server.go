@@ -158,7 +158,28 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	writer := &responseWriter{writer: w, controller: http.NewResponseController(w)}
+	if _, err = io.Copy(writer, response.Body); err != nil {
+		// Headers may already be visible to the client. Abort the HTTP response so
+		// net/http does not turn a truncated upstream body into a clean EOF.
+		panic(http.ErrAbortHandler)
+	}
+}
+
+type responseWriter struct {
+	writer     io.Writer
+	controller *http.ResponseController
+}
+
+func (w *responseWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if flushErr := w.controller.Flush(); flushErr != nil {
+		return n, flushErr
+	}
+	return n, nil
 }
 
 func headerToken(h http.Header, key, token string) bool {

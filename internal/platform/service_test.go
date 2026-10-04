@@ -62,3 +62,35 @@ func TestPACRollbackAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPACRollbackUsesIndependentContextAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	restored := false
+	run := func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if strings.HasPrefix(args[0], "-get") {
+			if args[0] == "-getautoproxyurl" {
+				return []byte("URL: http://old/pac\nEnabled: Yes\n"), nil
+			}
+			return []byte("Enabled: Yes\n"), nil
+		}
+		if args[0] == "-setautoproxyurl" && args[2] == "http://new/pac" {
+			cancel()
+			return nil, nil
+		}
+		if args[0] == "-setautoproxyurl" && args[2] == "http://old/pac" {
+			restored = true
+		}
+		return nil, nil
+	}
+	backup := filepath.Join(t.TempDir(), "backup.json")
+	if err := ApplyPAC(ctx, run, "Wi-Fi", "http://new/pac", backup); err == nil {
+		t.Fatal("expected cancellation")
+	}
+	if !restored {
+		t.Fatal("canceled operation prevented PAC rollback")
+	}
+}

@@ -192,11 +192,30 @@ function groupFlows(items) {
   });
   return [...groups.values()].sort((a,b) => b.active-a.active || (b.downloadRate+b.uploadRate)-(a.downloadRate+a.uploadRate) || a.destination.localeCompare(b.destination));
 }
+function groupRouteSummary(group) {
+  const connections = group.connections || [];
+  const representative = connections.find(({f}) => flowActive(f)) || connections[0] || {f:{},index:-1};
+  const outbounds = new Set(), routes = new Set();
+  for(const {f} of connections) {
+    const outbound = f.outbound || '';
+    const rule = f.rule || f.rule_id || '';
+    outbounds.add(outbound);
+    routes.add(`${outbound}\u0000${rule}`);
+  }
+  return {
+    index:representative.index,
+    flow:representative.f,
+    outbound:outbounds.size === 1 ? representative.f.outbound || '' : '',
+    rule:routes.size === 1 ? representative.f.rule || representative.f.rule_id || '' : '',
+    outboundCount:outbounds.size,
+    routeCount:routes.size
+  };
+}
 function flowRow({f,index}) {
   const host = destinationAddress(f);
   const ip = f.ip ? `${f.ip}${f.family ? ` · ${f.family}` : ''}` : t('Destination IP unknown; resolved upstream');
   const sum = (Number(f.upload_bytes)||0)+(Number(f.download_bytes)||0);
-  return `<tr><td><span class="domain">${esc(host)}</span><span class="sub">${esc(ip)}</span></td><td><span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span></td><td class="numeric">${rate(f.download_bytes_per_second || f.download_rate)}</td><td class="numeric">${rate(f.upload_bytes_per_second || f.upload_rate)}</td><td class="numeric">${bytes(sum)}</td><td class="numeric">${Number(f.connect_ms || 0).toFixed(1)} ms</td><td><span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span></td><td><button class="table-action" data-flow="${index}" data-flow-id="${esc(String(f.id ?? index))}">${et('Set outbound')}</button></td></tr>`;
+  return `<tr><td><span class="domain">${esc(host)}</span><span class="sub">${esc(ip)}</span></td><td><span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span></td><td class="numeric">${rate(f.download_bytes_per_second || f.download_rate)}</td><td class="numeric">${rate(f.upload_bytes_per_second || f.upload_rate)}</td><td class="numeric">${bytes(sum)}</td><td class="numeric">${Number(f.connect_ms || 0).toFixed(1)} ms</td><td><span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span></td></tr>`;
 }
 function renderFlows() {
   const query = $('flow-search').value.toLowerCase();
@@ -207,15 +226,18 @@ function renderFlows() {
   $('flows-empty').hidden = visible.length > 0;
   const container = $('flow-groups'), focused = document.activeElement;
   const focusGroup = focused?.closest?.('.flow-group')?.dataset.groupKey;
-  const focusFlow = focused?.closest?.('[data-flow-id]')?.dataset.flowId;
+  const focusGroupAction = focused?.dataset?.groupAction === 'true';
   container.innerHTML = groupFlows(visible).map(group => {
     const open = query || openFlowGroups.has(group.key);
     const key = encodeURIComponent(group.key);
-    return `<details class="flow-group" data-group-key="${esc(key)}"${open ? ' open' : ''}><summary><span class="flow-chevron" aria-hidden="true">›</span><span class="flow-destination"><strong>${esc(group.destination)}</strong><small>${et('{count} connections · {active} active',{count:group.connections.length,active:group.active})}</small></span><span class="flow-metric"><small>${et('Download')}</small><strong>${rate(group.downloadRate)}</strong></span><span class="flow-metric"><small>${et('Upload')}</small><strong>${rate(group.uploadRate)}</strong></span><span class="flow-metric"><small>${et('Transferred')}</small><strong>${bytes(group.transferred)}</strong></span></summary><div class="flow-table"><table><thead><tr><th>${et('Connection')}</th><th>${et('Outbound / rule')}</th><th class="numeric">${et('Download')}</th><th class="numeric">${et('Upload')}</th><th class="numeric">${et('Transferred')}</th><th class="numeric">${et('Connect time')}</th><th>${et('Status')}</th><th><span class="sr-only">${et('Actions')}</span></th></tr></thead><tbody>${group.connections.sort((a,b) => Number(flowActive(b.f))-Number(flowActive(a.f))).map(flowRow).join('')}</tbody></table></div></details>`;
+    const route = groupRouteSummary(group);
+    const outbound = route.outboundCount > 1 ? t('Multiple outbounds') : route.outbound || t('Unspecified');
+    const rule = route.routeCount > 1 ? t('{count} routing paths',{count:route.routeCount}) : route.rule || t('Default rule');
+    return `<details class="flow-group" data-group-key="${esc(key)}"${open ? ' open' : ''}><summary><span class="flow-chevron" aria-hidden="true">›</span><span class="flow-destination"><strong>${esc(group.destination)}</strong><small>${et('{count} connections · {active} active',{count:group.connections.length,active:group.active})}</small></span><span class="flow-route"><span class="badge">${esc(outbound)}</span><small>${esc(rule)}</small></span><span class="flow-metric"><small>${et('Download')}</small><strong>${rate(group.downloadRate)}</strong></span><span class="flow-metric"><small>${et('Upload')}</small><strong>${rate(group.uploadRate)}</strong></span><span class="flow-metric"><small>${et('Transferred')}</small><strong>${bytes(group.transferred)}</strong></span><button type="button" class="table-action flow-action" data-group-action="true" data-flow="${route.index}" data-flow-id="${esc(String(route.flow.id ?? route.index))}">${et('Set outbound')}</button></summary><div class="flow-table"><table><thead><tr><th>${et('Connection')}</th><th>${et('Outbound / rule')}</th><th class="numeric">${et('Download')}</th><th class="numeric">${et('Upload')}</th><th class="numeric">${et('Transferred')}</th><th class="numeric">${et('Connect time')}</th><th>${et('Status')}</th></tr></thead><tbody>${group.connections.sort((a,b) => Number(flowActive(b.f))-Number(flowActive(a.f))).map(flowRow).join('')}</tbody></table></div></details>`;
   }).join('');
   if(focusGroup) {
     const group = [...container.querySelectorAll('.flow-group')].find(node => node.dataset.groupKey === focusGroup);
-    const target = focusFlow ? [...(group?.querySelectorAll('[data-flow-id]') || [])].find(node => node.dataset.flowId === focusFlow) : group?.querySelector('summary');
+    const target = focusGroupAction ? group?.querySelector('[data-group-action]') : group?.querySelector('summary');
     target?.focus({preventScroll:true});
   }
 }
@@ -441,7 +463,7 @@ for(const kind of ['domains','cidrs']) {
   });
 }
 $('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
-$('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) openRule(-1,flows[Number(b.dataset.flow)]); });
+$('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) { e.preventDefault(); e.stopPropagation(); openRule(-1,flows[Number(b.dataset.flow)]); } });
 $('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
 $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
 $('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });

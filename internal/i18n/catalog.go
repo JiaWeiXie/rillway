@@ -60,7 +60,7 @@ var coreCatalog = map[string]string{
 	"adaptive rule cannot also set outbound":                       "自適應分流規則不可同時指定固定出口。",
 	"invalid adaptive settings or probe budget exceeds limits":     "自適應分流設定無效，或探測額度超過限制。",
 	"To change listener addresses or security settings, edit the configuration file on the host and restart the daemon.": "如需變更監聽位址或安全設定，請在主機上修改設定檔並重新啟動背景服務。",
-	"Restart the daemon to change outbound %s while its Tailscale state directory is in use.":                            "出口 %s 的 Tailscale 狀態目錄正在使用中，請重新啟動背景服務後再變更。",
+	"Restart the daemon to use outbound %s because its Tailscale state directory is still in use.":                       "出口 %s 的 Tailscale 狀態目錄仍在使用中，請重新啟動背景服務後再套用。",
 	"unknown outbound":                           "未知的出口。",
 	"enable this outbound before controlling it": "請先啟用此出口，再執行操作。",
 	"outbound configuration retired":             "此出口設定已停用並等待現有連線結束。",

@@ -152,6 +152,7 @@ func generate() error {
 	}
 	return writeHashes()
 }
+
 func writeHashes() error {
 	var hashes strings.Builder
 	binaries, err := filepath.Glob("dist/rillway-*")

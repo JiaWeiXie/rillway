@@ -9,6 +9,7 @@ import (
 	"os"
 	"rillway/internal/config"
 	"strings"
+	"time"
 )
 
 type ProxySnapshot struct {
@@ -75,7 +76,9 @@ func ApplyPAC(ctx context.Context, run Runner, service, pacURL, backup string) e
 	cmds := [][]string{{"-setautoproxyurl", service, pacURL}, {"-setwebproxystate", service, "off"}, {"-setsecurewebproxystate", service, "off"}, {"-setsocksfirewallproxystate", service, "off"}, {"-setautoproxystate", service, "on"}}
 	for _, args := range cmds {
 		if _, err = run(ctx, "/usr/sbin/networksetup", args...); err != nil {
-			rollbackErr := RestoreProxy(ctx, run, backup)
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			rollbackErr := RestoreProxy(rollbackCtx, run, backup)
+			cancel()
 			return fmt.Errorf("apply PAC: %w; rollback: %v", err, rollbackErr)
 		}
 	}

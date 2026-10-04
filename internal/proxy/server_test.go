@@ -69,6 +69,82 @@ func TestHTTPProxyStripsCredentialsAndHopHeaders(t *testing.T) {
 	}
 }
 
+func TestHTTPProxyFlushesStreamingResponses(t *testing.T) {
+	originReady := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: first\n\n")
+		w.(http.Flusher).Flush()
+		close(originReady)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer origin.Close()
+
+	s := testServer(t, false)
+	front := httptest.NewServer(s.HTTPHandler())
+	defer front.Close()
+	proxyURL, _ := url.Parse(front.URL)
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer transport.CloseIdleConnections()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, origin.URL, nil)
+	result := make(chan error, 1)
+	go func() {
+		response, err := (&http.Client{Transport: transport}).Do(request)
+		if err == nil {
+			defer func() { _ = response.Body.Close() }()
+			_, err = bufio.NewReader(response.Body).ReadString('\n')
+		}
+		result <- err
+	}()
+	<-originReady
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		cancel()
+		<-result
+		t.Fatal("flushed event was withheld by proxy")
+	}
+}
+
+func TestHTTPProxyAbortsTruncatedUpstreamResponse(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buffer, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = buffer.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n7\r\npartial\r\n")
+		_ = buffer.Flush()
+	}))
+	defer origin.Close()
+
+	s := testServer(t, false)
+	front := httptest.NewServer(s.HTTPHandler())
+	defer front.Close()
+	proxyURL, _ := url.Parse(front.URL)
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer transport.CloseIdleConnections()
+	response, err := (&http.Client{Transport: transport, Timeout: time.Second}).Get(origin.URL)
+	if err != nil {
+		return
+	}
+	defer func() { _ = response.Body.Close() }()
+	data, err := io.ReadAll(response.Body)
+	if err == nil {
+		t.Fatalf("truncated upstream accepted as complete response: %q", data)
+	}
+}
+
 func TestRemoveConnectionNominatedHeaders(t *testing.T) {
 	h := http.Header{"Connection": {"keep-alive, X-Internal"}, "X-Internal": {"private"}, "Keep-Alive": {"timeout=60"}, "Content-Type": {"text/plain"}}
 	removeHopHeaders(h)
