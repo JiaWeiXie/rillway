@@ -108,39 +108,21 @@ func postEditMessage(t *testing.T, output string) string {
 func TestPostEditPreservesInputAndSanitizesBootstrap(t *testing.T) {
 	const input = "{\"hook_event_name\":\"PostToolUse\",\"tool_input\":{\"command\":\"$(printf compromised > payload-executed); exit 97\"}}\n\n"
 	const output = `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"fixture check passed"}}`
-	for _, withRTK := range []bool{false, true} {
-		name := "without RTK"
-		if withRTK {
-			name = "with RTK"
+	f := newPostEditFixture(t)
+	f.env = append(f.env, "POSTEDIT_TEST_OUTPUT="+output)
+	actual := f.run(t, input)
+	if actual != output+"\n" {
+		t.Fatalf("helper output changed: %q", actual)
+	}
+	_ = postEditMessage(t, actual)
+	captured, err := os.ReadFile(filepath.Join(f.root, "captured-input"))
+	if err != nil || string(captured) != input {
+		t.Fatalf("stdin was consumed or changed: %q: %v", captured, err)
+	}
+	for _, path := range []string{filepath.Join(f.root, "payload-executed"), filepath.Join(f.bin, "payload-executed")} {
+		if _, err = os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("event text was executed: %s: %v", path, err)
 		}
-		t.Run(name, func(t *testing.T) {
-			f := newPostEditFixture(t)
-			f.env = append(f.env, "POSTEDIT_TEST_OUTPUT="+output)
-			if withRTK {
-				f.tool(t, "rtk", postEditFakeRTK)
-			}
-			actual := f.run(t, input)
-			if actual != output+"\n" {
-				t.Fatalf("helper output changed: %q", actual)
-			}
-			_ = postEditMessage(t, actual)
-			captured, err := os.ReadFile(filepath.Join(f.root, "captured-input"))
-			if err != nil || string(captured) != input {
-				t.Fatalf("stdin was consumed or changed: %q: %v", captured, err)
-			}
-			for _, path := range []string{filepath.Join(f.root, "payload-executed"), filepath.Join(f.bin, "payload-executed")} {
-				if _, err = os.Stat(path); !os.IsNotExist(err) {
-					t.Fatalf("event text was executed: %s: %v", path, err)
-				}
-			}
-			trace, err := os.ReadFile(filepath.Join(f.root, "rtk-used"))
-			if withRTK && (err != nil || string(trace) != "proxy mise exec -- go run ./tools/agentcheck post-edit\n") {
-				t.Fatalf("RTK was not used: %q: %v", trace, err)
-			}
-			if !withRTK && !os.IsNotExist(err) {
-				t.Fatalf("unexpected RTK invocation: %q: %v", trace, err)
-			}
-		})
 	}
 }
 
@@ -214,12 +196,4 @@ if [ "${POSTEDIT_TEST_FAIL:-}" = go ]; then
   exit 43
 fi
 printf '%s' "${POSTEDIT_TEST_OUTPUT:-}"
-`
-
-const postEditFakeRTK = `#!/bin/sh
-set -eu
-printf '%s\n' "$*" > "$POSTEDIT_TEST_ROOT/rtk-used"
-[ "$1" = proxy ] || exit 96
-shift
-exec "$@"
 `

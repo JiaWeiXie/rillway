@@ -62,3 +62,7 @@ run = "git-cliff --offline --no-exec --config cliff.toml"
 [tasks."changelog:check"]
 description = "Validate changelog configuration against Git history"
 run = "git-cliff --offline --no-exec --config cliff.toml --output /dev/null"
+
+[tasks.notices]
+description = "Refresh the third-party notices embedded in the single binary"
+run = "go run scripts/release-notices.go --prepare"

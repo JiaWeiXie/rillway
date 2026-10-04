@@ -3,6 +3,12 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"Rillway is already installed or has retained files. Back up the existing installation and update its binary instead of reinstalling.": "Rillway 已安裝或有保留檔案。請備份現有安裝並更新執行檔，勿重新安裝。",
+	"service listener %s must use a literal IP and a port between 1024 and 65535":                                                          "服務監聽位址 %s 必須使用 IP 位址及介於 1024 與 65535 的連接埠",
+	"listener %s is unavailable: %w":                                        "監聽位址 %s 無法使用：%w",
+	"Service removed; account, /etc/rillway and /var/lib/rillway retained.": "服務已移除；保留帳號、/etc/rillway 與 /var/lib/rillway。",
+	"LaunchAgent removed; configuration and state retained.":                "LaunchAgent 已移除；保留設定與狀態。",
+
 	"The built-in direct outbound must remain enabled with type direct and Internet access.":                    "內建 direct 出口必須保持啟用、類型為 direct 並具有網際網路存取能力。",
 	"The built-in direct outbound cannot be deleted.":                                                           "內建 direct 出口不可刪除。",
 	"Choose an enabled replacement for the outbound's rules, default route and adaptive candidates.":            "請選擇已啟用的替代出口，供原出口的規則、預設路由與自適應候選使用。",

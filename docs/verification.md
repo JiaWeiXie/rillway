@@ -4,8 +4,8 @@
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 15 個 package 通過，包含內建 direct 保護／出口刪除、Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **68.1%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
-- `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.3–46.0 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
+- 最新 `mise run check`：全部 15 個測試 package 通過（另編譯 embedded notices package），包含首次安裝引導、FHS 路徑／既有安裝保護、內建 direct 保護／出口刪除、Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **69.9%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.6–46.2 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
 - Web UI 在 Chrome 實測英文與繁中登入、總覽、規則及設定；桌面與手機版均完成互動驗證，詳見下方。
@@ -18,6 +18,17 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 ```
 
 腳本只接受全新、沒有既有 Rillway 安裝的 Ubuntu 24.04／26.04，會實際安裝並測試服務。這次沒有在目前 Mac 執行該腳本。
+
+## 單一 binary、引導安裝與雙語文件（2026-10-04 後續）
+
+- `rillway setup` 提供中英引導，詢問 listener IP、來源 IP／CIDR、四個連接埠與公司 bypass domains；最後需 `yes`。`--yes` 只供明確的首次安裝，`--no-install` 僅產生私有設定／憑證。無效輸入、取消、EOF、占用 listener 及既有安裝拒絕均有測試；IPv6 SAN、ACL 去重、secret 不輸出與 `0600` 權限已驗證。
+- 首次 Linux 安裝使用 `/etc/rillway/config.json`、`/var/lib/rillway`、低權限 `rillway` 帳號與 systemd；建立 `/usr/local/bin/rillway`，啟用並 start。以隔離暫存路徑與 command runner 驗證設定／憑證複製、來源不變、目錄權限、unit 與操作順序；測試執行不會註冊真實服務。
+- WARP 官方 client 維持外部元件；其餘 UI／字體／圖片／VPN 引擎與完整 Go／模組／字體 notices 內建。`rillway licenses` 不需設定或附屬檔案。Release 依四個平台的 imports 聯集收集授權，缺少必要來源／授權會失敗，不把未下載且未使用的 module graph 項目當作可發布元件。
+- 在只有一個發布 binary 的暫存目錄，以空 `PATH` 實測 macOS arm64、Ubuntu 26 amd64：英文／繁中 help、setup、licenses、前景服務、PAC、HTTP、CONNECT、SOCKS5、受信任 TLS／管理 API 均通過。macOS 另外逐位元比對從 binary 提供的兩份字體與 Logo，沒有外部素材依賴。暫存 daemon／憑證已清理。
+- 同一套 CLI／platform 測試交叉編譯後在 NAS Ubuntu 26 再次通過。新 systemd template 的 `systemd-analyze verify` 通過；工具另報主機原有 xfs_scrub 的 CPUAccounting 警告，未修改該服務。
+- NAS 已有正式安裝，user-mode setup 與 root-mode service install 都確認拒絕且不產生指定的新設定。**沒有在正式 VM 重跑首次安裝或 acceptance 腳本。** 更新後的可拋棄 Ubuntu 24.04／26.04 完整首次 systemd 安裝、重開機與 macOS LaunchAgent 引導仍未實機驗收；CI 腳本已改用 setup，但尚未推送或執行遠端 CI。
+- 正式 NAS binary 以備份／原子替換更新，SHA-256：`db4097c37c443452671161c2b4a3aaedbeeecc675c5551365ffde16673797001`。服務 active/running、User=rillway、NRestarts=0；HTTP、CONNECT、SOCKS5、PAC、嚴格 TLS、未登入 `401` 與 token 管理再次通過。目前設定 revision 為 **3**，更新前後有效設定、token、TLS cert/key、unit 與官方 WARP registration 的 hashes 相同。保留舊 `/var/lib/rillway/config.json`，未遷移／覆寫；另建立先前缺少的 PATH 符號連結。
+- `README.md`／`README.zh-Hant.md`、`docs/cli.md`／`docs/cli.zh-Hant.md` 提供完整雙語入口與逐指令說明；文件連結已確認。專案 hooks 改為直接呼叫 mise，完整 Git／agent hooks 測試仍通過；沒有更動使用者全域工具。
 
 ## NAS Ubuntu 26.04 正式部署與 WARP 實測
 
@@ -119,7 +130,7 @@ VM 原先沒有 Docker。為實測從官方來源取得 Docker **29.4.0** 靜態
 - `AGENTS.md`、Claude 共用入口、Codex／Claude `PostToolUse` 設定已建立；JSON 與 shell 語法檢查通過，mise 可載入新增的 hook tasks。
 - 編輯後 wrapper 實際回傳「lint 與相關 Go 測試通過」的標準 JSON；同一棵來源樹再次執行時命中快取，不重跑檢查。helper 的 statement coverage 為 **84.4%**。
 - 暫存副本測試涵蓋部分暫存、alternate index、異常檔名、私密路徑、shell／embedded assets 變更、檢查失敗及暫存清理；installer 測試確認保留既有 hook manager 與 hook 內容。
-- wrapper 測試涵蓋 Go 環境清理、輸入原樣保留、不執行輸入命令、工具缺失／啟動失敗時的 JSON 提示、RTK 有無兩種環境。helper 測試確認檢查期間改檔不會快取到錯誤版本。
+- wrapper 測試涵蓋 Go 環境清理、輸入原樣保留、不執行輸入命令、工具缺失／啟動失敗時的 JSON 提示、直接執行工具的路徑。helper 測試確認檢查期間改檔不會快取到錯誤版本。
 - 此 checkout 已執行 `mise run hooks:install`，repo-local `core.hooksPath` 為 `.githooks`。新 clone 仍須自行啟用。
 - Codex／Claude session 中的自動觸發尚未驗證；Codex 的新 hook 仍需在 `/hooks` 完成信任。手動 wrapper 成功不能視為已完成平台信任。啟用方式見 [Agent 工作流程](agent-workflow.md)。
 

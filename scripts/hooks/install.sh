@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 run() {
-  if command -v rtk >/dev/null 2>&1; then rtk proxy "$@"; else "$@"; fi
+  "$@"
 }
 task_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$task_root"

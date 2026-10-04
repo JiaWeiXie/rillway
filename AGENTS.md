@@ -8,7 +8,6 @@ The user's current instructions and existing authorization take precedence. Cont
 - Read `README.md`, relevant source/tests, and the applicable documents before changing behavior.
 - Inspect Git status and the relevant diff. Preserve the user's and other agents' changes; never reset, discard, or overwrite unrelated work.
 - Use `rg` / `rg --files` for targeted searches. Coordinate ownership when agents share files, especially `go.mod` and `go.sum`.
-- Use RTK for shell commands where installed: `rtk git ...`, or `rtk proxy <command>` for commands without a wrapper. If RTK is absent in another environment, run the equivalent command directly.
 - Do not hard-code developer machine paths, model names, SSH identities, credentials, or a past deployment/test result into instructions or implementation.
 - Keep commits focused on the current task. Push, publish, deploy, and change live services only within the user's authorized scope; do not infer deployment from an ordinary code edit.
 
@@ -24,6 +23,7 @@ The user's current instructions and existing authorization take precedence. Cont
 | `internal/outbound` | Direct, official WARP Local Proxy, embedded tsnet, userspace WireGuard |
 | `internal/control` | Authenticated `/api/v1` management API and embedded `web/` assets |
 | `internal/tui` | Bubble Tea client of the same management API |
+| `internal/notices` | Embedded full third-party notices; refresh with `mise run notices` |
 | `internal/platform` | systemd/LaunchAgent, TLS credentials, PAC, macOS proxy snapshot/restore |
 | `internal/diagnostic` | Explicit GitHub diagnostics and bounded download comparisons |
 | `internal/dockerproxy` | Validated Docker daemon/client/env/Compose exports and non-destructive JSON merge |
@@ -112,7 +112,7 @@ An explicit `/org/project` ID from the user can skip resolution. Prefer fetched 
 
 ## Documentation map
 
-`README.md` is the entry point; `docs/architecture.md` defines routing/API behavior; `docs/providers.md` covers VPN setup and limitations.
+`README.md` (English) and `README.zh-Hant.md` are the entry points; detailed command references are `docs/cli.md` and `docs/cli.zh-Hant.md`; `docs/architecture.md` defines routing/API behavior; `docs/providers.md` covers VPN setup and limitations.
 `docs/deployment.md` describes operations, `docs/deployment-target.md` records the intended environment, and `docs/verification.md` records dated evidence.
 `docs/agent-workflow.md` describes local agent hooks, Git hook installation, and agent-side trust requirements.
 `docs/changelog.md` describes commit message conventions and git-cliff release notes.

@@ -37,7 +37,7 @@ Codex 需在以 Rillway 為工作目錄的 session 中開啟 `/hooks`，檢查�
 
 Claude Code 從專案 `.claude/settings.json` 載入 hooks；重新開啟專案 session 後可在 `/hooks` 檢查。新增設定可能需要工具本身的 workspace trust。`settings.local.json` 留給個人調整，已從 Git 排除。[Claude Code hooks 文件](https://code.claude.com/docs/en/hooks)
 
-本機 hooks 只適用 Linux／macOS 開發環境，Agent 的 PATH 必須能找到 `mise`。有安裝 RTK 時透過它執行工具；CI 或其他沒有 RTK 的環境則直接執行同樣命令。產品 binary 不依賴這些開發 hooks。
+本機 hooks 只適用 Linux／macOS 開發環境，Agent 的 PATH 必須能找到 `mise`。直接使用 mise 執行相同的檢查命令。產品 binary 不依賴這些開發 hooks。
 
 ## 手動檢查與排錯
 

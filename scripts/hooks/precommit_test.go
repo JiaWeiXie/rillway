@@ -267,19 +267,6 @@ func TestPreCommitHandlesUnusualGoFilename(t *testing.T) {
 	}
 }
 
-func TestPreCommitUsesRTKWhenAvailable(t *testing.T) {
-	f := newHookFixture(t)
-	f.writeTool(t, "rtk", fakeRTK)
-	f.write(t, "main.go", "package staged\n")
-	f.git(t, "add", "--", "main.go")
-	if output, err := f.run(t); err != nil {
-		t.Fatalf("RTK hook: %v\n%s", err, output)
-	}
-	if commands := f.commands(t); !strings.Contains(commands, "rtk|proxy golangci-lint run --allow-serial-runners ./...") || !strings.Contains(commands, "rtk|proxy go test ./...") {
-		t.Fatalf("RTK was not used:\n%s", commands)
-	}
-}
-
 func TestPreCommitRejectsTrackedPrivatePaths(t *testing.T) {
 	f := newHookFixture(t)
 	f.write(t, "main.go", "package staged\n")
@@ -377,11 +364,4 @@ if [ "$tool" = golangci-lint ]; then
 fi
 [ "$*" = 'test ./...' ] || exit 100
 exit "${HOOK_TEST_GO_EXIT:-0}"
-`
-
-const fakeRTK = `#!/bin/sh
-printf 'rtk|%s\n' "$*" >> "$HOOK_TEST_LOG"
-[ "$1" = proxy ] || exit 89
-shift
-exec "$@"
 `

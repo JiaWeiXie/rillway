@@ -14,39 +14,36 @@
 
 ## 安裝 binary
 
-以下流程供尚未安裝 Rillway 的主機使用。先確認沒有既有 unit、設定或 VPN state；安裝器會複製並覆寫目標設定與同名憑證，不能當作保留設定的 binary 更新指令。
+以下流程只供首次安裝。引導與安裝器偵測到既有 unit、binary、PATH 連結、設定／state 目錄時會拒絕，不覆寫既有設定。更新既有服務請只替換 binary。
 
-從 `mise run release` 選擇 VM 架構的 `dist/rillway-linux-amd64` 或 `arm64`，改名 `rillway` 並給予執行權限。Go 與 Node 都不是執行相依套件。WARP 官方 client 另外安裝，詳見 providers 文件。
-
-```sh
-./rillway init --config "$HOME/.config/rillway/config.json"
-```
-
-初始化設定預設僅聽 loopback。假設 VM 是 `192.0.2.20`，Mac 是 `192.0.2.30`，在啟動前編輯：
-
-```json
-{
-  "listeners": {
-    "http": "192.0.2.20:17890",
-    "socks5": "192.0.2.20:17891",
-    "admin": "192.0.2.20:17892",
-    "pac": "192.0.2.20:17893"
-  }
-}
-```
-
-這是欄位節錄，請保留其餘設定。將 `security.allowed_clients` 設為 `["192.0.2.30/32", "192.0.2.20/32", "127.0.0.0/8", "::1/128"]`，`pac.proxy_address` 設為 `192.0.2.20:17890`。VM 自己的 `/32` 供本機透過 LAN listener 驗收；只允許 loopback 時，VM 連自己的 LAN IP 仍可能被拒絕。IPv6 用明確位址及適當 `/128` ACL，listener IPv6 加方括號。
-
-`init` 已產生 loopback 憑證。改成 LAN IP 後，請提供包含 VM IP／名稱的憑證，或在尚未啟動時移走 `security.tls_cert_file` 與 `tls_key_file` **這一對檔案**，讓首次 `serve` 依新的 admin 位址重新產生；勿只移走其中一個。daemon 不會自動替換你提供的憑證。TLS 憑證預設一年有效，輪替後重啟。
-
-Web UI 管理流量使用 HTTPS。HTTP／SOCKS listener 是標準明文 Proxy 協定，應限制於可信任的 LAN／VPN；ACL 限制來源，不要把這些埠做網際網路 port forwarding。若啟用 `proxy_username`／`proxy_password_file`，密碼檔案權限為 0600。PAC 本身不攜帶 Proxy 密碼；不同瀏覽器的驗證體驗需依使用者端測試。
+從 `mise run release` 選擇 VM 架構的 `dist/rillway-linux-amd64` 或 `arm64`，核對 SHA256SUMS、改名 `rillway` 並給予執行權限。每個平台是單一執行檔，包含 Web UI、字體、圖片與完整第三方授權，可用 `rillway licenses` 匯出。Go、Node、mise 與附屬素材不是執行相依套件；WARP 官方 client 仍需另外安裝。
 
 ```sh
-sudo ./rillway service install --config "$HOME/.config/rillway/config.json"
-./rillway service status
+chmod +x ./rillway
+./rillway --lang zh-Hant setup
 ```
 
-Linux 安裝器複製 binary 到 `/usr/local/lib/rillway/rillway`，複製設定與必要狀態到 `/var/lib/rillway/`，建立 `rillway` system user 與 systemd unit。unit 明確設定 `StateDirectoryMode=0700`，避免 systemd 將狀態目錄改成預設的 `0755`；設定、token 及 TLS 憑證／私鑰檔案為 `0600`。安裝後有效設定是 `/var/lib/rillway/config.json`，原始家目錄檔案不再是服務的設定來源。不要同時啟動使用相同 Tailscale state 的前景服務。
+引導詢問 VM 的指定 IP、允許的來源、HTTP／SOCKS5／HTTPS 管理／PAC 連接埠、公司略過網域，最後輸入 `yes` 才寫檔及安裝。Linux 必要時要求 sudo，daemon 使用低權限 `rillway` 帳號。自動化首次安裝範例：
+
+```sh
+./rillway setup --yes --listen 192.0.2.20 --allow-client 192.0.2.30 \
+  --bypass-domains local,ts.net,tailscale.com,corp.example
+```
+
+VM 與 Mac 位址是範例，請使用實際位址。預設只聽 loopback；引導會自動加入 loopback 與 VM 自身 IP 的 ACL，避免 VM 存取自己的 LAN listener 被拒絕。IPv6 使用指定 IP，會自動加方括號、`/128` 與正確 TLS SAN。公司 bypass domains 仍保留於 Mac PAC，私網 CIDR 預設維持。
+
+新安裝的有效設定在 **`/etc/rillway/config.json`**，私有 token、TLS 與 VPN state 在 `/var/lib/rillway/`；設定與 state 目錄 `0700`，秘密與設定檔 `0600`。Binary 位於 `/usr/local/lib/rillway/rillway`，PATH 連結 `/usr/local/bin/rillway`。systemd unit 啟用開機啟動並立即 start，只允許 daemon 寫入其設定／state。原暫存的使用者設定保留，安裝後服務不會讀取它。
+
+現有 NAS 部署仍使用 **`/var/lib/rillway/config.json`**，新版 binary 可直接使用，不會搬移檔案或修改既有 unit。請先查看 `systemctl cat rillway`，再對實際設定操作。
+
+安裝印出 TLS 指紋與權杖檔案路徑，不輸出秘密內容。核對後信任自簽憑證或改用有效 TLS 憑證，於本機讀取 token 登入 Web UI。HTTP／SOCKS listener 是標準明文 Proxy，限制於可信任 LAN／VPN；ACL 不取代加密，不要公開 port forwarding。setup 不會修改防火牆、Mac proxy、公司 Tailscale、WARP 註冊／license 或 Docker。
+
+```sh
+rillway service status
+sudo rillway tui --config /etc/rillway/config.json
+```
+
+詳細選項與更新／還原說明見 [CLI：繁體中文](cli.zh-Hant.md)／[CLI: English](cli.md)。若只想準備設定，使用 `setup --no-install --config FILE`，之後 `serve --config FILE` 在前景執行。不要啟動使用相同 listener 或 Tailscale state 的第二個 daemon。
 
 後續使用 Web UI，或把 admin 憑證與 token 安全複製到自己的 Mac，再使用遠端 TUI：
 
@@ -62,9 +59,9 @@ rillway tui --url https://192.0.2.20:17892 --token-file ./admin.token --ca ./adm
 
 正式安裝後，先確認服務為 enabled、active、執行帳號為 `rillway`，檢查狀態目錄及秘密檔案權限，再從允許的來源驗證 PAC、受信任 TLS、未登入 API 拒絕、token 登入與各 Proxy 協定的實際傳輸。管理 token 不應放進可被程序列表看見的命令參數或檢查輸出；檢查工具應從受限檔案或標準輸入讀取。停止／啟動驗收完成後，再確認管理與 Proxy 連線恢復。這些步驟不需要修改 Mac 系統 Proxy 或公司 Tailscale。
 
-更新現有安裝的 binary 時，先記錄目前版本並備份 binary、有效設定及必要狀態；確認新檔案的架構與 SHA-256。只替換 `/usr/local/lib/rillway/rillway`，保留原有設定、憑證及 VPN state，再重新啟動服務並完成上述驗收。不要重新執行 `service install`：它可能用家目錄中的舊設定覆寫 `/var/lib/rillway/config.json`。若需一致的 VPN state 備份，應在停止服務後進行，避免複製正在寫入的檔案。
+更新現有安裝的 binary 時，先記錄目前版本並備份 binary、有效設定及必要狀態；確認新檔案的架構與 SHA-256。只替換 `/usr/local/lib/rillway/rillway`，保留原有設定、憑證及 VPN state，再重新啟動服務並完成上述驗收。不要重新執行 `setup`／`service install`：新版會拒絕既有安裝及保留檔案，不能當作更新指令。若需一致的 VPN state 備份，應在停止服務後進行，避免複製正在寫入的檔案。
 
-單獨更新 binary 不會更新既有 systemd unit。若版本包含 unit 修正，須另備份並修改 `/etc/systemd/system/rillway.service`。本次修正是在 `StateDirectory=rillway` 下加入 `StateDirectoryMode=0700`，執行 `sudo systemctl daemon-reload` 後重新啟動，再確認 `/var/lib/rillway` 為 `0700`。目前 NAS 已套用；不需要為了更新 unit 重跑安裝器。
+單獨更新 binary 不會更新既有 systemd unit。若版本包含 unit 修正，須另備份並修改 `/etc/systemd/system/rillway.service`。目前 NAS 已使用 `StateDirectoryMode=0700`。新版首次安裝另外使用 `/etc/rillway` 與 `ConfigurationDirectoryMode=0700`，不會在 binary 更新時強制搬移舊設定。不需要為了更新 unit 重跑安裝器。
 
 更新失敗時停止服務、還原先前 binary，再使用保留的有效設定啟動；若新版本已改變設定或 state 格式，必須同時使用相容的備份。不要以重新初始化設定取代還原。正式的 WARP／WARP+、Tailscale、WireGuard 與下載品質測試依 [VPN 出口文件](providers.md) 分開驗收，結果記錄於 [驗證紀錄](verification.md)。
 
@@ -87,8 +84,7 @@ sudo rillway client restore --backup "$HOME/rillway-proxy-backup.json"
 ## macOS 本機 daemon
 
 ```sh
-rillway init
-rillway service install
+rillway setup
 rillway service status
 rillway service stop
 rillway service uninstall

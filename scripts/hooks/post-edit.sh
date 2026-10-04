@@ -25,11 +25,7 @@ export GOFLAGS=-mod=readonly GOWORK=off GOENV=off GOTOOLCHAIN=local
 unset RILLWAY_LIVE_CONFIG RILLWAY_LIVE_OUTBOUND RILLWAY_LIVE_TARGET
 
 run() {
-  if command -v rtk >/dev/null 2>&1; then
-    rtk proxy "$@"
-  else
-    "$@"
-  fi
+  "$@"
 }
 
 # Preserve stdin for the helper. Capture stdout so a failed bootstrap cannot

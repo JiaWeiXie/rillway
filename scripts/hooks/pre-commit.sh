@@ -3,11 +3,7 @@
 set -euo pipefail
 
 run() {
-  if command -v rtk >/dev/null 2>&1; then
-    rtk proxy "$@"
-  else
-    "$@"
-  fi
+  "$@"
 }
 
 fail() {
@@ -132,11 +128,7 @@ if run mise exec -- bash -c '
   cd "$snapshot"
 
   check() {
-    if command -v rtk >/dev/null 2>&1; then
-      rtk proxy "$@"
-    else
-      "$@"
-    fi
+    "$@"
   }
   check golangci-lint run --allow-serial-runners ./...
   check go test ./...

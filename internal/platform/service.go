@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"rillway/internal/config"
+	"rillway/internal/i18n"
 	"runtime"
 	"strconv"
 	"strings"
@@ -46,6 +47,8 @@ Restart=on-failure
 RestartSec=5
 StateDirectory=rillway
 StateDirectoryMode=0700
+ConfigurationDirectory=rillway
+ConfigurationDirectoryMode=0700
 WorkingDirectory=/var/lib/rillway
 UMask=0077
 NoNewPrivileges=yes
@@ -53,7 +56,7 @@ CapabilityBoundingSet=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/rillway
+ReadWritePaths=/var/lib/rillway /etc/rillway
 
 [Install]
 WantedBy=multi-user.target
@@ -101,126 +104,7 @@ func linuxService(ctx context.Context, action, source string) (string, error) {
 		if os.Geteuid() != 0 {
 			return "", errors.New("run service install with sudo to create the dedicated rillway service account")
 		}
-		c, err := config.Load(source)
-		if err != nil {
-			return "", err
-		}
-		requiredFiles := []string{c.Security.ProxyPasswordFile}
-		for _, o := range c.Outbounds {
-			requiredFiles = append(requiredFiles, o.ConfigFile, o.AuthKeyFile)
-		}
-		for _, path := range requiredFiles {
-			if path != "" {
-				if _, e := os.Stat(path); e != nil {
-					return "", fmt.Errorf("credential file unavailable: %w", e)
-				}
-			}
-		}
-		if _, err := Run(ctx, "id", "-u", "rillway"); err != nil {
-			if _, err = Run(ctx, "useradd", "--system", "--user-group", "--home-dir", "/var/lib/rillway", "--shell", "/usr/sbin/nologin", "rillway"); err != nil {
-				return "", err
-			}
-		}
-		state := "/var/lib/rillway"
-		if err = os.MkdirAll(state, 0o700); err != nil {
-			return "", err
-		}
-		copySecret := func(src, name string) (string, error) {
-			dst := filepath.Join(state, name)
-			if src == "" {
-				return "", nil
-			}
-			if filepath.Clean(src) == dst {
-				return dst, nil
-			}
-			b, e := os.ReadFile(src)
-			if os.IsNotExist(e) {
-				return dst, nil
-			}
-			if e != nil {
-				return "", e
-			}
-			return dst, config.WritePrivate(dst, b)
-		}
-		c.Security.AdminTokenFile, err = copySecret(c.Security.AdminTokenFile, "admin.token")
-		if err != nil {
-			return "", err
-		}
-		c.Security.TLSCertFile, err = copySecret(c.Security.TLSCertFile, "admin.crt")
-		if err != nil {
-			return "", err
-		}
-		c.Security.TLSKeyFile, err = copySecret(c.Security.TLSKeyFile, "admin.key")
-		if err != nil {
-			return "", err
-		}
-		c.Security.ProxyPasswordFile, err = copySecret(c.Security.ProxyPasswordFile, "proxy.password")
-		if err != nil {
-			return "", err
-		}
-		for i := range c.Outbounds {
-			o := &c.Outbounds[i]
-			if o.ConfigFile != "" {
-				o.ConfigFile, err = copySecret(o.ConfigFile, o.ID+".conf")
-				if err != nil {
-					return "", err
-				}
-			}
-			if o.AuthKeyFile != "" {
-				o.AuthKeyFile, err = copySecret(o.AuthKeyFile, o.ID+".auth")
-				if err != nil {
-					return "", err
-				}
-			}
-			if o.StateDir != "" {
-				dst := filepath.Join(state, "outbounds", o.ID)
-				if filepath.Clean(o.StateDir) != dst {
-					if err = copyDirectory(o.StateDir, dst); err != nil {
-						return "", err
-					}
-				}
-				o.StateDir = dst
-			}
-		}
-		installedConfig := filepath.Join(state, "config.json")
-		if err = config.Save(installedConfig, c); err != nil {
-			return "", err
-		}
-		if _, _, err = EnsureCredentials(c); err != nil {
-			return "", err
-		}
-		if _, err = Run(ctx, "chown", "-R", "rillway:rillway", state); err != nil {
-			return "", err
-		}
-		exe, err := os.Executable()
-		if err != nil {
-			return "", err
-		}
-		target := "/usr/local/lib/rillway/rillway"
-		if err = os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return "", err
-		}
-		if err = os.Chmod(filepath.Dir(target), 0o755); err != nil {
-			return "", err
-		}
-		if err = copyExecutable(exe, target); err != nil {
-			return "", err
-		}
-		unit, err := SystemdUnit(target, installedConfig)
-		if err != nil {
-			return "", err
-		}
-		if err = config.WritePrivate("/etc/systemd/system/rillway.service", []byte(unit)); err != nil {
-			return "", err
-		}
-		if _, err = Run(ctx, "systemctl", "daemon-reload"); err != nil {
-			return "", err
-		}
-		if _, err = Run(ctx, "systemctl", "enable", "rillway.service"); err != nil {
-			return "", err
-		}
-		out, err := Run(ctx, "systemctl", "restart", "rillway.service")
-		return string(out), err
+		return installLinux(ctx, source, defaultLinuxPaths(), Run, os.Executable)
 	case "start", "stop", "restart", "status":
 		args := []string{action, "rillway.service"}
 		if action == "status" {
@@ -239,7 +123,7 @@ func linuxService(ctx context.Context, action, source string) (string, error) {
 			return "", err
 		}
 		out, err := Run(ctx, "systemctl", "daemon-reload")
-		return string(out) + "\nService removed; account and /var/lib/rillway retained.", err
+		return string(out) + "\n" + i18n.Message(i18n.FromContext(ctx), "Service removed; account, /etc/rillway and /var/lib/rillway retained."), err
 	default:
 		return "", fmt.Errorf("unknown service action %q", action)
 	}
@@ -256,7 +140,14 @@ func macService(ctx context.Context, action, source string) (string, error) {
 	target := domain + "/io.rillway.daemon"
 	switch action {
 	case "install":
-		if _, err = config.Load(source); err != nil {
+		if err = CheckNewInstallation(); err != nil {
+			return "", err
+		}
+		cfg, err := config.Load(source)
+		if err != nil {
+			return "", err
+		}
+		if err = CheckListeners(ctx, cfg); err != nil {
 			return "", err
 		}
 		if err = os.MkdirAll(state, 0o700); err != nil {
@@ -297,7 +188,7 @@ func macService(ctx context.Context, action, source string) (string, error) {
 		if err := os.Remove(agent); err != nil && !os.IsNotExist(err) {
 			return "", err
 		}
-		return "LaunchAgent removed; configuration and state retained.", nil
+		return i18n.Message(i18n.FromContext(ctx), "LaunchAgent removed; configuration and state retained."), nil
 	default:
 		return "", fmt.Errorf("unknown service action %q", action)
 	}

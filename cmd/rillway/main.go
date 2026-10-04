@@ -16,6 +16,7 @@ import (
 	"rillway/internal/config"
 	"rillway/internal/diagnostic"
 	"rillway/internal/i18n"
+	"rillway/internal/notices"
 	"rillway/internal/platform"
 	"rillway/internal/tui"
 	"runtime"
@@ -71,7 +72,26 @@ func runLocalized(ctx context.Context, args []string, out io.Writer) error {
 		command, args = args[0], args[1:]
 	}
 	switch command {
+	case "setup":
+		return setupCommand(ctx, args, os.Stdin, out, setupDependencies{check: platform.CheckNewInstallation, validate: platform.CheckListeners, install: installFromSetup})
+	case "licenses":
+		fs := localizedFlags(ctx, command, out)
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New("licenses does not accept positional arguments")
+		}
+		_, err := io.WriteString(out, notices.Text)
+		return err
 	case "version", "--version":
+		fs := localizedFlags(ctx, "version", out)
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New("version does not accept positional arguments")
+		}
 		_, err := fmt.Fprintln(out, "Rillway", version)
 		return err
 	case "help", "--help", "-h":
@@ -265,6 +285,9 @@ const usage = `Rillway — observable split proxy
   While entering text, use Ctrl+L.
 
   rillway init [--config FILE]              Create private local configuration
+  rillway setup [--config FILE]             Guided first installation
+  rillway setup --yes --listen IP --allow-client IP_OR_CIDR
+  rillway setup --no-install --config FILE  Prepare without installing a service
   rillway serve [--config FILE]             Run HTTP, SOCKS5, HTTPS management UI and PAC
   rillway tui [--config FILE]               Terminal management; i installs service
   rillway tui --url URL --token-file FILE --ca PEM
@@ -277,6 +300,7 @@ const usage = `Rillway — observable split proxy
   rillway docker export --target client --proxy-url http://HOST:PORT [--input FILE]
   rillway diagnose --config FILE --outbound direct [--family ipv4|ipv6]
   rillway diagnose --config FILE --outbound warp --download-url HTTPS_URL
+  rillway licenses                         Print embedded third-party notices
   rillway version
 
 Linux service installation requires sudo; the daemon runs as the rillway user.

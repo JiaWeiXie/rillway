@@ -1,27 +1,109 @@
 # Rillway
 
+[English](README.md) · [繁體中文](README.zh-Hant.md)
+
 ![Rillway — Choose your route.](docs/brand/rillway-cover.png)
 
-Rillway 是以 Go 實作的多出口 TCP Proxy。名稱結合 **rill**（小溪）與 **way**（路徑）：讓每條連線選擇適合的出口，並看得到選擇結果。
+Rillway is an observable multi-outbound TCP proxy written in Go. Its name joins
+**rill**, a small stream, and **way**, a route: choose a path for each connection
+and see how that path performs.
 
-適用情境是 Mac 保留公司的 Tailscale，公開網站經 PAC 送到 Ubuntu VM，再由 Rillway 選擇直連、WARP 或 WireGuard。核心、Web UI、TUI、Tailscale 與 WireGuard 引擎都編入同一個 binary；WARP 使用另外安裝的官方 client。
+Keep your company's Tailscale on your Mac. Send public traffic through a PAC file
+to an Ubuntu VM, where Rillway routes it through direct, WARP, or WireGuard.
 
-## 目前能力
+## One executable, guided installation
 
-- HTTP forward proxy、HTTPS CONNECT、SOCKS5 TCP；來源 CIDR 限制、選用 Proxy 密碼。
-- WARP／WARP+ 官方 Local Proxy 管理、嵌入式 Tailscale `tsnet`、WireGuard userspace netstack。
-- 網域、suffix、IP literal／CIDR 分流；固定規則失敗不會偷偷改走直連。
-- HTTPS Web UI 與 Bubble Tea TUI 共用 `/api/v1`，具 token 登入、設定版本衝突檢查與原子更新。
-- Web UI、TUI、CLI 支援英文與繁體中文 `zh-Hant`；Web UI 內建離線中文字體及 Emoji 備援字體。
-- 每秒更新連線、上下載速率、流量、建連時間、已知目的 IP、出口及命中規則。HTTPS 僅知道目的主機，不解密網址路徑。
-- 使用者啟用的自適應，依建連延遲及成功／逾時樣本選擇出口。
-- Ubuntu systemd、macOS LaunchAgent、Mac network service PAC 套用及還原。
-- 明確啟動的 GitHub 診斷與限量下載比較。
-- Docker pull／push、Build 與容器 HTTP／HTTPS 代理設定匯出；Web UI 與 CLI 提供 Engine、client、環境變數及 Compose 格式，CLI 可合併既有 JSON。
+Each release target is **one standalone executable**. It includes the proxy,
+HTTPS Web UI, TUI, tsnet, userspace WireGuard, images, offline Chinese/emoji fonts,
+and third-party notices. The server does not need Go, Node, mise, or external UI
+files. **WARP/WARP+ requires the separately installed official Cloudflare client.**
 
-不提供整機 TUN、SOCKS5 UDP、HTTPS 解密或透明代理。初始 WARP profile 停用；GitHub CDN 固定規則會在 WARP 尚未啟用時失敗，請完成 WARP 設定或手動修改該規則。
+Choose `dist/rillway-linux-amd64`, `rillway-linux-arm64`, `rillway-darwin-amd64`, or
+`rillway-darwin-arm64` from `mise run release`. Verify against `dist/SHA256SUMS`,
+copy the executable to the target host as `rillway`, and run:
 
-## 開發
+```sh
+chmod +x ./rillway
+./rillway setup
+# Traditional Chinese prompts:
+./rillway --lang zh-Hant setup
+```
+
+Use **one** setup invocation. The wizard asks for a specific local IP address,
+allowed clients, four ports, and company domains to bypass. It shows a summary and
+requires `yes` before creating files. Loopback is the default; for LAN access,
+choose the VM's assigned LAN IP and allow your Mac's IP. Linux asks for sudo when
+installing; the daemon runs as the dedicated `rillway` user. macOS installs the
+current user's LaunchAgent without sudo.
+
+A scripted **first installation** can supply the same settings explicitly:
+
+```sh
+./rillway setup --yes --listen 192.0.2.20 \
+  --allow-client 192.0.2.30 --bypass-domains local,ts.net,tailscale.com,corp.example
+```
+
+The IPs are examples; replace them with your VM and client addresses. Company
+bypass domains supplement your Mac's Tailscale workflow. Setup does not register,
+license, or connect WARP and does not change your Mac's network settings.
+
+New Linux installations use:
+
+| Location | Purpose |
+| --- | --- |
+| `/usr/local/lib/rillway/rillway` | Standalone executable |
+| `/usr/local/bin/rillway` | PATH symlink |
+| `/etc/rillway/config.json` | Effective service configuration |
+| `/var/lib/rillway/` | Private credentials and VPN state |
+| `/etc/systemd/system/rillway.service` | Enabled and started systemd unit |
+
+Configuration/state directories are `0700`; configuration and credentials are
+`0600`. Setup prints the TLS fingerprint and **token path**, never its contents.
+Verify the fingerprint, open the displayed HTTPS URL, and read the private token
+file locally to sign in. The default certificate is self-signed; trust the verified
+certificate or supply your own valid certificate.
+
+Existing installations and retained files are rejected before installation.
+Update the binary while preserving configuration and state; do not rerun setup
+or install as an upgrade. Legacy `/var/lib/rillway/config.json` deployments remain
+supported and are not automatically migrated.
+
+```sh
+rillway service status
+sudo rillway service restart
+sudo rillway tui --config /etc/rillway/config.json
+# Configuration only, without sudo or service changes:
+./rillway setup --no-install --config .local/config.json
+./rillway serve --config .local/config.json
+```
+
+See the [complete CLI reference](docs/cli.md) for every command, option, defaults,
+service operations, upgrades, Docker exports, and Mac PAC restoration.
+
+## Capabilities and limits
+
+- HTTP forwarding, HTTPS CONNECT, SOCKS5 TCP; source CIDR restrictions and optional proxy authentication.
+- Official WARP/WARP+ Local Proxy management, embedded Tailscale tsnet, userspace WireGuard.
+- Domain/suffix and literal IP/CIDR rules; failed fixed VPN routes never fall back to direct.
+- HTTPS Web UI and Bubble Tea TUI share `/api/v1`, token authentication, revision checks, and atomic configuration updates.
+- English and Traditional Chinese (`zh-Hant`) UI/CLI; bundled Web fonts work offline. Terminal glyphs use your terminal's fonts.
+- Per-second connection, rate, byte, latency, known destination IP, outbound, and rule observations. HTTPS paths/content are not decrypted.
+- Opt-in adaptive routing based on connection success/timeouts and latency; only new connections change routes.
+- Ubuntu systemd, macOS LaunchAgent, reversible PAC settings per macOS network service.
+- Explicit GitHub diagnostics and bounded download comparisons.
+- Docker pull/push, Build, and container HTTP/HTTPS exports: daemon, client, environment, Compose; merge existing JSON without modifying the input.
+
+No whole-host TUN, SOCKS5 UDP, HTTPS interception, or transparent proxy. Built-in
+`direct` cannot be deleted/disabled. Initial WARP is disabled: its fixed GitHub CDN
+rules fail until WARP is configured or you explicitly replace those rules. Company
+and private networks stay on fixed routes. Throughput observations alone do not
+prove an alternative path is faster.
+
+For browser proxy settings, use the HTTP listener for both HTTP and HTTPS proxies,
+or the SOCKS5 listener with proxy-side DNS. LAN addresses replace loopback. Mac PAC
+bypass connections never pass through Rillway and do not appear in observations.
+
+## Development
 
 ```sh
 mise trust
@@ -29,59 +111,55 @@ mise install
 mise run check
 mise run build
 mise run dev
-```
-
-`dev` 首次執行會建立 `.local/config.json` 與私有憑證，之後開啟 `https://127.0.0.1:17892`。伺服器會顯示憑證指紋與 token **檔案路徑**，不輸出 token。瀏覽器使用自簽憑證時，先核對指紋並信任該憑證；也可替換成你管理的有效 TLS 憑證。登入畫面貼上本機 token 檔案的內容。
-
-另一個終端：
-
-```sh
+# In another terminal:
 ./bin/rillway tui --config .local/config.json
 ```
 
-TUI 按 `i`、Enter 安裝背景服務；Ubuntu 透過 sudo 顯示權限提示，完成後 daemon 以 `rillway` 帳號執行。Mac 安裝目前使用者的 LaunchAgent。開發期間也可以維持 `serve` 在前景執行。
+`dev` creates `.local/config.json` and private credentials on its first run; the
+management UI is `https://127.0.0.1:17892`. It prints the fingerprint and token file
+path. TUI `i`, then Enter installs a new background service; existing services are
+protected. Stop any foreground daemon before installing its service. Use `serve` for foreground development.
 
-Web UI 可在登入畫面或側欄切換語言。CLI／TUI 加上 `--lang zh-Hant` 或設定
-`RILLWAY_LANG=zh-Hant`；TUI 按大寫 `L` 即時切換中英。預設為英文，詳細行為見
-[語言、中文字體與 Emoji](docs/i18n.md)。
+`mise.toml`/`mise.lock` pin Go, gopls, golangci-lint, and git-cliff. LSP:
+`mise exec -- gopls`; VS Code uses `scripts/gopls` with format/imports on save.
+Launch the editor where mise is available, for example `mise exec -- code .`.
 
-| 任務 | 用途 |
-|---|---|
-| `mise run dev` | 本機服務與 Web UI |
-| `mise run build` | `bin/rillway` |
-| `mise run fmt` | gofumpt 與 goimports 修正格式 |
-| `mise run lint` | 驗證設定、Lint 與格式檢查，不改檔 |
-| `mise run test` | 不需 VPN 帳號的測試 |
-| `mise run check` | Lint、race、shuffle、coverage |
-| `mise run fuzz` | 有時間上限的設定與 SOCKS5 fuzz |
-| `mise run test:live` | 需要明確提供真實 VPN 設定的測試 |
-| `mise run release` | Linux／macOS amd64、arm64 binary |
+| Task | Behavior |
+| --- | --- |
+| `mise run dev` | Foreground local daemon/Web UI |
+| `mise run build` | Build `bin/rillway` |
+| `mise run fmt` | Apply gofumpt/goimports |
+| `mise run lint` | Validate lint configuration, lint, and check formatting |
+| `mise run test` | Account-free tests |
+| `mise run check` | Lint, race detector, shuffled tests, coverage |
+| `mise run fuzz` | Time-bounded configuration/SOCKS5 fuzzing |
+| `mise run test:live` | Explicit external-account tests |
+| `mise run notices` | Refresh embedded full third-party notices |
+| `mise run release` | Four standalone Linux/macOS binaries and checksums |
+| `mise run hooks:install` | Enable repository-local Git hooks |
+| `mise run hooks:check` | Check the exact staged snapshot |
+| `mise run changelog:preview` | Preview git-cliff changelog |
+| `mise run changelog` | Regenerate changelog |
 
-工具固定為 Go 1.27.1、gopls 0.23.0、golangci-lint 2.14.0，追蹤 `mise.lock`。測試保留 CGO 以支援 race detector，發布獨立使用 `CGO_ENABLED=0`。一般測試使用本機 listener 和 mock；PAC 的 JavaScript 執行測試使用 Node（僅測試，未安裝時會明確 skip；CI runner 已提供），產品不需要 Node。
+Tests retain CGO for the race detector; releases use `CGO_ENABLED=0`. PAC execution
+tests use Node only during testing and explicitly skip if absent. Git/agent hooks
+invoke the mise tools directly.
+Caches and local secrets are ignored by Git. Refresh notices after dependency or
+font-license changes; release does this automatically before compiling.
 
-LSP 共通入口是 `mise exec -- gopls`。VS Code 設定使用 repository 的 `scripts/gopls` 包裝器，啟用格式化及 imports 整理；請讓啟動編輯器的環境可找到 `mise`，例如 `mise exec -- code .`。其他編輯器以相同入口設定 LSP。快取在忽略的 `.cache/`，產物在 `bin/`、`dist/`、`coverage/`。
+## Documentation
 
-## 部署與設定
+- [CLI: English](docs/cli.md) · [CLI：繁體中文](docs/cli.zh-Hant.md)
+- [Ubuntu/LAN deployment, upgrades, Mac PAC](docs/deployment.md)
+- [WARP+, Tailscale, WireGuard](docs/providers.md)
+- [Routing, adaptive decisions, observations, API](docs/architecture.md)
+- [Verification and unverified external environments](docs/verification.md)
+- [Docker, Build, Compose, OrbStack](docs/docker.md)
+- [Languages, Chinese fonts, emoji](docs/i18n.md)
+- [Agent guidance and local hooks](docs/agent-workflow.md)
+- [Git hooks and git-cliff](docs/changelog.md)
+- [Logo and image assets](docs/brand/README.md)
+- [Third-party components and notices](THIRD_PARTY.md)
 
-- [Ubuntu VM、LAN、Mac PAC 操作](docs/deployment.md)
-- [WARP+、Tailscale、WireGuard](docs/providers.md)
-- [分流、自適應、觀察資料與 API](docs/architecture.md)
-- [測試與驗收狀態](docs/verification.md)
-- [第三方元件](THIRD_PARTY.md)
-- [AI Agent 規範與本機 hooks](docs/agent-workflow.md)
-- [Git hooks、提交格式與 changelog](docs/changelog.md)
-- [Logo、圖片素材與品牌使用方式](docs/brand/README.md)
-- [中英介面、中文字體與 Emoji](docs/i18n.md)
-- [Docker、Build、Compose 與 OrbStack 代理](docs/docker.md)
-
-基本瀏覽器 Proxy：HTTP 與 HTTPS Proxy 均填 `127.0.0.1:17890`；SOCKS5 填 `127.0.0.1:17891`。遠端 VM 改填其 LAN IP。使用 SOCKS 時讓瀏覽器透過 Proxy 解析 DNS，才保留網域分流與出口 DNS 語意。
-
-```sh
-./bin/rillway init --config .local/config.json
-./bin/rillway serve --config .local/config.json
-./bin/rillway diagnose --config .local/config.json --outbound direct
-# 明確下載最多 4 MiB，URL 由使用者選定；不跟隨 redirect。
-./bin/rillway diagnose --config .local/config.json --outbound warp --download-url https://YOUR_HOST/YOUR_TEST_FILE
-```
-
-診斷的 CDN header 是該次回應提供的資訊，不能單靠名稱推斷物理節點。建連速度也不等於下載速度，下載比較必須另行啟動。
+Operational and architecture documents linked above currently use Traditional
+Chinese; the README and complete CLI reference are available in both languages.

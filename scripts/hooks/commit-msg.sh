@@ -4,7 +4,7 @@
 set -euo pipefail
 
 run() {
-  if command -v rtk >/dev/null 2>&1; then rtk proxy "$@"; else "$@"; fi
+  "$@"
 }
 fail() { printf 'Rillway commit-msg: %s\n' "$*" >&2; exit 1; }
 
@@ -41,7 +41,7 @@ if run mise exec -- bash -c '
     exit 127
   }
   run() {
-    if command -v rtk >/dev/null 2>&1; then rtk proxy "$@"; else "$@"; fi
+    "$@"
   }
   # Git hooks inherit the real index/repository. None of that state, signing
   # configuration, or git-cliff environment overrides belongs in this sandbox.

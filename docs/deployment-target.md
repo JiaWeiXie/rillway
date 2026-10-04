@@ -16,7 +16,7 @@
 | 本次 Mac 來源 IP | `192.0.2.70` |
 | SSH 與 sudo | 指定金鑰可登入，`sudo -n true` 成功 |
 | Rillway 服務 | `rillway.service` 為 enabled、active，使用低權限帳號 `rillway` |
-| Binary | `/usr/local/lib/rillway/rillway` |
+| Binary | `/usr/local/lib/rillway/rillway`；PATH 入口 `/usr/local/bin/rillway` |
 | 有效設定 | `/var/lib/rillway/config.json` |
 | 狀態與憑證權限 | `/var/lib/rillway` 為 `0700`；config、token、TLS cert/key 為 `0600` |
 | 來源 ACL | 僅 `192.0.2.70/32`、`192.0.2.21/32`、`127.0.0.0/8`、`::1/128` |
@@ -47,4 +47,6 @@ Mac 的管理 token 與公開 CA 憑證副本位於專案已被 Git 忽略的 `.
 
 Mac 原有 Proxy 設定與 Tailscale，以及 VM 預設路由均未修改。公司流量繼續由 Mac 的 Tailscale 處理。WARP+ 授權已由使用者套用，未寫入 Git；公司帳號仍未提供；完整外部出口狀態以 [驗證紀錄](verification.md) 為準。
 
-後續操作見 [Ubuntu VM 與 Mac 部署](deployment.md)。此主機已有正式安裝，更新 binary 時不要重新執行 `service install`，以免用舊來源設定覆寫有效設定；也不要執行會在結束時卸載服務的 `scripts/acceptance-ubuntu.sh`。
+後續操作見 [Ubuntu VM 與 Mac 部署](deployment.md)。此主機已有正式安裝，更新 binary 時不要重新執行 `setup`／`service install`：新版會拒絕既有安裝，更新應保留實際設定與狀態；也不要執行會在結束時卸載服務的 `scripts/acceptance-ubuntu.sh`。
+
+最新單一 binary／引導版本已於同日更新，artifact SHA-256 為 `db4097c37c443452671161c2b4a3aaedbeeecc675c5551365ffde16673797001`。實際設定 revision 為 `3`，設定、憑證、unit 與 WARP registration 保留；仍使用舊設定路徑，新增 PATH 入口。詳見 [最新驗證紀錄](verification.md)。

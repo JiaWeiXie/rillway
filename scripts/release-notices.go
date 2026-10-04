@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -30,27 +31,59 @@ func main() {
 }
 
 func generate() error {
-	data, err := exec.Command("go", "list", "-m", "-json", "all").Output()
+	if len(os.Args) > 2 || len(os.Args) == 2 && os.Args[1] != "--prepare" && os.Args[1] != "--hashes-only" {
+		return fmt.Errorf("use --prepare or --hashes-only")
+	}
+	if len(os.Args) == 2 && os.Args[1] == "--hashes-only" {
+		return writeHashes()
+	}
+	// Include the union of imported module dependencies for all release targets.
+	// The complete module graph also contains unused modules with no source files.
+	byPath := map[string]module{}
+	for _, target := range []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"} {
+		parts := strings.Split(target, "/")
+		command := exec.Command("go", "list", "-deps", "-json", "./cmd/rillway")
+		command.Env = append(os.Environ(), "GOOS="+parts[0], "GOARCH="+parts[1], "CGO_ENABLED=0")
+		data, err := command.Output()
+		if err != nil {
+			return fmt.Errorf("list release dependencies for %s: %w", target, err)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		for {
+			var pkg struct{ Module *module }
+			if err := decoder.Decode(&pkg); err == io.EOF {
+				break
+			} else if err != nil {
+				return err
+			}
+			if pkg.Module != nil && !pkg.Module.Main {
+				byPath[pkg.Module.Path] = *pkg.Module
+			}
+		}
+	}
+	var modules []module
+	for _, m := range byPath {
+		modules = append(modules, m)
+	}
+	var err error
+	sort.Slice(modules, func(i, j int) bool { return modules[i].Path < modules[j].Path })
+	var notices strings.Builder
+	notices.WriteString("Rillway third-party notices. Embedded in the standalone binary.\n\n")
+	summary, err := os.ReadFile("THIRD_PARTY.md")
 	if err != nil {
 		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var modules []module
-	for {
-		var m module
-		if err = decoder.Decode(&m); err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if !m.Main {
-			modules = append(modules, m)
-		}
+	notices.Write(summary)
+	notices.WriteString("\n\n")
+	goLicense, err := os.ReadFile(filepath.Join(runtime.GOROOT(), "LICENSE"))
+	if err != nil {
+		return err
 	}
-	sort.Slice(modules, func(i, j int) bool { return modules[i].Path < modules[j].Path })
+	notices.WriteString("\n===== Go standard library / LICENSE =====\n")
+	notices.Write(goLicense)
+	notices.WriteString("\n")
 	var index strings.Builder
-	index.WriteString("Rillway module inventory; exact versions from go.mod/go.sum.\n\n")
+	index.WriteString("Rillway release dependency inventory; union of Linux/macOS imports, exact versions from go.mod/go.sum.\n\n")
 	for _, m := range modules {
 		source := m
 		if m.Replace != nil {
@@ -59,8 +92,7 @@ func generate() error {
 		fmt.Fprintf(&index, "%s %s\n", m.Path, m.Version)
 		entries, err := os.ReadDir(source.Dir)
 		if err != nil {
-			fmt.Fprintf(&index, "  source directory unavailable (module graph only)\n")
-			continue
+			return fmt.Errorf("release module %s source unavailable: %w", m.Path, err)
 		}
 		found := false
 		for _, entry := range entries {
@@ -80,10 +112,13 @@ func generate() error {
 				return e
 			}
 			fmt.Fprintf(&index, "  %s\n", target)
+			fmt.Fprintf(&notices, "\n===== %s %s / %s =====\n", m.Path, m.Version, entry.Name())
+			notices.Write(b)
+			notices.WriteString("\n")
 			found = true
 		}
 		if !found {
-			index.WriteString("  No root license file; consult upstream source before redistribution.\n")
+			return fmt.Errorf("release module %s has no root license/notice; review upstream before redistribution", m.Path)
 		}
 	}
 	if err = os.WriteFile("dist/MODULES.txt", []byte(index.String()), 0o644); err != nil {
@@ -95,6 +130,9 @@ func generate() error {
 		if readErr != nil {
 			return readErr
 		}
+		fmt.Fprintf(&notices, "\n===== Fonts / %s =====\n", name)
+		notices.Write(data)
+		notices.WriteString("\n")
 		dir := filepath.Join("dist", "_licenses", "fonts")
 		if err = os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -103,6 +141,18 @@ func generate() error {
 			return err
 		}
 	}
+	if err = os.MkdirAll("internal/notices", 0o755); err != nil {
+		return err
+	}
+	if err = os.WriteFile("internal/notices/NOTICE.txt", []byte(notices.String()), 0o644); err != nil {
+		return err
+	}
+	if len(os.Args) == 2 {
+		return nil
+	}
+	return writeHashes()
+}
+func writeHashes() error {
 	var hashes strings.Builder
 	binaries, err := filepath.Glob("dist/rillway-*")
 	if err != nil {

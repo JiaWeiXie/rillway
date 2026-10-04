@@ -12,6 +12,42 @@ import (
 )
 
 var catalog = map[string]string{
+	"licenses does not accept positional arguments":    "licenses 不接受位置參數",
+	"version does not accept positional arguments":     "version 不接受位置參數",
+	"new setup configuration file":                     "首次安裝的暫存設定檔",
+	"specific local IPv4 or IPv6 address; no wildcard": "指定本機 IPv4 或 IPv6 位址；不可使用萬用位址",
+	"allowed client IPs or CIDRs, comma-separated":     "允許的用戶端 IP 或 CIDR，以逗號分隔",
+	"company bypass domains, comma-separated":          "公司略過網域，以逗號分隔",
+	"HTTP Proxy port":       "HTTP Proxy 連接埠",
+	"SOCKS5 port":           "SOCKS5 連接埠",
+	"HTTPS management port": "HTTPS 管理介面連接埠",
+	"PAC port":              "PAC 連接埠",
+	"use supplied options without prompts; new installations only":                "使用指定選項，略過提示；僅適用首次安裝",
+	"create configuration and credentials without installing a service":           "建立設定與憑證，不安裝服務",
+	"setup does not accept positional arguments":                                  "setup 不接受位置參數",
+	"Rillway setup — single binary, private configuration, background service.":   "Rillway 引導安裝 — 單一執行檔、私有設定與背景服務。",
+	"Setup input ended. Run interactively or supply --yes with explicit options.": "安裝輸入已結束。請使用互動模式，或加上 --yes 並指定選項。",
+	"Setup input is too long.":                                                    "安裝輸入過長。",
+	"Listener IP address":                                                         "監聽 IP 位址",
+	"Choose a specific local IPv4 or IPv6 address, not a wildcard.":               "請選擇指定的本機 IPv4 或 IPv6 位址，不可使用萬用位址。",
+	"Allowed client IPs or CIDRs (comma-separated)":                               "允許的用戶端 IP 或 CIDR（以逗號分隔）",
+	"Allowed clients must be IP addresses or CIDRs.":                              "允許的用戶端必須是 IP 位址或 CIDR。",
+	"Setup ports must be between 1024 and 65535.":                                 "安裝連接埠必須介於 1024 與 65535 之間。",
+	"Company bypass domains (comma-separated)":                                    "公司略過網域（以逗號分隔）",
+	"Review setup:":       "確認安裝設定：",
+	"Allowed clients: %s": "允許的用戶端：%s",
+	"Configuration: %s":   "設定檔：%s",
+	"Linux installation: /etc/rillway/config.json; /var/lib/rillway; /usr/local/bin/rillway; rillway.service (user rillway).": "Linux 安裝位置：/etc/rillway/config.json；/var/lib/rillway；/usr/local/bin/rillway；rillway.service（使用者 rillway）。",
+	"WARP stays disabled. Its fixed GitHub CDN rules fail until you configure WARP or explicitly change those rules.":         "WARP 維持停用。請設定 WARP 或手動修改其固定 GitHub CDN 規則，否則這些規則的連線會失敗。",
+	"Create configuration and continue? Type yes":                                                                                          "建立設定並繼續？請輸入 yes",
+	"Setup cancelled; no files or services were changed.":                                                                                  "已取消安裝；未變更檔案或服務。",
+	"TLS certificate SHA-256: %s":                                                                                                          "TLS 憑證 SHA-256：%s",
+	"Management token file: %s":                                                                                                            "管理權杖檔案：%s",
+	"Configuration ready. Use serve --config with this file to run in the foreground.":                                                     "設定已完成。請用 serve --config 指定此檔案，在前景執行。",
+	"Installed. Effective configuration: /etc/rillway/config.json; token: /var/lib/rillway/admin.token.":                                   "安裝完成。有效設定：/etc/rillway/config.json；權杖：/var/lib/rillway/admin.token。",
+	"Open https://%s after verifying the certificate fingerprint. Read the private token file locally to sign in.":                         "核對憑證指紋後開啟 https://%s。請在本機讀取私有權杖檔案，用於登入。",
+	"Rillway is already installed or has retained files. Back up the existing installation and update its binary instead of reinstalling.": "Rillway 已安裝或有保留檔案。請備份現有安裝並更新執行檔，勿重新安裝。",
+	"\nService removed; account, /etc/rillway and /var/lib/rillway retained.":                                                              "\n服務已移除；保留帳號、/etc/rillway 與 /var/lib/rillway。",
 	"docker requires export":                                     "docker 需要指定 export",
 	"export format: daemon, client, env or compose":              "匯出格式：daemon、client、env 或 compose",
 	"Docker-reachable Rillway HTTP Proxy URL":                    "Docker 能連線的 Rillway HTTP Proxy 網址",
@@ -49,6 +85,9 @@ var catalog = map[string]string{
   語言預設採用 RILLWAY_LANG，未設定時使用英文。TUI：按 L 或 Ctrl+L 切換語言。
   輸入文字時請使用 Ctrl+L。
 
+  rillway setup [--config FILE]             引導首次安裝
+  rillway setup --yes --listen IP --allow-client IP_OR_CIDR
+  rillway setup --no-install --config FILE  只建立設定，不安裝服務
   rillway init [--config FILE]              建立私有的本機設定
   rillway serve [--config FILE]             執行 HTTP、SOCKS5、HTTPS 管理介面與 PAC
   rillway tui [--config FILE]               終端管理介面；按 i 安裝服務
@@ -62,6 +101,7 @@ var catalog = map[string]string{
   rillway docker export --target client --proxy-url http://HOST:PORT [--input FILE]
   rillway diagnose --config FILE --outbound direct [--family ipv4|ipv6]
   rillway diagnose --config FILE --outbound warp --download-url HTTPS_URL
+  rillway licenses                         輸出內建第三方授權說明
   rillway version
 
 Linux 安裝服務需要 sudo；背景服務以 rillway 使用者執行。
@@ -142,7 +182,7 @@ func languageArguments(args []string, preference string) (i18n.Locale, []string,
 		remaining = append(remaining, arg)
 		name := strings.TrimLeft(arg, "-")
 		switch name {
-		case "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input":
+		case "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input", "listen", "allow-client", "bypass-domains", "http-port", "socks-port", "admin-port", "pac-port":
 			if strings.HasPrefix(arg, "-") && i+1 < len(args) {
 				i++
 				remaining = append(remaining, args[i])

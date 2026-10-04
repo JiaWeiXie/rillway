@@ -17,7 +17,11 @@ account state and paid license are not included in Rillway releases. Rillway doe
 not replace the terms associated with that software or service.
 
 Inspect the exact dependency graph with `mise exec -- go list -m all`.
-The release task includes module license/notice files alongside binaries.
+The release task embeds full dependency, Go, and font license/notice text into each
+binary. Print it without external files using `rillway licenses`. Optional
+`dist/_licenses/` copies and `dist/MODULES.txt` support release audits; they are
+not runtime dependencies. Refresh tracked embedded notices with `mise run notices`
+after changing dependencies or font licenses.
 
 ## Embedded fonts
 
