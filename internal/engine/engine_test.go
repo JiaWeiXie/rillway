@@ -32,7 +32,7 @@ func (p testProvider) Close() error                           { return nil }
 func testEngine() (*Engine, *time.Time) {
 	now := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	e := &Engine{now: func() time.Time { return now }, ctx: context.Background(), flows: make(map[uint64]*flowState)}
-	cfg := config.Config{DefaultOutbound: "direct", Outbounds: []config.Outbound{{ID: "direct", Type: "direct", Enabled: true}, {ID: "warp", Type: "warp", Enabled: true}, {ID: "private", Type: "tailscale", Enabled: true}}, Adaptive: config.Adaptive{Enabled: true, Candidates: []string{"direct", "warp"}}, PAC: config.PAC{BypassDomains: []string{"company.example"}}}
+	cfg := config.Config{DefaultOutbound: "direct", Outbounds: []config.Outbound{{ID: "direct", Type: "direct", Enabled: true}, {ID: "warp", Type: "warp", Enabled: true}, {ID: "private", Type: "tailscale", Enabled: true}}, Adaptive: config.Adaptive{Enabled: true, Candidates: []string{"direct", "warp"}}, PAC: config.PAC{BypassDomains: []config.PACBypass{{Value: "company.example", Enabled: true}}}}
 	e.Update(cfg, map[string]outbound.Provider{"direct": testProvider{id: "direct"}, "warp": testProvider{id: "warp"}, "private": testProvider{id: "private"}})
 	return e, &now
 }

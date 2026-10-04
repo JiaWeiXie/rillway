@@ -198,6 +198,17 @@ mise exec -- go test ./internal/engine -run '^$' -fuzz FuzzRuleHostname -fuzztim
 - Browser plugin not available；使用既有 Playwright／隔離 Chrome 對本機暫存 daemon 與 NAS 正式服務，各完成英文／繁中、1440 × 1000／390 × 844 四組互動。頁面識別、非空內容、無錯誤覆蓋層、分組總計、展開／收合、搜尋、建立規則表單、自動更新、locale 保留、Apple PAC 連結及無水平溢出均通過；console error、warning、失敗／外部請求為 0。NAS 驗收只允許 GET／HEAD，沒有修改正式設定或 VPN。
 - Linux amd64 artifact SHA-256 為 `56142e04469be3634df0754bc0a50e4ba3db4b03d6c5656ea158ff40a37d0018`，已備份後原子更新至 NAS VM。更新前後設定、token、TLS cert/key、systemd unit 與官方 WARP registration hashes 相同；服務 active，state `0700`、設定與 token `0600`。HTTP、HTTPS CONNECT、SOCKS5、PAC、嚴格 TLS、未登入 `401` 與權杖管理再次通過；最後讀取的 revision 為 **9**。
 
+## PAC 略過項目、備註與 VPN 衝突預設（2026-10-04 後續）
+
+- 依 IETF、Tailscale、Docker 與 Kubernetes 官方資料整理預設：9 筆網域／名稱與 10 筆 IP 範圍，涵蓋 `localhost`、mDNS `.local`、`home.arpa`、Tailscale、Docker Desktop、常見 Kubernetes `cluster.local`、RFC1918、loopback、link-local、IPv6 ULA，以及 Tailscale 的 `100.64.0.0/10` 與 `fd7a:115c:a1e0::/48`。未加入一般公開網站或非保留的寬鬆內部後綴。
+- Web UI 改為逐筆卡片，每筆都有啟用／停用 switch、可編輯值、選填的使用者備註，以及中英文「預設備註」。新增與移除網域／CIDR 不再編輯整塊文字；切換語言保留未儲存的備註。停用項目會留在設定中，但不會進入 PAC、Docker `NO_PROXY` 或 engine 的設定型私網判斷。
+- 設定格式改為包含 `value`、`enabled`、`note`、`preset` 的物件陣列。舊版字串陣列仍可讀取，第一次載入時補上新安全預設；使用者下一次儲存才寫回新格式。驗證包含未知欄位、重複項目、無效 CIDR、超長備註、舊格式遷移、停用項目排除與 Emoji／中文備註。
+- Tailscale 官方文件指出另一套 VPN 可能因防火牆、裝置限制或 IP 重疊而衝突；subnet routes 也需加入分流範圍，exit node 不能使用這種同機分流。Web UI 與部署文件已附官方連結並說明 PAC 不會修改系統 VPN 的防火牆或路由表。
+- 最終 `mise run check` 全部通過：lint 0 issues、race detector 未發現競態，總 statement coverage **70.7%**。`mise run release` 成功產生 Linux／macOS 的 amd64、arm64 單一 binary。
+- Browser plugin not available；使用既有 Playwright／隔離 Chrome，在本機暫存 daemon 以英文／繁中、1440 × 1050／390 × 844 四種組合驗證 19 筆項目、備註、switch 與響應式排版；另實際停用 Docker 項目、新增 `corp.example` 與 `公司內部 Git 🚀` 備註、切換語言、儲存、讀回，並確認生成 PAC 排除停用項目，最後還原原設定。console error／warning、失敗及外部請求均為 0。
+- Linux amd64 artifact SHA-256 為 `c01b07e42247662527c8ffff3e2c6e591194877bce60e5ca58ba40b48ed07f13`，已備份後原子更新至 NAS VM。磁碟上的有效設定、token、TLS cert/key、systemd unit 與官方 WARP registration 前後 hash 相同；服務 active、`NRestarts=0`。HTTP、HTTPS CONNECT、SOCKS5、PAC、嚴格 TLS、未登入 `401` 與權杖管理再次通過；revision 為 **12**，管理 API 顯示 9 筆網域與 10 筆 IP 範圍，Tailscale IPv6 項目已啟用。
+- 已部署的 NAS Web UI 再以相同四種語言／viewport 組合做唯讀驗證，預設備註、switch、欄位數量、手機單欄及桌面雙欄均通過，無水平溢出或瀏覽器錯誤。截圖位於 `/private/tmp/rillway-pac-ui-evidence/`；NAS 驗證未儲存設定、未操作 VPN 帳號或 WARP。
+
 ## 尚未驗證的外部環境
 
 以下項目明確為 **未驗證**，不能由一般測試通過推論為已完成：

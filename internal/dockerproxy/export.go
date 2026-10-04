@@ -83,8 +83,8 @@ func New(proxyURL, noProxy string) (Settings, error) {
 
 func DefaultBypass(pac config.PAC) string {
 	entries := []string{"localhost"}
-	entries = append(entries, pac.BypassDomains...)
-	entries = append(entries, pac.BypassCIDRs...)
+	entries = append(entries, pac.EnabledDomains()...)
+	entries = append(entries, pac.EnabledCIDRs()...)
 	return strings.Join(entries, ",")
 }
 

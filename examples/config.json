@@ -38,7 +38,28 @@
   },
   "pac": {
     "proxy_address": "127.0.0.1:17890",
-    "bypass_domains": ["local", "ts.net", "tailscale.com"],
-    "bypass_cidrs": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10"]
+    "bypass_domains": [
+      {"value": "localhost", "enabled": true, "preset": "domain.localhost"},
+      {"value": "local", "enabled": true, "preset": "domain.mdns"},
+      {"value": "home.arpa", "enabled": true, "preset": "domain.home"},
+      {"value": "ts.net", "enabled": true, "preset": "domain.tailscale-dns"},
+      {"value": "tailscale.com", "enabled": true, "preset": "domain.tailscale-control"},
+      {"value": "host.docker.internal", "enabled": true, "preset": "domain.docker-host"},
+      {"value": "gateway.docker.internal", "enabled": true, "preset": "domain.docker-gateway"},
+      {"value": "vm.docker.internal", "enabled": true, "preset": "domain.docker-vm"},
+      {"value": "cluster.local", "enabled": true, "preset": "domain.kubernetes"}
+    ],
+    "bypass_cidrs": [
+      {"value": "127.0.0.0/8", "enabled": true, "preset": "cidr.loopback-v4"},
+      {"value": "10.0.0.0/8", "enabled": true, "preset": "cidr.private-10"},
+      {"value": "172.16.0.0/12", "enabled": true, "preset": "cidr.private-172"},
+      {"value": "192.168.0.0/16", "enabled": true, "preset": "cidr.private-192"},
+      {"value": "169.254.0.0/16", "enabled": true, "preset": "cidr.link-local-v4"},
+      {"value": "100.64.0.0/10", "enabled": true, "preset": "cidr.tailscale"},
+      {"value": "fd7a:115c:a1e0::/48", "enabled": true, "preset": "cidr.tailscale-v6"},
+      {"value": "::1/128", "enabled": true, "preset": "cidr.loopback-v6"},
+      {"value": "fc00::/7", "enabled": true, "preset": "cidr.ula-v6"},
+      {"value": "fe80::/10", "enabled": true, "preset": "cidr.link-local-v6"}
+    ]
   }
 }

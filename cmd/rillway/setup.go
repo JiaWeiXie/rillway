@@ -169,10 +169,19 @@ func setupCommand(ctx context.Context, args []string, input io.Reader, out io.Wr
 	if *bypass, err = ask("Company bypass domains (comma-separated)", *bypass); err != nil {
 		return err
 	}
-	c.PAC.BypassDomains = nil
 	for _, d := range strings.Split(*bypass, ",") {
 		if d = strings.TrimSpace(d); d != "" {
-			c.PAC.BypassDomains = append(c.PAC.BypassDomains, d)
+			found := false
+			for i := range c.PAC.BypassDomains {
+				if strings.EqualFold(c.PAC.BypassDomains[i].Value, d) {
+					c.PAC.BypassDomains[i].Enabled = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.PAC.BypassDomains = append(c.PAC.BypassDomains, config.PACBypass{Value: d, Enabled: true, Note: "Company service"})
+			}
 		}
 	}
 	if err = config.Validate(c); err != nil {

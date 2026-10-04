@@ -23,7 +23,7 @@ func TestPACAndACL(t *testing.T) {
 			t.Fatal(tc)
 		}
 	}
-	c.PAC.BypassCIDRs = []string{"garbage"}
+	c.PAC.BypassCIDRs = []config.PACBypass{{Value: "garbage", Enabled: true}}
 	if _, err := PAC(c.PAC); err == nil {
 		t.Fatal("invalid CIDR accepted")
 	}

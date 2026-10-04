@@ -15,7 +15,8 @@ func TestGeneratedPACJavaScript(t *testing.T) {
 		t.Skip("Node unavailable: PAC JavaScript execution test requires a JS evaluator")
 	}
 	c := config.Default(t.TempDir())
-	c.PAC.BypassDomains = append(c.PAC.BypassDomains, "corp.example")
+	c.PAC.BypassDomains = append(c.PAC.BypassDomains, config.PACBypass{Value: "corp.example", Enabled: true})
+	c.PAC.BypassDomains[3].Enabled = false // disabled ts.net must not reach the PAC script
 	script, err := PAC(c.PAC)
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +27,7 @@ function dnsResolve(h){return h==='private.example'?'192.168.1.2':h==='v6-privat
 const tests=[
  ['github.com','PROXY 127.0.0.1:17890'],
  ['api.corp.example','DIRECT'],['corp.example.attacker.net','PROXY 127.0.0.1:17890'],
- ['printer','DIRECT'],['machine.tail.ts.net','DIRECT'],
+	 ['printer','DIRECT'],['machine.tail.ts.net','PROXY 127.0.0.1:17890'],
  ['100.64.0.7','DIRECT'],['192.0.2.1','DIRECT'],['8.8.8.8','PROXY 127.0.0.1:17890'],
  ['[fd00::1]','DIRECT'],['[::1]','DIRECT'],['[::ffff:192.168.1.1]','DIRECT'],
  ['[2606:4700:4700::1111]','PROXY 127.0.0.1:17890'],

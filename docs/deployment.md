@@ -69,7 +69,11 @@ rillway tui --url https://192.0.2.20:17892 --token-file ./admin.token --ca ./adm
 
 Apple 的操作路徑是「系統設定 → 網路 → 選擇服務 → 詳細資訊 → 代理伺服器」，開啟「自動代理伺服器設定」後填入 PAC URL。畫面位置與完整步驟見 [Apple：在 Mac 上輸入代理伺服器設定](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac)。
 
-先把公司網域加入 `pac.bypass_domains`；CIDR 加入 `pac.bypass_cidrs`。預設略過 RFC1918、loopback、link-local、Tailscale CGNAT、IPv6 ULA 及 `.ts.net`。PAC 在 **Mac** 解析公司名稱，保留現有 Tailscale DNS。DNS 查到私網位址也會 bypass；仍建議公司網域明確列入，避免 DNS 不可用時送出公司名稱。
+先把公司網域加入 `pac.bypass_domains`；CIDR 加入 `pac.bypass_cidrs`。每筆項目可個別啟用、停用並加上備註，停用後會保留資料但不寫進 PAC。預設略過 RFC1918、loopback、link-local、Tailscale 的 `100.64.0.0/10` 與 `fd7a:115c:a1e0::/48`、IPv6 ULA、Tailscale MagicDNS、本機與家用名稱、Docker Desktop 內部名稱，以及常見的 Kubernetes `cluster.local`。Kubernetes 的叢集後綴可以自訂；若實際環境不同，請停用或修改該筆。PAC 在 **Mac** 解析公司名稱，保留現有 Tailscale DNS。DNS 查到私網位址也會 bypass；仍建議公司網域明確列入，避免 DNS 不可用時送出公司名稱。
+
+Tailscale 官方指出，另一套 VPN 仍可能因防火牆規則、裝置限制或 IP 範圍重疊而衝突；tailnet 若有額外 subnet routes，也要逐筆加入略過範圍。Tailscale exit node 會接管全部流量，不能使用這種同機分流方式。詳見 [Tailscale：與其他 VPN 同時使用](https://tailscale.com/docs/reference/faq/other-vpns)。Rillway 的 PAC 只控制使用 PAC 的應用程式流量，不會修改作業系統的 VPN 防火牆或路由表。
+
+舊版設定使用字串陣列；新版仍可直接讀取，下一次從 Web UI 儲存時會改成包含 `value`、`enabled`、`note` 與 `preset` 的列格式。`note` 是使用者文字，不會隨介面語言翻譯；`preset` 只用來顯示 Rillway 內建的中英文說明。
 
 公開流量送往 Ubuntu；Ubuntu 的 `direct` 仍會留下觀察資訊。Mac 的 `DIRECT` bypass 完全不經 Rillway，所以不會出現在介面上。PAC 對公開網站不附加自動 `DIRECT` fallback，VM 停機時公開代理連線會失敗。
 

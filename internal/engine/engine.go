@@ -130,8 +130,8 @@ func cloneConfig(c config.Config) config.Config {
 		c.Rules[i].Candidates = append([]string(nil), c.Rules[i].Candidates...)
 	}
 	c.Adaptive.Candidates = append([]string(nil), c.Adaptive.Candidates...)
-	c.PAC.BypassDomains = append([]string(nil), c.PAC.BypassDomains...)
-	c.PAC.BypassCIDRs = append([]string(nil), c.PAC.BypassCIDRs...)
+	c.PAC.BypassDomains = append([]config.PACBypass(nil), c.PAC.BypassDomains...)
+	c.PAC.BypassCIDRs = append([]config.PACBypass(nil), c.PAC.BypassCIDRs...)
 	return c
 }
 
@@ -181,7 +181,7 @@ func privateHost(host string, pac config.PAC) bool {
 		if privateIP(ip) {
 			return true
 		}
-		for _, cidr := range pac.BypassCIDRs {
+		for _, cidr := range pac.EnabledCIDRs() {
 			if p, err := netip.ParsePrefix(cidr); err == nil && p.Contains(ip.Unmap()) {
 				return true
 			}
@@ -191,7 +191,7 @@ func privateHost(host string, pac config.PAC) bool {
 	if !strings.Contains(host, ".") || suffixMatch(host, "local") || suffixMatch(host, "localhost") || suffixMatch(host, "internal") || suffixMatch(host, "home.arpa") {
 		return true
 	}
-	for _, suffix := range pac.BypassDomains {
+	for _, suffix := range pac.EnabledDomains() {
 		if suffixMatch(host, suffix) {
 			return true
 		}

@@ -11,6 +11,27 @@ const rate = n => `${bytes(n)}/s`;
 const typeName = value => { const source = ({direct:'Direct',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[value]); return source ? t(source) : value; };
 const stateKey = t => String(t || '').toLowerCase();
 const stateName = value => { const source = ({ready:'Available',connected:'Connected',running:'Running',starting:'Starting',stopped:'Stopped',disconnected:'Disconnected',disabled:'Disabled',error:'Error',unavailable:'Unavailable',needslogin:'Sign-in required',needsmachineauth:'Awaiting admin approval',needs_login:'Sign-in required',needs_auth:'Sign-in required',unsupported_account:'Account unsupported',unsupported_client:'Version unsupported'}[stateKey(value)]); return source ? t(source) : value || t('Status pending'); };
+const pacPresetNotes = {
+  'domain.localhost':'This device. Covers localhost and names ending in .localhost.',
+  'domain.mdns':'Bonjour and mDNS devices on the current local network.',
+  'domain.home':'The standard name space for services on a home network.',
+  'domain.tailscale-dns':'Tailscale MagicDNS names. Keeps company and tailnet names on this device.',
+  'domain.tailscale-control':'Tailscale sign-in and account pages stay outside the browser Proxy.',
+  'domain.docker-host':'Docker Desktop name for reaching services on the host.',
+  'domain.docker-gateway':'Docker Desktop name for the Docker VM gateway.',
+  'domain.docker-vm':'Docker Desktop name for services in its Linux VM.',
+  'domain.kubernetes':'Common Kubernetes cluster suffix. Your cluster may use a different suffix.',
+  'cidr.loopback-v4':'IPv4 loopback addresses on this device.',
+  'cidr.private-10':'Private IPv4 networks commonly used by companies, VPNs and containers.',
+  'cidr.private-172':'Private IPv4 networks, including many Docker bridge networks.',
+  'cidr.private-192':'Private IPv4 networks commonly used by home and office LANs.',
+  'cidr.link-local-v4':'IPv4 link-local devices that work only on the current network link.',
+  'cidr.tailscale':'Tailscale IPv4 addresses and the MagicDNS resolver.',
+  'cidr.tailscale-v6':'Tailscale IPv6 addresses. Keep this enabled when another VPN is active.',
+  'cidr.loopback-v6':'IPv6 loopback address on this device.',
+  'cidr.ula-v6':'Private IPv6 unique local addresses.',
+  'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
+};
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
@@ -70,10 +91,62 @@ function renderConfig() {
   candidateBoxes($('adaptive-candidates'), cfg.adaptive.candidates || [], 'global-candidate');
   $('default-outbound').innerHTML = options(cfg.default_outbound);
   $('pac-address').value = cfg.pac.proxy_address || '';
-  $('pac-domains').value = (cfg.pac.bypass_domains || []).join('\n');
-  $('pac-cidrs').value = (cfg.pac.bypass_cidrs || []).join('\n');
+  renderPACList('domains',cfg.pac.bypass_domains || []);
+  renderPACList('cidrs',cfg.pac.bypass_cidrs || []);
   $('config-json').value = JSON.stringify(cfg, null, 2);
   renderRules(); renderOutbounds();
+}
+function normalizePACEntry(entry) {
+  return typeof entry === 'string' ? {value:entry,enabled:true,note:'',preset:''} : {value:'',enabled:true,note:'',preset:'',...entry};
+}
+function renderPACList(kind, entries) {
+  const container = $(`pac-${kind}`), valueLabel = kind === 'domains' ? 'Domain or suffix' : 'IP address range (CIDR)';
+  container.innerHTML = entries.map((raw,index) => {
+    const entry = normalizePACEntry(raw), presetSource = pacPresetNotes[entry.preset] || '';
+    return `<article class="pac-entry${entry.enabled ? '' : ' disabled'}" data-pac-index="${index}" data-preset="${esc(entry.preset)}" data-preset-value="${esc(entry.value)}"><div class="pac-entry-top"><label class="toggle-control"><input type="checkbox" role="switch" data-pac-enabled${entry.enabled ? ' checked' : ''}><span class="toggle-track" aria-hidden="true"></span><span class="pac-toggle-state">${et(entry.enabled ? 'Enabled' : 'Disabled')}</span></label><button type="button" class="pac-remove" data-remove-pac aria-label="${et('Remove bypass entry')}">${et('Remove')}</button></div><div class="pac-entry-fields"><label><span>${et(valueLabel)}</span><input data-pac-value value="${esc(entry.value)}" required spellcheck="false" placeholder="${esc(kind === 'domains' ? 'company.example' : '10.0.0.0/8')}"></label><label><span>${et('Note (optional)')}</span><input data-pac-note value="${esc(entry.note)}" maxlength="500" placeholder="${et('Add a note for people managing this setting')}"></label></div>${presetSource ? `<p class="pac-preset-note" data-preset-note="${esc(entry.preset)}"><strong>${et('Built-in note:')}</strong> <span>${et(presetSource)}</span></p>` : ''}</article>`;
+  }).join('') || `<div class="pac-list-empty">${et(kind === 'domains' ? 'No domain bypasses. Add one if a local service must stay off the Proxy.' : 'No IP range bypasses. Add one if a private network must stay off the Proxy.')}</div>`;
+}
+function serializePACList(kind) {
+  return [...$(`pac-${kind}`).querySelectorAll('.pac-entry')].map(row => {
+    const value = row.querySelector('[data-pac-value]').value.trim();
+    const preset = value.toLowerCase() === row.dataset.presetValue.toLowerCase() ? row.dataset.preset : '';
+    return {value,enabled:row.querySelector('[data-pac-enabled]').checked,note:row.querySelector('[data-pac-note]').value.trim(),preset};
+  }).filter(entry => entry.value);
+}
+function addPACEntry(kind) {
+  const current = serializePACList(kind), value = kind === 'domains' ? 'company.example' : '10.0.0.0/8';
+  current.push({value,enabled:true,note:'',preset:''});
+  renderPACList(kind,current);
+  const input = $(`pac-${kind}`).querySelector('.pac-entry:last-child [data-pac-value]');
+  input.focus(); input.select();
+}
+function updatePACSwitch(input) {
+  const row = input.closest('.pac-entry');
+  row.classList.toggle('disabled',!input.checked);
+  row.querySelector('.pac-toggle-state').textContent = t(input.checked ? 'Enabled' : 'Disabled');
+}
+function translatePACRows() {
+  for(const container of [$('pac-domains'),$('pac-cidrs')]) {
+    const empty = container.querySelector('.pac-list-empty');
+    if(empty) empty.textContent = t(container.id === 'pac-domains' ? 'No domain bypasses. Add one if a local service must stay off the Proxy.' : 'No IP range bypasses. Add one if a private network must stay off the Proxy.');
+  }
+  for(const row of document.querySelectorAll('.pac-entry')) {
+    const input = row.querySelector('[data-pac-enabled]');
+    row.querySelector('.pac-toggle-state').textContent = t(input.checked ? 'Enabled' : 'Disabled');
+    const note = row.querySelector('[data-preset-note]');
+    if(note) {
+      note.querySelector('strong').textContent = t('Built-in note:');
+      note.querySelector('span').textContent = t(pacPresetNotes[note.dataset.presetNote] || '');
+    }
+    const labels = row.querySelectorAll('.pac-entry-fields label>span');
+    if(labels.length === 2) {
+      labels[0].textContent = t(row.closest('#pac-domains') ? 'Domain or suffix' : 'IP address range (CIDR)');
+      labels[1].textContent = t('Note (optional)');
+    }
+    const remove = row.querySelector('[data-remove-pac]');
+    remove.textContent = t('Remove'); remove.setAttribute('aria-label',t('Remove bypass entry'));
+    row.querySelector('[data-pac-note]').placeholder = t('Add a note for people managing this setting');
+  }
 }
 async function poll() {
   if(!active || polling) return;
@@ -319,7 +392,7 @@ function switchLocale(locale) {
   navigate(currentPage);
   connection(isOnline);
   if(cfg) {
-    renderConfigText(); renderFlows(); renderRules(); renderOutbounds();
+    renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds();
     for(const id of ['default-outbound','rule-outbound']) {
       const select = $(id), selected = select.value;
       if(select.options.length) { select.innerHTML = options(selected,id === 'rule-outbound'); select.value = selected; }
@@ -358,12 +431,21 @@ $('license-dialog').addEventListener('close',() => { $('license-value').value = 
 $('add-outbound').addEventListener('click',() => openOutbound());
 $('out-type').addEventListener('change',changeOutboundType);
 $('add-rule').addEventListener('click',() => openRule());
+$('add-pac-domain').addEventListener('click',() => addPACEntry('domains'));
+$('add-pac-cidr').addEventListener('click',() => addPACEntry('cidrs'));
+for(const kind of ['domains','cidrs']) {
+  $(`pac-${kind}`).addEventListener('change',e => { if(e.target.matches('[data-pac-enabled]')) updatePACSwitch(e.target); });
+  $(`pac-${kind}`).addEventListener('click',e => {
+    const remove = e.target.closest('[data-remove-pac]');
+    if(remove) remove.closest('.pac-entry').remove();
+  });
+}
 $('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
 $('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) openRule(-1,flows[Number(b.dataset.flow)]); });
 $('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
 $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
 $('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
-$('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = lines($('pac-domains').value); next.pac.bypass_cidrs = lines($('pac-cidrs').value); try { await save(next); } catch(error) { notice(error,true); } });
+$('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = serializePACList('domains'); next.pac.bypass_cidrs = serializePACList('cidrs'); try { await save(next); } catch(error) { notice(error,true); } });
 $('save-json').addEventListener('click',async () => { try { const next = JSON.parse($('config-json').value); await save(next); } catch(e) { notice(e instanceof SyntaxError ? sourceError('Invalid JSON. Check the configuration syntax.') : e,true); } });
 $('reset-json').addEventListener('click',() => load().catch(e => notice(e,true)));
 $('outbound-form').addEventListener('submit',async e => {

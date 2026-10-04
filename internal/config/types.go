@@ -68,7 +68,16 @@ type Adaptive struct {
 }
 
 type PAC struct {
-	ProxyAddress  string   `json:"proxy_address"`
-	BypassDomains []string `json:"bypass_domains"`
-	BypassCIDRs   []string `json:"bypass_cidrs"`
+	ProxyAddress  string      `json:"proxy_address"`
+	BypassDomains []PACBypass `json:"bypass_domains"`
+	BypassCIDRs   []PACBypass `json:"bypass_cidrs"`
+}
+
+// PACBypass is one client-side direct-connection exception. Preset identifies
+// Rillway-owned explanatory text; Note is user data and is never translated.
+type PACBypass struct {
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled"`
+	Note    string `json:"note,omitempty"`
+	Preset  string `json:"preset,omitempty"`
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,65 @@ func TestDecodeRejectsUnknownAndTrailing(t *testing.T) {
 		if _, err := Decode(b); err == nil {
 			t.Fatal("accepted extra JSON")
 		}
+	}
+}
+
+func TestPACDefaultsAndLegacyConfigMigration(t *testing.T) {
+	c := Default(t.TempDir())
+	if len(c.PAC.BypassDomains) < 9 || len(c.PAC.BypassCIDRs) != 10 {
+		t.Fatalf("missing researched PAC presets: %+v", c.PAC)
+	}
+	for _, entry := range append(append([]PACBypass{}, c.PAC.BypassDomains...), c.PAC.BypassCIDRs...) {
+		if !entry.Enabled || entry.Preset == "" {
+			t.Fatalf("default bypass lacks enabled preset: %+v", entry)
+		}
+	}
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err = json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	pac := root["pac"].(map[string]any)
+	pac["bypass_domains"] = []string{"local", "corp.example"}
+	pac["bypass_cidrs"] = []string{"10.0.0.0/8"}
+	legacy, _ := json.Marshal(root)
+	got, err := Decode(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PAC.BypassDomains[0].Preset != PACDomainMDNS || !got.PAC.BypassDomains[1].Enabled || got.PAC.BypassDomains[1].Preset != "" {
+		t.Fatalf("legacy domains not migrated: %+v", got.PAC.BypassDomains)
+	}
+	if got.PAC.BypassCIDRs[0].Preset != PACCIDRPrivate10 || !got.PAC.BypassCIDRs[0].Enabled {
+		t.Fatalf("legacy CIDR not migrated: %+v", got.PAC.BypassCIDRs)
+	}
+	if len(got.PAC.BypassDomains) != 10 || len(got.PAC.BypassCIDRs) != 10 {
+		t.Fatalf("legacy config did not receive new safety presets: %+v", got.PAC)
+	}
+}
+
+func TestPACBypassValidation(t *testing.T) {
+	c := Default(t.TempDir())
+	c.PAC.BypassDomains = append(c.PAC.BypassDomains, PACBypass{Value: "example.internal", Enabled: false, Note: "Office dashboard 🚀"})
+	if err := Validate(c); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*Config){
+		"duplicate": func(c *Config) { c.PAC.BypassDomains = append(c.PAC.BypassDomains, PACBypass{Value: "LOCAL"}) },
+		"preset":    func(c *Config) { c.PAC.BypassDomains[0].Preset = "unknown.preset" },
+		"note":      func(c *Config) { c.PAC.BypassCIDRs[0].Note = strings.Repeat("x", 501) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			next := Default(t.TempDir())
+			mutate(&next)
+			if Validate(next) == nil {
+				t.Fatal("accepted invalid PAC bypass")
+			}
+		})
 	}
 }
 
