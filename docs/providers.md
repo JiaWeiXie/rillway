@@ -11,7 +11,7 @@ Rillway 的分流只作用於送進 HTTP／SOCKS5 Proxy 的 TCP 連線。每個�
 Rillway 操作的是同一台機器上的官方 WARP client。開啟 Rillway 的「連線」會改變該 client 的模式；若這台機器已有其他程式使用 WARP，請先安排好用途。Mac 使用 Ubuntu Proxy 的部署方式只需要在 Ubuntu 安裝 WARP。
 
 1. 在 Web UI「出口與 VPN」編輯 `warp`，啟用出口，保留 `127.0.0.1:40000`；儲存本身不會切換 WARP 模式或自動連線。
-2. 沒有註冊過裝置時，按「註冊」。既有註冊可直接沿用。
+2. 沒有註冊過裝置時，按「註冊」。既有註冊直接沿用；重複請求只檢查既有裝置，不重新產生註冊或清除 WARP+ 授權。Web UI 取得註冊狀態後顯示「已註冊」並停用該按鈕。
 3. 有 WARP+ 訂閱時，按「WARP+ 授權」輸入 license key。輸入框會遮罩，送出後清空，不保存至 Rillway 設定或日誌。
 4. 按「連線」，再按「驗證出口」。前者必須先成功切換 Local Proxy 模式；後者透過代理讀取 Cloudflare trace，確認真的經過 WARP。
 
@@ -126,6 +126,6 @@ mise run test:live
 
 WARP 測試先確認 Local Proxy 與端到端 trace；`warp-plus` 子測試還必須取得真實 `Unlimited` 帳號狀態。只有免費 WARP 時，WARP+ 子測試明確跳過，不能視為付費功能已驗證。
 
-2026-10-04 已在 Ubuntu 26.04.1 LTS 實測官方 Linux client `CURRENT_VERSION`：免費 consumer 註冊可啟用 Local Proxy，使用 MASQUE，listener 僅在 `127.0.0.1:40000`，Cloudflare trace 回報 `warp=on`、`colo=EXAMPLE`。此版本設定行為 `Mode: WarpProxy on port 40000`，Rillway 已加入相容解析與回歸測試。這是本次版本／帳號實測結果，不保證其他帳號或版本；不能將免費 WARP 通過視為 WARP+ Unlimited 通過。Ubuntu 的正式 systemd 部署與限量 GitHub CDN 下載比較見 [驗證紀錄](verification.md)。WARP+ license、公司 tailnet 與外部 WireGuard profile 仍未提供，未完成這三項外部驗收。
+WARP client 的版本、帳號狀態、連線協定及 Cloudflare colo 都可能改變。Rillway 會解析官方 Local Proxy 模式，並以端到端 trace 區分免費 WARP 與 WARP+；正式結果應保存在 repository 之外的受限制營運紀錄。缺少帳號、tailnet 或 WireGuard profile 時，一律標示 `NOT VERIFIED`，不得沿用其他環境的結果。
 
 所有出口目前只支援 TCP。此版不提供 UDP ASSOCIATE、整機流量接管、HTTPS 解密，或「低下載速度就保證換到更快線路」；自適應比較成功率與建連時間。

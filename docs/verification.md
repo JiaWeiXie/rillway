@@ -1,6 +1,6 @@
 # 驗證紀錄與驗收邊界
 
-此紀錄日期為 2026-10-04。開發檢查環境是 macOS arm64、Go 1.27.1；一般測試使用暫存設定、本機 HTTP／TCP listener、測試用出口與可控制時鐘，不使用公司帳號。另已在 NAS 的 Ubuntu 26.04.1 LTS x86_64 VM 完成正式部署及免費 WARP 實測，結果與付費／公司帳號的未驗證範圍分開記錄。
+此紀錄日期為 2026-10-04。開發檢查環境是 macOS arm64、Go 1.27.1；一般測試使用暫存設定、本機 HTTP／TCP listener、測試用出口與可控制時鐘，不使用公司帳號。另已在 NAS 的 Ubuntu 26.04.1 LTS x86_64 VM 完成正式部署及 WARP／WARP+ 實測，結果與付費／公司帳號的未驗證範圍分開記錄。
 
 ## 整體交付檢查
 
@@ -9,7 +9,7 @@
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
 - Web UI 在 Chrome 實測英文與繁中登入、總覽、規則及設定；桌面與手機版均完成互動驗證，詳見下方。
-- `mise run test:live` 未指定設定時仍正確回報 `NOT VERIFIED / SKIP`。另將同一套 opt-in tests 交叉編譯後，在 Ubuntu VM 以實際設定與低權限帳號執行：direct、免費 WARP 通過，`warp-plus` 明確 SKIP。
+- `mise run test:live` 未指定設定時仍正確回報 `NOT VERIFIED / SKIP`。另將同一套 opt-in tests 交叉編譯後，在 Ubuntu VM 以實際設定與低權限帳號執行：首次 direct、免費 WARP 通過，`warp-plus` 明確 SKIP；使用者套用授權後，`warp-plus` 亦通過，見下方後續驗證。
 
 GitHub Actions 已設定 Linux／macOS 的 `check`、build、fuzz，及 Ubuntu 24.04 的 systemd 驗收工作；尚未推送／在遠端 CI 執行。Ubuntu 26.04 正式部署已另做實機驗收。以下腳本限可拋棄的新建 VM，結束時會卸載 unit，不能對目前正式部署使用：
 
@@ -28,12 +28,24 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 - 正式安裝發現 systemd 預設會把 state directory 改為 `0755`，已加上 `StateDirectoryMode=0700` 與回歸測試。實機目錄為 `0700`，config、token、TLS cert/key 為 `0600`。
 - TLS SAN 包含 VM IP，使用專案私密副本中的公開 cert 嚴格驗證 HTTPS。未登入 API 回傳 `401`；使用 token 取得設定成功。正式設定 revision 為 `2`。
 - 從 Mac 經 HTTP 與 SOCKS5 取得 VM PAC，回應逐位元相同；HTTPS CONNECT 透過受驗證 TLS 取得管理首頁成功。更新正式 binary 後三種協定再次通過。
-- Binary 以備份加原子替換更新，沒有重跑安裝器。設定及憑證的 SHA-256 前後相同，state 權限保持不變。實作修正 commit 為 `02fb3ab`；本次部署 artifact SHA-256 為 `e514fcdea9a6e86294942cde7b3259d83fcc15c87e287c2856eed2a1424e8281`。VM 也保留對應第三方授權與 module 清單。
+- Binary 以備份加原子替換更新，沒有重跑安裝器。設定及憑證的 SHA-256 前後相同，state 權限保持不變。實作修正 commit 為 `02fb3ab`；首次部署 artifact SHA-256 為 `e514fcdea9a6e86294942cde7b3259d83fcc15c87e287c2856eed2a1424e8281`。VM 也保留對應第三方授權與 module 清單。
 - 官方 `cloudflare-warp CURRENT_VERSION` 從 Cloudflare 的 Ubuntu `resolute` APT 來源安裝。透過 Rillway API 完成免費 consumer 註冊、Local Proxy 連線與端到端驗證。實際模式為 MASQUE／`WarpProxy on port 40000`，listener 僅在 `127.0.0.1:40000`；Cloudflare trace 為 `warp=on`、`colo=EXAMPLE`。API 現在正確顯示 `mode=proxy`、`state=connected`、`listener=true` 與驗證時間。
 - 手動停止 WARP，等待 6 秒後狀態仍為 stopped；`raw.githubusercontent.com` 的固定 WARP 規則回傳 CONNECT `502`，沒有轉成直連，同時 `github.com` 的固定直連規則仍回傳 `200`。重新連線後端到端驗證通過。
 - 在 VM 以 `rillway` 帳號執行交叉編譯的 `tests/live`：direct 與 WARP 皆完成真實 GitHub TCP 連線，WARP 另通過 Cloudflare trace；`warp-plus` 因沒有確認的 Unlimited 訂閱而明確 SKIP。沒有提供／套用任何付費授權碼。
 - 實際代理觀察顯示 `github.com` 命中 `github-origin`／direct，目的 IP 可確認；`raw.githubusercontent.com` 命中 `github-cdn`／warp，目的 IP 保持 unknown，沒有把 SOCKS listener 當作網站 IP。
 - VM 預設路由仍為 `192.0.2.1` 經 `vm-interface`。沒有套用 Mac PAC、修改 Mac 系統 Proxy 或操作 Mac 公司 Tailscale；公司服務的實際共存連線尚待指定目標驗證。
+
+### 重複註冊修正與 WARP+ 後續驗證
+
+同日使用者回報按「註冊」時出現 `WARP device registration failed`。唯讀確認官方 daemon 與 Rillway 都正常運作，裝置已有註冊、帳號已是 `Unlimited`，模式仍為 Local Proxy。原實作無條件執行 `registration new`，因此重複按鈕操作會被官方 client 拒絕。
+
+- 修正為先執行 `registration show`；已有裝置時沿用並回傳成功。新註冊失敗後再確認一次，處理其他程序同時完成註冊的情況，不清除裝置或重新套用授權。
+- Web UI 的「註冊」在已知註冊狀態時顯示 `Registered`／「已註冊」並停用。測試包含 Free／Unlimited 重複註冊、首次註冊、外部程序競爭、失敗遮罩與兩種 UI 語言。
+- 完整 `mise run check` 通過，14 個 package、lint 0 issues、race 無競態、coverage 66.3%；四平台 release 建置成功。修正 commit 為 `576f820`。
+- 新版已原子更新至 NAS，artifact SHA-256 為 `c80bca8ca166f556f9ebfa310115cce1cf6c9ebefa592d6c11a6ec90937fa045`。有效設定、TLS 憑證與管理 token 的 hash 前後相同；官方註冊輸出的 fingerprint 在更新及重複操作前後相同，未輸出或保存原始註冊內容。
+- 真實 API 連續兩次 `register` 均回傳 `200`／`ok=true`。狀態仍為 `Unlimited`、`connected`、`proxy`、listener 可達；端到端驗證成功。
+- 在 VM 以低權限 `rillway` 帳號執行 `tests/live`，WARP 與 `warp-plus` 子測試都 PASS。付費帳號狀態與透過代理的 Cloudflare trace 均已驗證；沒有再次下載測速或把先前免費測試的速率當成付費效果。
+- 更新後的隔離 Chrome 實測英文／繁中「已註冊」按鈕都已停用，Unlimited 仍顯示，瀏覽器錯誤為 0；僅 GET／HEAD，未修改設定或 VPN。截圖為 `.local/servers/example/qa/registration-fixed-zh-Hant.png`。
 
 ### 限量 GitHub CDN 下載比較
 
@@ -128,7 +140,7 @@ mise exec -- go test ./internal/engine -run '^$' -fuzz FuzzRuleHostname -fuzztim
 
 - Ubuntu 24.04 的實際服務安裝／啟動／移除；Ubuntu 26.04 已驗證安裝、權限、停止及啟動，但未重開 VM 或卸載正式服務。
 - macOS 主機上的 LaunchAgent 實際安裝，以及 Wi-Fi／Ethernet Proxy 套用與還原。一般測試只驗證產生內容與模擬的系統命令。
-- 真實 WARP+ Unlimited 付費授權。Ubuntu 的免費 WARP Local Proxy 已通過上述端到端驗證；macOS 的實際 WARP tunnel 尚未驗證。
+- macOS 的實際 WARP／WARP+ tunnel。Ubuntu 的免費 WARP 與後續 Unlimited 付費帳號均已通過上述端到端及 live 驗證。
 - 公司 Tailscale 登入、ACL、MagicDNS、subnet route、與 Mac 原有 Tailscale 同時運作。
 - 外部 WireGuard 伺服器與實際 VPN 設定。一般測試中的本機 userspace WireGuard 互連不等同外部 provider 驗收。
 - 長時間、多時段與其他 GitHub CDN 檔案的效能。上述單一檔案限量比較不能取代這些驗收；Ubuntu 對外 IPv6 連線品質亦未驗證。

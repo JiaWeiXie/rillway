@@ -21,7 +21,7 @@
 | 狀態與憑證權限 | `/var/lib/rillway` 為 `0700`；config、token、TLS cert/key 為 `0600` |
 | 來源 ACL | 僅 `192.0.2.70/32`、`192.0.2.21/32`、`127.0.0.0/8`、`::1/128` |
 | 管理憑證 | SAN 包含 `192.0.2.21`，已驗證 TLS 連線 |
-| WARP 官方 client | `CURRENT_VERSION`，由 Cloudflare 官方 `resolute` APT 來源安裝；免費帳號 Local Proxy 已完成端到端驗證，`warp=on`、`colo=EXAMPLE` |
+| WARP 官方 client | `CURRENT_VERSION`，由 Cloudflare 官方 `resolute` APT 來源安裝；Local Proxy 已完成端到端驗證；使用者套用授權後，WARP+ Unlimited 與 live 子測試亦通過 |
 
 ```sh
 ssh -i ~/.ssh/id_ed25519_rillway operator@192.0.2.21
@@ -36,7 +36,7 @@ ssh -i ~/.ssh/id_ed25519_rillway operator@192.0.2.21
 - systemd 執行帳號：`rillway`
 - 有效設定：`/var/lib/rillway/config.json`
 
-HTTP Proxy、SOCKS5、HTTPS CONNECT 的真實傳輸，以及管理 API 未登入回傳 `401`、使用 token 登入，均已通過驗收。免費 WARP 的 Local Proxy 與端到端 trace 也已通過；WARP+ Unlimited、公司 tailnet 與外部 WireGuard 尚未驗證。`github.com` 命中直連規則，`raw.githubusercontent.com` 命中 WARP 規則，已在真實代理流量與統計中確認。
+HTTP Proxy、SOCKS5、HTTPS CONNECT 的真實傳輸，以及管理 API 未登入回傳 `401`、使用 token 登入，均已通過驗收。WARP Local Proxy 與端到端 trace 已通過；同日稍後 WARP+ Unlimited 與付費帳號 live 子測試也通過。公司 tailnet 與外部 WireGuard 尚未驗證。`github.com` 命中直連規則，`raw.githubusercontent.com` 命中 WARP 規則，已在真實代理流量與統計中確認。
 
 Mac 的管理 token 與公開 CA 憑證副本位於專案已被 Git 忽略的 `.local/servers/example/admin.token`、`.local/servers/example/admin.crt`；沒有複製 TLS 私鑰。從專案目錄可啟動遠端 TUI：
 
@@ -45,6 +45,6 @@ Mac 的管理 token 與公開 CA 憑證副本位於專案已被 Git 忽略的 `.
   --token-file .local/servers/example/admin.token --ca .local/servers/example/admin.crt
 ```
 
-Mac 原有 Proxy 設定與 Tailscale，以及 VM 預設路由均未修改。公司流量繼續由 Mac 的 Tailscale 處理。WARP+ 授權碼與公司帳號尚未提供，不寫入 Git；完整外部出口狀態以 [驗證紀錄](verification.md) 為準。
+Mac 原有 Proxy 設定與 Tailscale，以及 VM 預設路由均未修改。公司流量繼續由 Mac 的 Tailscale 處理。WARP+ 授權已由使用者套用，未寫入 Git；公司帳號仍未提供；完整外部出口狀態以 [驗證紀錄](verification.md) 為準。
 
 後續操作見 [Ubuntu VM 與 Mac 部署](deployment.md)。此主機已有正式安裝，更新 binary 時不要重新執行 `service install`，以免用舊來源設定覆寫有效設定；也不要執行會在結束時卸載服務的 `scripts/acceptance-ubuntu.sh`。
