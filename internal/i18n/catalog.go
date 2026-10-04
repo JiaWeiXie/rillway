@@ -3,6 +3,11 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"The built-in direct outbound must remain enabled with type direct and Internet access.":                    "內建 direct 出口必須保持啟用、類型為 direct 並具有網際網路存取能力。",
+	"The built-in direct outbound cannot be deleted.":                                                           "內建 direct 出口不可刪除。",
+	"Choose an enabled replacement for the outbound's rules, default route and adaptive candidates.":            "請選擇已啟用的替代出口，供原出口的規則、預設路由與自適應候選使用。",
+	"The replacement must have Internet access and cannot be Tailscale when replacing adaptive candidates.":     "替換自適應候選時，替代出口必須具有網際網路存取能力，且不可為 Tailscale。",
+	"Could not delete outbound. Your previous configuration is unchanged.":                                      "無法刪除出口，原設定保持不變。",
 	"Docker proxy URL must be http://host:port without credentials, a path, query or fragment.":                 "Docker Proxy 網址須為 http://主機:連接埠，不含帳密、路徑、查詢或片段。",
 	"Docker bypass entries must be comma-separated domains, IPs or CIDRs without spaces or control characters.": "Docker 略過清單須為逗號分隔的網域、IP 或 CIDR，不含空白或控制字元。",
 	"Existing Docker settings must be a JSON object no larger than 1 MiB.":                                      "現有 Docker 設定須為不超過 1 MiB 的 JSON 物件。",
@@ -155,6 +160,7 @@ func init() {
 	// Runtime.Apply wraps these exact static validation errors. Register the
 	// complete messages instead of translating arbitrary suffixes at runtime.
 	for _, source := range []string{
+		"The built-in direct outbound must remain enabled with type direct and Internet access.",
 		"revision must be positive",
 		"admin listener is required",
 		"allowed_clients must not be empty",

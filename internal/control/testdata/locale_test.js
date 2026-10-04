@@ -89,6 +89,28 @@ async function browser(initialLocale) {
   assert.match(b.get('outbound-list').innerHTML,/data-action="register" data-id="warp" disabled>Registered<\/button>/);
   vm.runInContext("statuses=[];renderOutbounds();",b.context);
   assert.match(b.get('outbound-list').innerHTML,/data-action="register" data-id="warp">Register<\/button>/);
+  vm.runInContext(`
+    cfg={outbounds:[{id:'direct',type:'direct',enabled:true,public_internet:true},{id:'warp',type:'warp',enabled:true,public_internet:true}]};
+    renderOutbounds();
+  `,b.context);
+  assert.doesNotMatch(b.get('outbound-list').innerHTML,/data-(?:delete|edit)-outbound="0"/);
+  assert.match(b.get('outbound-list').innerHTML,/data-delete-outbound="1"/);
+  vm.runInContext(`
+    deletingOutbound={id:'warp',config:{outbounds:[
+      {id:'direct',type:'direct',enabled:true,public_internet:true},
+      {id:'warp',type:'warp',enabled:true,public_internet:true},
+      {id:'company',type:'tailscale',enabled:true,public_internet:true}],
+      rules:[{id:'<script>公司😀',outbound:'warp'}],default_outbound:'warp',adaptive:{candidates:['direct','warp']}}};
+    $('delete-replacement').value='direct';renderDeleteOutbound();
+  `,b.context);
+  assert.equal(b.get('delete-replacement').value,'direct');
+  assert.equal(b.get('delete-replacement').required,true);
+  assert.match(b.get('delete-outbound-references').innerHTML,/&lt;script&gt;公司😀/);
+  assert.doesNotMatch(b.get('delete-replacement').innerHTML,/value="(?:warp|company)"/);
+  vm.runInContext("i18n.setLocale('zh-Hant');renderDeleteOutbound();",b.context);
+  assert.equal(b.get('delete-replacement').value,'direct');
+  assert.match(b.get('delete-outbound-name').textContent,/確定刪除出口「warp」/);
+  vm.runInContext("deletingOutbound=null;",b.context);
   vm.runInContext("cfg=undefined;i18n.setLocale('zh-Hant');",b.context);
 
   // Browser QA covers layout and form preservation. Here only stub visual

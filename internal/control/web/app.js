@@ -11,7 +11,7 @@ const rate = n => `${bytes(n)}/s`;
 const typeName = value => { const source = ({direct:'Direct',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[value]); return source ? t(source) : value; };
 const stateKey = t => String(t || '').toLowerCase();
 const stateName = value => { const source = ({ready:'Available',connected:'Connected',running:'Running',starting:'Starting',stopped:'Stopped',disconnected:'Disconnected',disabled:'Disabled',error:'Error',unavailable:'Unavailable',needslogin:'Sign-in required',needsmachineauth:'Awaiting admin approval',needs_login:'Sign-in required',needs_auth:'Sign-in required',unsupported_account:'Account unsupported',unsupported_client:'Version unsupported'}[stateKey(value)]); return source ? t(source) : value || t('Status pending'); };
-let dockerBundle = null;
+let dockerBundle = null, deletingOutbound = null;
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
@@ -128,7 +128,7 @@ function renderOutbounds() {
     const good = ['ready','connected','running'].includes(stateKey(s.state)), bad = ['error','unavailable','unsupported_account','unsupported_client'].includes(stateKey(s.state));
     const authURL = typeof s.auth_url === 'string' && /^https:\/\//i.test(s.auth_url) ? s.auth_url : '';
     const actionButtons = o.type === 'warp' ? [['connect','Connect'],['disconnect','Disconnect'],['register','Register'],['verify','Verify outbound']] : ['tailscale','tsnet'].includes(o.type) ? [['connect','Connect'],['disconnect','Disconnect'],['login','Sign in'],['logout','Sign out']] : o.type === 'wireguard' ? [['connect','Connect'],['disconnect','Disconnect']] : [];
-    return `<article class="outbound-card"><div><div class="outbound-heading"><h3>${esc(o.id)}</h3><span class="badge${good ? ' good' : bad ? ' bad' : ' warn'}">${esc(o.enabled ? stateName(s.state) : t('Disabled'))}</span></div><p class="detail">${esc(s.detail_source ? t(s.detail_source) : s.detail || typeName(o.type))}</p><div class="outbound-meta"><span>${esc(typeName(o.type))}</span><span>${et(o.public_internet ? 'Internet access' : 'Fixed / private outbound')}</span>${s.account ? `<span>${et('Account: {value}',{value:s.account})}</span>` : ''}${s.version ? `<span>${et('Version {value}',{value:s.version})}</span>` : ''}${s.mode ? `<span>${et('Mode {value}',{value:s.mode})}</span>` : ''}${o.type === 'warp' ? `<span>${et('Proxy listener: {state}',{state:t(s.listener ? 'Listening' : 'Not ready')})}</span>` : ''}${s.verified_at && !s.verified_at.startsWith('0001-') ? `<span>${et('Last verified {date}',{date:i18n.date(s.verified_at)})}</span>` : ''}</div>${authURL ? `<p class="hint"><a href="${esc(authURL)}" target="_blank" rel="noopener noreferrer">${et('Open Tailscale sign-in')}</a></p>` : ''}</div><div class="outbound-actions">${actionButtons.map(([action,label]) => `<button class="quiet" data-action="${action}" data-id="${esc(o.id)}"${action === 'register' && s.account ? ' disabled' : ''}>${et(action === 'register' && s.account ? 'Registered' : label)}</button>`).join('')}${o.type === 'warp' ? `<button class="quiet" data-license="${esc(o.id)}">${et('WARP+ license')}</button>` : ''}<button class="quiet" data-edit-outbound="${index}">${et('Edit')}</button><button class="danger" data-delete-outbound="${index}">${et('Delete')}</button></div></article>`;
+    return `<article class="outbound-card"><div><div class="outbound-heading"><h3>${esc(o.id)}</h3><span class="badge${good ? ' good' : bad ? ' bad' : ' warn'}">${esc(o.enabled ? stateName(s.state) : t('Disabled'))}</span></div><p class="detail">${esc(s.detail_source ? t(s.detail_source) : s.detail || typeName(o.type))}</p><div class="outbound-meta"><span>${esc(typeName(o.type))}</span><span>${et(o.public_internet ? 'Internet access' : 'Fixed / private outbound')}</span>${s.account ? `<span>${et('Account: {value}',{value:s.account})}</span>` : ''}${s.version ? `<span>${et('Version {value}',{value:s.version})}</span>` : ''}${s.mode ? `<span>${et('Mode {value}',{value:s.mode})}</span>` : ''}${o.type === 'warp' ? `<span>${et('Proxy listener: {state}',{state:t(s.listener ? 'Listening' : 'Not ready')})}</span>` : ''}${s.verified_at && !s.verified_at.startsWith('0001-') ? `<span>${et('Last verified {date}',{date:i18n.date(s.verified_at)})}</span>` : ''}</div>${authURL ? `<p class="hint"><a href="${esc(authURL)}" target="_blank" rel="noopener noreferrer">${et('Open Tailscale sign-in')}</a></p>` : ''}</div><div class="outbound-actions">${actionButtons.map(([action,label]) => `<button class="quiet" data-action="${action}" data-id="${esc(o.id)}"${action === 'register' && s.account ? ' disabled' : ''}>${et(action === 'register' && s.account ? 'Registered' : label)}</button>`).join('')}${o.type === 'warp' ? `<button class="quiet" data-license="${esc(o.id)}">${et('WARP+ license')}</button>` : ''}${o.id === 'direct' ? `<span class="hint">${et('Built-in outbound; cannot be deleted')}</span>` : `<button class="quiet" data-edit-outbound="${index}">${et('Edit')}</button><button class="danger" data-delete-outbound="${index}">${et('Delete')}</button>`}</div></article>`;
   }).join('') || `<div class="empty"><h3>${et('Add your first outbound')}</h3><p>${et('Start with Direct, then add WARP or WireGuard.')}</p></div>`;
 }
 
@@ -148,6 +148,30 @@ function renderDockerExport() {
   $('docker-auth-hint').hidden = !dockerBundle.auth_required;
   $('docker-auth-hint').textContent = t('This Proxy requires authentication. Exports omit credentials; configure them separately.');
 }
+function openDeleteOutbound(index) {
+  const outbound = cfg.outbounds[index];
+  if(!outbound || outbound.id === 'direct') return;
+  deletingOutbound = {id:outbound.id,config:cloneConfig()};
+  $('delete-replacement').value = '';
+  renderDeleteOutbound(); clearError($('delete-outbound-form')); $('delete-outbound-dialog').showModal();
+}
+function renderDeleteOutbound() {
+  if(!deletingOutbound) return;
+  const {id,config:c} = deletingOutbound;
+  const rules = (c.rules || []).filter(r => r.outbound === id || (r.candidates || []).includes(id));
+  const adaptive = (c.adaptive.candidates || []).includes(id) || rules.some(r => (r.candidates || []).includes(id));
+  const referenced = rules.length > 0 || c.default_outbound === id || adaptive;
+  $('delete-outbound-name').textContent = t('Delete outbound "{name}"?',{name:id});
+  const affected = rules.map(r => t('Routing rule: {name}',{name:r.id}));
+  if(c.default_outbound === id) affected.push(t('Default outbound'));
+  if((c.adaptive.candidates || []).includes(id)) affected.push(t('Adaptive routing'));
+  $('delete-outbound-references').innerHTML = affected.map(text => `<li>${esc(text)}</li>`).join('');
+  $('delete-replacement-section').hidden = !referenced;
+  const select = $('delete-replacement'), selected = select.value;
+  select.required = referenced;
+  select.innerHTML = `<option value="">${et('Choose a replacement')}</option>` + c.outbounds.filter(o => o.id !== id && o.enabled && (!adaptive || o.public_internet && o.type !== 'tailscale')).map(o => `<option value="${esc(o.id)}">${esc(o.id)}</option>`).join('');
+  select.value = selected;
+}
 function navigate(page) {
   const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.']};
   if(!names[page]) page = 'overview'; currentPage = page;
@@ -158,6 +182,7 @@ function navigate(page) {
 function logout() { active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 function openOutbound(index = -1) {
   outboundIndex = index; const o = index >= 0 ? cfg.outbounds[index] : {type:'wireguard',enabled:true};
+  if(o.id === 'direct') { notice('The built-in direct outbound cannot be deleted.',true); return; }
   $('outbound-form-title').textContent = t(index >= 0 ? 'Edit outbound' : 'Add outbound');
   const map = {id:'id',type:'type',address:'proxy_address',file:'config_file',hostname:'hostname',state:'state_dir',auth:'auth_key_file',binary:'warp_binary'};
   for(const [element,key] of Object.entries(map)) $(`out-${element}`).value = o[key] || '';
@@ -201,6 +226,7 @@ function renderConfigText() {
 }
 function switchLocale(locale) {
   i18n.setLocale(locale);
+  renderDeleteOutbound();
   renderDockerExport();
   navigate(currentPage);
   connection(isOnline);
@@ -264,9 +290,20 @@ $('outbound-list').addEventListener('click',async e => {
   const edit = e.target.closest('[data-edit-outbound]'); if(edit) { openOutbound(Number(edit.dataset.editOutbound)); return; }
   const license = e.target.closest('[data-license]'); if(license) { licenseID = license.dataset.license; $('license-value').value = ''; clearError($('license-form')); $('license-dialog').showModal(); return; }
   const del = e.target.closest('[data-delete-outbound]');
-  if(del) { const next = cloneConfig(); const index = Number(del.dataset.deleteOutbound); if(!confirm(t('Delete outbound "{name}"? Remove any rules that reference it first.',{name:next.outbounds[index].id}))) return; next.outbounds.splice(index,1); try { await save(next); } catch(error) { notice(error,true); } return; }
+  if(del) { openDeleteOutbound(Number(del.dataset.deleteOutbound)); return; }
   const action = e.target.closest('[data-action]'); if(!action) return;
   action.disabled = true; try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); } catch(error) { notice(error,true); } finally { action.disabled = false; }
+});
+$('delete-outbound-dialog').addEventListener('close',() => { deletingOutbound = null; });
+$('delete-outbound-form').addEventListener('submit',async e => {
+  e.preventDefault(); if(!deletingOutbound) return;
+  const {id,config:c} = deletingOutbound, button = e.target.querySelector('button.primary');
+  button.disabled = true;
+  try {
+    cfg = await api(`/outbounds/${encodeURIComponent(id)}`,{method:'DELETE',body:JSON.stringify({revision:c.revision,replacement:$('delete-replacement-section').hidden ? '' : $('delete-replacement').value})});
+    renderConfig(); $('delete-outbound-dialog').close(); notice('Outbound deleted. Referenced routes now use the replacement you selected.'); await poll();
+  } catch(error) { errorIn(e.target,error); }
+  finally { button.disabled = false; }
 });
 $('docker-form').addEventListener('submit',async e => {
   e.preventDefault();

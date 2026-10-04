@@ -72,6 +72,7 @@ Bootstrap with `mise trust` and `mise install`. Run tools through `mise exec -- 
 
 ## Routing, privacy, and lifecycle invariants
 
+- The built-in `direct` outbound must remain enabled, public, and of type `direct`. Never delete, rename, disable, or repurpose it. Deleting another outbound preserves rules and requires an explicit replacement for every reference; do not silently drop fixed VPN rules or use direct.
 - Fixed routes take precedence. A failed fixed VPN route must never silently become a direct connection.
 - Select the outbound before resolving a hostname. CIDR rules match client-provided literal IPs; do not add host-DNS lookups merely to match CIDRs.
 - Keep resolution inside the selected provider. Private-name failures must not fall back to public DNS, and caches must not leak answers across providers.

@@ -20,6 +20,10 @@ flowchart LR
 
 ## 規則
 
+`direct` 是內建且預設使用的出口，必須保持 ID／type 為 `direct`、啟用及具公網能力；不可刪除、改名、改成其他類型或停用。介面不提供修改／刪除按鈕，設定驗證也會拒絕違反此契約的 JSON。使用者仍可把「沒有規則匹配時」的預設路由改為其他已啟用出口。
+
+刪除其他出口前，Web UI 會列出引用它的規則、預設路由與自適應設定，要求明確選擇已啟用的替代出口。確認後原子刪除並替換所有引用、去除候選重複項，保留規則 ID／匹配條件／順序；不默默刪規則或轉成 direct。替換自適應候選時，替代出口需具公網能力且不可為 Tailscale。只有完全沒有引用時才可省略替代出口。取消、失敗與 revision 衝突均保留原設定，既有連線繼續使用原 provider。移除 profile 不會取消官方 WARP 註冊或刪除 VPN 憑證。
+
 網域先轉小寫並移除結尾句點。`domains` 精確比對；`suffixes` 同時匹配本身與子網域，`example.com` 不會匹配 `notexample.com`。同類固定規則依設定順序，固定規則始終優先於自適應規則。要讓既有固定網域改用自適應，需移除／修改該固定規則。
 
 CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 DNS 解析 hostname 再套 CIDR，避免在選定出口前洩漏名稱。網域流量請使用網域規則；要求 `ipv4`、`ipv6` 或 `auto` 會傳入該出口。WARP 的遠端 SOCKS DNS 無法保證 hostname 強制 family，會回報不支援。
@@ -52,6 +56,7 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 | PUT `/api/v1/config` | 完整設定，revision 必須與目前一致，成功後遞增 |
 | GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at |
 | GET `/api/v1/outbounds` | profile 狀態與可驗證的健康資訊 |
+| DELETE `/api/v1/outbounds/{id}` | `{"revision":CURRENT,"replacement":"OUTBOUND_ID"}`，刪除 profile 並原子替換所有引用；保護 direct、檢查 revision，成功後遞增 |
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |
 
 設定驗證、provider 建立、私有檔案原子寫入完成後才套用。無效更新與寫入失敗保留原設定；409 表示其他介面已更新版本。listener、ACL、TLS／登入安全設定，以及使用同一 state directory 的執行中 Tailscale 變更，需要在本機修改檔案並重啟 daemon。改變出口時會保留舊 provider，直到既有連線結束才釋放。

@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"rillway/internal/config"
 	"rillway/internal/control"
@@ -19,6 +21,56 @@ import (
 	"testing"
 	"time"
 )
+
+func TestConfigAPIProtectsBuiltInDirectAndPersistsReferenceReplacement(t *testing.T) {
+	c := config.Default(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(t.Context(), path, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	h := control.New(r, "token")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*config.Config){
+		func(c *config.Config) { c.Outbounds = c.Outbounds[1:] },
+		func(c *config.Config) { c.Outbounds[0].ID = "renamed" },
+		func(c *config.Config) { c.Outbounds[0].Enabled = false },
+		func(c *config.Config) { c.Outbounds[0].Type = "warp"; c.Outbounds[0].ProxyAddress = "127.0.0.1:40000" },
+	} {
+		next := r.Config()
+		change(&next)
+		body, _ := json.Marshal(next)
+		req := httptest.NewRequest("PUT", "/api/v1/config", strings.NewReader(string(body)))
+		req.Header.Set("Authorization", "Bearer token")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept-Language", "zh-Hant")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		after, readErr := os.ReadFile(path)
+		if w.Code != 422 || !strings.Contains(w.Body.String(), "內建 direct") || readErr != nil || string(before) != string(after) || r.Config().Revision != 1 {
+			t.Fatal(w.Code, w.Body.String(), readErr)
+		}
+	}
+	req := httptest.NewRequest("DELETE", "/api/v1/outbounds/warp", strings.NewReader(`{"revision":1,"replacement":"direct"}`))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	disk, err := config.Load(path)
+	if err != nil || disk.Revision != 2 || disk.Rules[1].Outbound != "direct" || len(disk.Outbounds) != 1 || r.Config().Revision != disk.Revision {
+		t.Fatal(disk, err)
+	}
+}
 
 func TestAtomicApplyAndConflict(t *testing.T) {
 	c := config.Default(t.TempDir())

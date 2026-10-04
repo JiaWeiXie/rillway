@@ -4,7 +4,7 @@
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 15 個 package 通過，包含 Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **67.3%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- 最新 `mise run check`：全部 15 個 package 通過，包含內建 direct 保護／出口刪除、Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **68.1%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
 - `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.3–46.0 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
@@ -67,6 +67,16 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 瀏覽器的隔離 profile 使用自簽憑證例外；憑證與 VM IP 的身分檢查另由嚴格信任指定 cert 的 TLS 請求完成，沒有修改 Mac 系統信任庫。截圖保留於 Git 忽略的 `.local/servers/example/qa/`，不含管理 token。
 
 更新後亦從 Mac 啟動正式 binary 的遠端 TUI，使用 `--token-file` 與 `--ca` 連線 VM。繁中介面顯示設定 revision `2`、真實代理觀察資料，以及 WARP `已連線`、版本 `CURRENT_VERSION`、模式 `proxy`、listener `true`；正常離開，未更改設定。
+
+## 內建 direct 保護與出口刪除修正
+
+2026-10-04 使用者回報刪除 WARP 出現 `unknown outbound "warp"`。原 Web UI 只移除 profile，保留固定規則與自適應候選的引用，因此設定驗證拒絕。
+
+- 新增後端 direct 契約，config decode／save／runtime Apply 都拒絕移除、改名、停用、改 type 或取消 public 能力。Web UI direct 卡片改顯示「內建出口，不可刪除」，不提供修改／刪除按鈕；仍允許其他已啟用出口作為預設路由。
+- 新增受認證／同源／revision 保護的 DELETE API，使用者明確選替代出口後一次移除並替換固定規則、預設路由及自適應候選。規則匹配條件與順序保持；候選去重、單一候選不變成空清單；公司固定路由只依明確選擇替換，不使用未指定的 direct fallback。
+- 回歸測試驗證原設定不被 helper 提前修改、無效替代出口拒絕、缺少替代出口拒絕、失敗不變更 runtime／磁碟、raw PUT JSON 不能繞過 direct 保護、兩個並行刪除僅一個成功、錯誤遮罩與雙語訊息。完整 `mise run check` 的 15 個 package 通過、lint 0 issues、race 無競態；`RemoveOutbound` statement coverage **97.7%**，總 coverage **68.1%**。
+- Browser plugin not available；使用既有 Playwright／隔離 Chrome，連線本機暫存 HTTPS daemon，以英文／繁中、1440 × 1000／390 × 844 共四種組合實測。每組均驗證 direct 按鈕不存在、WARP 引用清單、未選替代出口不送出 DELETE、取消保留原設定、選 direct 後成功刪除、`github-cdn` 規則保留並改用 direct、自適應只留 direct。另確認 raw API 停用 direct 回傳 422、revision 不變。
+- 頁面身分、非空畫面、無錯誤覆蓋層、操作後狀態、桌面／手機截圖及版面均通過；無水平溢出，瀏覽器錯誤／警告為 0。截圖在 `/private/tmp/rillway-outbound-ui-evidence/`，測試未取消任何 WARP 註冊或套用 VPN 授權。
 
 ## Docker 代理匯出與 NAS 實測
 

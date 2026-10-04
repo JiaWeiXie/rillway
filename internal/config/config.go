@@ -127,6 +127,9 @@ func Validate(c Config) error {
 			return fmt.Errorf("unknown outbound type %q", o.Type)
 		}
 	}
+	if o, ok := outs["direct"]; !ok || o.Type != "direct" || !o.Enabled || !o.PublicInternet {
+		return PublicError{Message: DirectRequired}
+	}
 	if o, ok := outs[c.DefaultOutbound]; !ok || !o.Enabled {
 		return errors.New("default_outbound must refer to an enabled outbound")
 	}
