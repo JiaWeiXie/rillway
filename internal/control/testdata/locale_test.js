@@ -79,6 +79,18 @@ async function browser(initialLocale) {
   assert.equal(vm.runInContext("et('Move {name} up',{name:'<script>公司😀'})",b.context),
     catalog['zh-Hant']['Move {name} up'].replace('{name}','&lt;script&gt;公司😀'));
 
+  vm.runInContext(`
+    cfg={outbounds:[{id:'warp',type:'warp',enabled:true,public_internet:true}]};
+    statuses=[{id:'warp',state:'connected',account:'Unlimited'}];
+    renderOutbounds();
+  `,b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-action="register" data-id="warp" disabled>已註冊<\/button>/);
+  vm.runInContext("i18n.setLocale('en');renderOutbounds();",b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-action="register" data-id="warp" disabled>Registered<\/button>/);
+  vm.runInContext("statuses=[];renderOutbounds();",b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-action="register" data-id="warp">Register<\/button>/);
+  vm.runInContext("cfg=undefined;i18n.setLocale('zh-Hant');",b.context);
+
   // Browser QA covers layout and form preservation. Here only stub visual
   // refresh work, keeping the shipped error and locale-switch behavior intact.
   vm.runInContext(`

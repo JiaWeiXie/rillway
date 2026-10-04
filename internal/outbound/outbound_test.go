@@ -46,6 +46,9 @@ func TestWARPExplicitActionsAndManualStop(t *testing.T) {
 	var commands [][]string
 	w.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		commands = append(commands, args)
+		if reflect.DeepEqual(args, []string{"--accept-tos", "registration", "show"}) {
+			return nil, errors.New("registration missing")
+		}
 		return []byte("ok"), nil
 	}
 	for _, action := range []string{"register", "connect", "disconnect"} {
@@ -53,7 +56,7 @@ func TestWARPExplicitActionsAndManualStop(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	expected := [][]string{{"--accept-tos", "registration", "new"}, {"--accept-tos", "mode", "proxy"}, {"--accept-tos", "proxy", "port", "40000"}, {"--accept-tos", "connect"}, {"--accept-tos", "disconnect"}}
+	expected := [][]string{{"--accept-tos", "registration", "show"}, {"--accept-tos", "registration", "new"}, {"--accept-tos", "mode", "proxy"}, {"--accept-tos", "proxy", "port", "40000"}, {"--accept-tos", "connect"}, {"--accept-tos", "disconnect"}}
 	if !reflect.DeepEqual(commands, expected) {
 		t.Fatalf("commands = %v", commands)
 	}
@@ -63,7 +66,7 @@ func TestWARPExplicitActionsAndManualStop(t *testing.T) {
 	if s := w.Status(context.Background()); s.State != "stopped" {
 		t.Fatal(s)
 	}
-	if len(commands) != 5 {
+	if len(commands) != 6 {
 		t.Fatal("status restarted WARP")
 	}
 }

@@ -320,7 +320,8 @@
     "Configuration validation failed: default_outbound must refer to an enabled outbound": "Configuration validation failed: default_outbound must refer to an enabled outbound",
     "Configuration validation failed: adaptive candidates must not be empty": "Configuration validation failed: adaptive candidates must not be empty",
     "Configuration validation failed: adaptive rule cannot also set outbound": "Configuration validation failed: adaptive rule cannot also set outbound",
-    "Configuration validation failed: invalid adaptive settings or probe budget exceeds limits": "Configuration validation failed: invalid adaptive settings or probe budget exceeds limits"
+    "Configuration validation failed: invalid adaptive settings or probe budget exceeds limits": "Configuration validation failed: invalid adaptive settings or probe budget exceeds limits",
+    "Registered": "Registered"
   },
   "zh-Hant": {
     " (disabled)": "（停用）",
@@ -643,6 +644,7 @@
     "Configuration validation failed: default_outbound must refer to an enabled outbound": "設定驗證失敗：default_outbound 必須指向已啟用的出口。",
     "Configuration validation failed: adaptive candidates must not be empty": "設定驗證失敗：自適應分流的候選出口不可為空。",
     "Configuration validation failed: adaptive rule cannot also set outbound": "設定驗證失敗：自適應分流規則不可同時指定固定出口。",
-    "Configuration validation failed: invalid adaptive settings or probe budget exceeds limits": "設定驗證失敗：自適應分流設定無效，或探測額度超過限制。"
+    "Configuration validation failed: invalid adaptive settings or probe budget exceeds limits": "設定驗證失敗：自適應分流設定無效，或探測額度超過限制。",
+    "Registered": "已註冊"
   }
 }

@@ -197,7 +197,18 @@ func (w *warp) Action(ctx context.Context, action, value string) error {
 	defer func() { w.statusMu.Lock(); w.cachedAt = time.Time{}; w.statusMu.Unlock() }()
 	switch action {
 	case "register":
+		// Registration belongs to the official client, including any WARP+
+		// subscription. Repeated requests must preserve that existing device.
+		if _, err := w.cli(ctx, "registration", "show"); err == nil {
+			return nil
+		}
 		_, err := w.cli(ctx, "registration", "new")
+		if err != nil {
+			// Another process may have registered the shared client meanwhile.
+			if _, existing := w.cli(ctx, "registration", "show"); existing == nil {
+				return nil
+			}
+		}
 		return warpFailure("WARP device registration failed. Check that the official daemon is available and whether the device is already registered.", err)
 	case "license":
 		value = strings.TrimSpace(value)
