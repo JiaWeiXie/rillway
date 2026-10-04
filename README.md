@@ -87,6 +87,7 @@ service operations, upgrades, Docker exports, and Mac PAC restoration.
 - Domain/suffix and literal IP/CIDR rules; failed fixed VPN routes never fall back to direct.
 - HTTPS Web UI and Bubble Tea TUI share `/api/v1`, token authentication, revision checks, and atomic configuration updates.
 - English and Traditional Chinese (`zh-Hant`) UI/CLI; bundled Web fonts work offline. Terminal glyphs use your terminal's fonts.
+- A searchable bilingual **Glossary** explains 37 terms with examples, including the difference between a direct outbound and bypassing the proxy. Open it from the Web UI sidebar.
 - Per-second connection, rate, byte, latency, known destination IP, outbound, and rule observations. HTTPS paths/content are not decrypted.
 - Opt-in adaptive routing based on connection success/timeouts and latency; only new connections change routes.
 - Ubuntu systemd, macOS LaunchAgent, reversible PAC settings per macOS network service.

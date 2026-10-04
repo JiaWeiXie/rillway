@@ -36,6 +36,12 @@ globalThis.RillwayI18n = (() => {
     }
     for(const select of document.querySelectorAll('[data-locale]')) select.value = locale;
   }
+  // Search static help in both languages, regardless of the display locale.
+  // Only captured product copy is included; arbitrary user data is not translated.
+  function searchText(root) {
+    return records.filter(record => !record.attribute && root.contains(record.node))
+      .map(record => record.source + ' ' + (catalog['zh-Hant'][record.source] || record.source)).join(' ');
+  }
   function setLocale(value) {
     locale = value === 'zh-Hant' ? 'zh-Hant' : 'en';
     try { localStorage.setItem('rillway-locale',locale); } catch (_) {}
@@ -45,5 +51,5 @@ globalThis.RillwayI18n = (() => {
     .then(response => { if(!response.ok) throw new Error('Language catalog unavailable'); return response.json(); })
     .then(value => { catalog = value; applyStatic(); })
     .catch(() => { locale = 'en'; applyStatic(); });
-  return {t,capture,setLocale,applyStatic,ready,get locale(){return locale;},date(value){return new Date(value).toLocaleString(locale === 'zh-Hant' ? 'zh-TW' : 'en-US');}};
+  return {t,capture,setLocale,applyStatic,searchText,ready,get locale(){return locale;},date(value){return new Date(value).toLocaleString(locale === 'zh-Hant' ? 'zh-TW' : 'en-US');}};
 })();

@@ -49,4 +49,4 @@ Mac 原有 Proxy 設定與 Tailscale，以及 VM 預設路由均未修改。公�
 
 後續操作見 [Ubuntu VM 與 Mac 部署](deployment.md)。此主機已有正式安裝，更新 binary 時不要重新執行 `setup`／`service install`：新版會拒絕既有安裝，更新應保留實際設定與狀態；也不要執行會在結束時卸載服務的 `scripts/acceptance-ubuntu.sh`。
 
-最新單一 binary／引導版本已於同日更新，artifact SHA-256 為 `db4097c37c443452671161c2b4a3aaedbeeecc675c5551365ffde16673797001`。實際設定 revision 為 `3`，設定、憑證、unit 與 WARP registration 保留；仍使用舊設定路徑，新增 PATH 入口。詳見 [最新驗證紀錄](verification.md)。
+目前已更新至窄版側欄／雙語名詞解釋版本，最新 artifact SHA-256 為 `79d951ab3ae133d2b8bb7b13fdb2b2fe3f71b16563d5bb775e6ea96b0e48970d`，實際 revision 為 `5`。中英桌面／手機介面與三種 Proxy 協定驗收通過；設定、憑證、unit 與 WARP registration 均保持不變，沿用舊設定路徑與 PATH 入口。詳見 [最新驗證紀錄](verification.md)。

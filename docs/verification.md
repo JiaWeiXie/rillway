@@ -4,7 +4,7 @@
 
 ## 整體交付檢查
 
-- 最新 `mise run check`：全部 15 個測試 package 通過（另編譯 embedded notices package），包含首次安裝引導、FHS 路徑／既有安裝保護、內建 direct 保護／出口刪除、Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **69.9%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
+- 最新 `mise run check`：全部 15 個測試 package 通過（另編譯 embedded notices package），包含首次安裝引導、FHS 路徑／既有安裝保護、內建 direct 保護／出口刪除、Docker 匯出／合併及 API、WARP 模式解析、systemd 私密目錄、i18n、agent helper、Git hooks 與 git-cliff 整合測試；lint 0 issues，race detector 未發現競態，總 statement coverage **70.0%**。較低的區段包含需要真實作業系統或帳號的安裝／VPN 流程，不能用 coverage 當作實機驗收證明。
 - `mise run build` 與 `mise run release`：通過；已產生 Linux／macOS 的 amd64、arm64 binary（含 Logo 與完整中文字體／Emoji 字體，約 44.6–46.2 MiB）、SHA256SUMS、module 清單與第三方授權檔。兩份字體 OFL 授權已逐位元比對 release 內的副本。
 - `mise exec -- gopls check cmd/rillway/main.go`：通過。LSP、Go、Lint 的快取均設在 repository 的 `.cache/`。
 - 實際啟動編譯後的 daemon 與 TUI：HTTPS 管理登入成功，經 HTTP Proxy 取得 PAC 回應 200，TUI 正確顯示該連線的目的 IP、direct 出口、建連時間與流量；測試程序已停止。
@@ -29,6 +29,18 @@ RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh ./bin/rillway
 - NAS 已有正式安裝，user-mode setup 與 root-mode service install 都確認拒絕且不產生指定的新設定。**沒有在正式 VM 重跑首次安裝或 acceptance 腳本。** 更新後的可拋棄 Ubuntu 24.04／26.04 完整首次 systemd 安裝、重開機與 macOS LaunchAgent 引導仍未實機驗收；CI 腳本已改用 setup，但尚未推送或執行遠端 CI。
 - 正式 NAS binary 以備份／原子替換更新，SHA-256：`db4097c37c443452671161c2b4a3aaedbeeecc675c5551365ffde16673797001`。服務 active/running、User=rillway、NRestarts=0；HTTP、CONNECT、SOCKS5、PAC、嚴格 TLS、未登入 `401` 與 token 管理再次通過。目前設定 revision 為 **3**，更新前後有效設定、token、TLS cert/key、unit 與官方 WARP registration 的 hashes 相同。保留舊 `/var/lib/rillway/config.json`，未遷移／覆寫；另建立先前缺少的 PATH 符號連結。
 - `README.md`／`README.zh-Hant.md`、`docs/cli.md`／`docs/cli.zh-Hant.md` 提供完整雙語入口與逐指令說明；文件連結已確認。專案 hooks 改為直接呼叫 mise，完整 Git／agent hooks 測試仍通過；沒有更動使用者全域工具。
+
+## 窄版側欄與雙語名詞解釋（2026-10-04 後續）
+
+- 依使用者標註，桌面側欄由 216 px 改為 192 px，語言選單移至連線狀態／登出下方；低高度時可捲動。手機版保留語言與登出，主內容不發生水平溢出。
+- 新增 `Glossary／名詞解釋`，提供六組、37 個名詞的中英定義與 Rillway 操作例子。文案依「說人話」skill 回讀，保留正式名稱，說明 direct 與 PAC DIRECT／bypass 的不同、固定規則優先與失敗行為、建連時間與傳輸速率的差別、WARP+ Unlimited 與實際可達性，以及 Docker 各層 Proxy 設定。
+- 搜尋同時比對兩種語言的說明與別名，包含全形英文正規化；切換語言保留搜尋與結果，空結果提供清除操作。靜態文案及參數完整性、全形／中文搜尋、分組隱藏、空結果、locale 切換與設定／憑證不變均有可重跑測試。
+- 最終 `mise run check` 全部 15 個測試 package 通過，lint 0 issues、race 無競態，總 statement coverage **70.0%**；四平台 `mise run release` 成功。
+- Browser plugin not available；以既有 Playwright 1.62.1／隔離 Chrome 驗證本機暫存 daemon 及正式 NAS，各執行英文／繁中、1440 × 1000／390 × 844 四組互動。另檢查 900 × 520 與 320 × 700，語言選單及登出可操作，無頁面水平溢出。驗證登入 → 名詞解釋 → 全形／中文搜尋 → 語言切換 → 空結果 → 清除 → 重整 `#glossary` → 登出，並確認內建 direct 的修改／刪除按鈕仍不存在。
+- 頁面 URL／title、非空內容、無錯誤覆蓋層、搜尋結果／焦點、locale 與深連結保留均通過；離線中文字體與 Emoji 字體成功載入。瀏覽器錯誤、警告、失敗請求、外部請求與寫入請求均為 **0**。隔離 profile 的自簽憑證例外另以嚴格信任指定 cert 的 TLS／身分檢查補充；未修改 Mac 信任庫。
+- 截圖保留在 repository 外 `/private/tmp/rillway-glossary-ui-evidence/`，包含桌面中英、手機中英與窄版出口頁；已人工檢視桌面及手機的字型、留白、footer 與選單位置。本機 QA daemon、暫存設定及憑證於驗收後清理。
+- NAS binary 備份後原子更新，Linux amd64 SHA-256 為 `79d951ab3ae133d2b8bb7b13fdb2b2fe3f71b16563d5bb775e6ea96b0e48970d`。服務 active/running、User=rillway、NRestarts=0；更新前後設定、token、TLS cert/key、systemd unit、官方 WARP registration hashes 相同。目前實際 revision 為 **5**，沿用原 `/var/lib/rillway/config.json` 與 PATH 入口。HTTP、SOCKS5、HTTPS CONNECT、PAC、嚴格 TLS、未登入 401／權杖登入再次通過。
+- 這次介面驗證只允許 GET／HEAD，沒有修改正式設定、註冊或切換 VPN，也沒有下載測速。Safari／Firefox、實際手機瀏覽器及其他作業系統字形未重新驗收；既有 VPN 帳號實測紀錄仍保留其原日期與範圍。
 
 ## NAS Ubuntu 26.04 正式部署與 WARP 實測
 

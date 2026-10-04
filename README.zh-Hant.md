@@ -64,6 +64,7 @@ sudo rillway tui --config /etc/rillway/config.json
 - 網域、suffix、IP literal／CIDR 分流；固定 VPN 規則失敗不會偷偷改走直連。
 - HTTPS Web UI 與 Bubble Tea TUI 共用 `/api/v1`，支援權杖登入、設定版本衝突檢查及原子更新。
 - 英文與繁體中文 `zh-Hant` UI／CLI；Web 字體內建，可離線顯示中文與 Emoji。終端字形仍使用終端機的字體。
+- Web UI 側欄的「名詞解釋」提供 37 個名詞的中英說明與例子，可搜尋兩種語言，包含「直連出口」與「略過代理」的差別。
 - 每秒更新連線、速率、累積流量、建連時間、已知目的 IP、出口與命中規則；不解密 HTTPS 路徑或內容。
 - 使用者啟用的自適應，依連線成功／逾時與延遲選擇出口，只影響新連線。
 - Ubuntu systemd、macOS LaunchAgent、依 macOS network service 套用及還原 PAC。

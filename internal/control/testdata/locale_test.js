@@ -15,7 +15,7 @@ function element(id = '') {
     attributes:{}, classList:{toggle(){}},
     getAttribute(name){return this.attributes[name] ?? null;},
     setAttribute(name,value){this.attributes[name] = value;},
-    querySelector(){return null;}, querySelectorAll(){return [];}};
+    contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
 }
 function storage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -34,14 +34,25 @@ async function browser(initialLocale) {
   input.value = '公司 🚀 👨‍👩‍👧‍👦 🇹🇼 <script>';
   input.attributes.placeholder = 'Search domain, IP, or outbound';
   const selectors = [get('login-language'),get('sidebar-language')];
+  const glossaryTerms = ['DNS', 'Proxy', 'WARP+'].map(title => {
+    const term=element(); term.textContent=title; return term;
+  });
+  glossaryTerms[0].dataset.glossaryKeywords='dns 名稱 查詢 解析 網域';
+  glossaryTerms[1].dataset.glossaryKeywords='proxy 代理 瀏覽器 browser';
+  glossaryTerms[2].dataset.glossaryKeywords='warp+ license 授權 付費';
+  const glossaryCopy={textContent:'Set your browser to use Rillway. Only traffic sent through this proxy appears in Connections.',parentElement:{tagName:'P'},isConnected:true};
+  glossaryTerms[1].contains=node=>node===glossaryCopy;
+  const glossarySections=glossaryTerms.map(term => ({hidden:false,querySelectorAll:()=>[term]}));
   const document = {
     documentElement:{lang:'en'}, title:'',
     body:{querySelectorAll(){return [input];}},
     getElementById:get,
-    createTreeWalker(){let index=-1; const nodes=[label,userText];return {
+    createTreeWalker(){let index=-1; const nodes=[label,userText,glossaryCopy];return {
       nextNode(){index++;this.currentNode=nodes[index];return index<nodes.length;}};},
     querySelectorAll(selector){
       if(selector === '[data-locale]') return selectors;
+      if(selector === '[data-glossary-term]') return glossaryTerms;
+      if(selector === '.glossary-section') return glossarySections;
       if(selector === '[data-error-source]') return [...elements.values()].filter(node => node.dataset.errorSource);
       return [];
     }
@@ -54,7 +65,7 @@ async function browser(initialLocale) {
   vm.runInContext(helper,context);
   await context.RillwayI18n.ready;
   vm.runInContext(app.slice(0,app.indexOf("document.querySelectorAll('[data-locale]').forEach")),context);
-  return {context,get,label,userText,localStorage,sessionStorage,document};
+  return {context,get,label,userText,localStorage,sessionStorage,document,glossaryTerms,glossarySections};
 }
 
 (async()=>{
@@ -134,6 +145,35 @@ async function browser(initialLocale) {
   vm.runInContext("displayError($('login-error'),{message:'未知 upstream 😀'});switchLocale('zh-Hant');",b.context);
   assert.equal(b.get('login-error').textContent,'未知 upstream 😀');
   assert.equal(b.get('login-error').dataset.errorSource,undefined);
+
+  // Search should work across languages and full-width input, without
+  // changing user text, credentials, or configuration.
+  const configBeforeSearch=vm.runInContext('JSON.stringify(cfg)',b.context);
+  b.get('glossary-search').value=' ＤＮＳ ';
+  vm.runInContext('filterGlossary()',b.context);
+  assert.deepEqual(b.glossaryTerms.map(term=>term.hidden),[false,true,true]);
+  assert.deepEqual(b.glossarySections.map(section=>section.hidden),[false,true,true]);
+  assert.equal(b.get('glossary-empty').hidden,true);
+  assert.equal(b.get('glossary-count').textContent, catalog['zh-Hant']['{shown} of {total} terms'].replace('{shown}','1').replace('{total}','3'));
+  b.get('glossary-search').value='代理';
+  vm.runInContext("switchLocale('en')",b.context);
+  assert.equal(b.get('glossary-search').value,'代理');
+  assert.deepEqual(b.glossaryTerms.map(term=>term.hidden),[true,false,true]);
+  assert.equal(b.get('glossary-count').textContent,'1 of 3 terms');
+  b.get('glossary-search').value='把瀏覽器';
+  vm.runInContext('filterGlossary()',b.context);
+  assert.deepEqual(b.glossaryTerms.map(term=>term.hidden),[true,false,true],'Chinese explanations remain searchable in English');
+  b.get('glossary-search').value='<script>🚀';
+  vm.runInContext('filterGlossary()',b.context);
+  assert.deepEqual(b.glossaryTerms.map(term=>term.hidden),[true,true,true]);
+  assert.equal(b.get('glossary-empty').hidden,false);
+  b.get('glossary-search').value='';
+  vm.runInContext('filterGlossary()',b.context);
+  assert.equal(b.get('glossary-count').textContent,'3 of 3 terms');
+  assert.deepEqual(b.glossarySections.map(section=>section.hidden),[false,false,false]);
+  assert.equal(b.get('glossary-empty').hidden,true);
+  assert.equal(vm.runInContext('JSON.stringify(cfg)',b.context),configBeforeSearch);
+  assert.equal(b.sessionStorage.getItem('rillway-token'),'existing-management-token');
 
   let request;
   b.context.fetch=async(url,options)=>{request={url,options};return {

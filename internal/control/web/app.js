@@ -173,11 +173,30 @@ function renderDeleteOutbound() {
   select.value = selected;
 }
 function navigate(page) {
-  const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.']};
+  const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.'],glossary:['Glossary','We explain the words used in Rillway.']};
   if(!names[page]) page = 'overview'; currentPage = page;
   for(const el of document.querySelectorAll('.page')) el.hidden = el.id !== `page-${page}`;
-  for(const el of document.querySelectorAll('[data-page]')) el.classList.toggle('selected',el.dataset.page === page);
+  for(const el of document.querySelectorAll('[data-page]')) {
+    const selected = el.dataset.page === page;
+    el.classList.toggle('selected',selected);
+    if(selected) el.setAttribute('aria-current','page'); else el.removeAttribute('aria-current');
+  }
   [$('page-title').textContent,$('page-context').textContent] = names[page].map(source => t(source));
+}
+function filterGlossary() {
+  const query = $('glossary-search').value.normalize('NFKC').trim().toLowerCase();
+  const terms = [...document.querySelectorAll('[data-glossary-term]')];
+  let shown = 0;
+  for(const term of terms) {
+    const words = `${term.textContent} ${i18n.searchText(term)} ${term.dataset.glossaryKeywords || ''}`.normalize('NFKC').toLowerCase();
+    term.hidden = query !== '' && !words.includes(query);
+    if(!term.hidden) shown++;
+  }
+  for(const section of document.querySelectorAll('.glossary-section')) {
+    section.hidden = ![...section.querySelectorAll('[data-glossary-term]')].some(term => !term.hidden);
+  }
+  $('glossary-count').textContent = t('{shown} of {total} terms',{shown,total:terms.length});
+  $('glossary-empty').hidden = shown !== 0;
 }
 function logout() { active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 function openOutbound(index = -1) {
@@ -226,6 +245,7 @@ function renderConfigText() {
 }
 function switchLocale(locale) {
   i18n.setLocale(locale);
+  filterGlossary();
   renderDeleteOutbound();
   renderDockerExport();
   navigate(currentPage);
@@ -249,6 +269,8 @@ $('login-form').addEventListener('submit',async e => { e.preventDefault(); token
 $('logout').addEventListener('click',logout);
 $('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));
 $('flow-search').addEventListener('input',renderFlows);
+$('glossary-search').addEventListener('input',filterGlossary);
+$('glossary-clear').addEventListener('click',() => { $('glossary-search').value = ''; filterGlossary(); $('glossary-search').focus(); });
 document.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click',() => { navigate(b.dataset.page); history.replaceState(null,'',`#${b.dataset.page}`); }));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',() => $(b.dataset.close).close()));
 $('license-dialog').addEventListener('close',() => { $('license-value').value = ''; licenseID = ''; });
