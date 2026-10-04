@@ -40,7 +40,7 @@ func defaultPath() string {
 	if err != nil {
 		return ".local/config.json"
 	}
-	return filepath.Join(dir, "rillway", "config.json")
+	return installedConfigPath(runtime.GOOS, []string{"/etc/rillway/config.json", "/var/lib/rillway/config.json"}, filepath.Join(dir, "rillway", "config.json"))
 }
 
 func flags(ctx context.Context, name string, out io.Writer) (*flag.FlagSet, *string) {
@@ -189,8 +189,29 @@ func terminal(ctx context.Context, args []string, out io.Writer) error {
 	base := fs.String("url", "", cliText(ctx, "management HTTPS URL"))
 	tokenPath := fs.String("token-file", "", cliText(ctx, "management token file"))
 	ca := fs.String("ca", "", cliText(ctx, "trusted server certificate PEM"))
+	clientPath := fs.String("client-config", defaultClientPath(), cliText(ctx, "remembered TUI connection file"))
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	explicitConfig := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
+	if *base == "" && !explicitConfig {
+		remembered, e := loadClientProfile(*clientPath)
+		if e == nil {
+			*base = remembered.BaseURL
+			if *tokenPath == "" {
+				*tokenPath = remembered.TokenFile
+			}
+			if *ca == "" {
+				*ca = remembered.CAFile
+			}
+		} else if !os.IsNotExist(e) {
+			return fmt.Errorf("read TUI connection profile: %w", e)
+		}
 	}
 	local := *base == ""
 	c, err := config.Load(*path)
@@ -213,15 +234,30 @@ func terminal(ctx context.Context, args []string, out io.Writer) error {
 			*ca = c.Security.TLSCertFile
 		}
 	}
-	if *tokenPath == "" {
-		return errors.New("--token-file is required for remote management")
+	if !local && *tokenPath == "" {
+		*tokenPath = filepath.Join(filepath.Dir(*clientPath), "remote-admin.token")
 	}
-	token, err := os.ReadFile(*tokenPath)
-	if err != nil {
-		return err
+	token, tokenErr := os.ReadFile(*tokenPath)
+	if tokenErr != nil {
+		tokenErr = tokenReadError(*tokenPath, tokenErr)
 	}
-	options := tui.Options{BaseURL: *base, Token: strings.TrimSpace(string(token)), CAFile: *ca, Locale: i18n.FromContext(ctx)}
+	options := tui.Options{BaseURL: *base, Token: strings.TrimSpace(string(token)), TokenFile: *tokenPath, CAFile: *ca, Locale: i18n.FromContext(ctx), InitialError: tokenErr, RememberConnection: func(settings tui.ConnectionSettings) error { return saveClientProfile(*clientPath, settings) }}
 	if local {
+		binary, e := os.Executable()
+		if e != nil {
+			return e
+		}
+		absolute, e := filepath.Abs(*path)
+		if e != nil {
+			return e
+		}
+		options.StartCommand = func() *exec.Cmd {
+			args := []string{binary, "--lang", string(i18n.FromContext(ctx)), "service", "start", "--config", absolute}
+			if runtime.GOOS == "linux" && os.Geteuid() != 0 {
+				return exec.CommandContext(ctx, "sudo", args...)
+			}
+			return exec.CommandContext(ctx, args[0], args[1:]...)
+		}
 		options.InstallService = func(ctx context.Context) error {
 			absolute, e := filepath.Abs(*path)
 			if e != nil {

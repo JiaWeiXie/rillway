@@ -8,6 +8,8 @@ Rillway 是以 Go 實作、可觀察的多出口 TCP Proxy。名稱結合 **rill
 
 Mac 保留公司的 Tailscale；公開網站經 PAC 送到 Ubuntu VM，再由 Rillway 選擇直連、WARP 或 WireGuard。
 
+Web UI 與 TUI 會先填好常用出口設定。TUI 按 `o` 選擇服務、`?` 查看說明，切到出口頁按 `+` 新增。驗證成功的服務連線會記住，下次可直接開啟 TUI。
+
 ## 單一執行檔與引導安裝
 
 每個發布平台只需要 **一個獨立執行檔**，內建 Proxy、HTTPS Web UI、TUI、tsnet、WireGuard userspace 引擎、圖片、離線中文字體／Emoji 字體與第三方授權。伺服器不需要 Go、Node、mise 或外部介面素材。**WARP／WARP+ 仍需另外安裝 Cloudflare 官方 client。**
@@ -65,7 +67,7 @@ sudo rillway tui --config /etc/rillway/config.json
 - HTTPS Web UI 與 Bubble Tea TUI 共用 `/api/v1`，支援權杖登入、設定版本衝突檢查及原子更新。
 - 英文與繁體中文 `zh-Hant` UI／CLI；Web 字體內建，可離線顯示中文與 Emoji。終端字形仍使用終端機的字體。
 - Web UI 側欄的「名詞解釋」提供 37 個名詞的中英說明與例子，可搜尋兩種語言，包含「直連出口」與「略過代理」的差別。
-- 每秒更新連線、速率、累積流量、建連時間、已知目的 IP、出口與命中規則；不解密 HTTPS 路徑或內容。
+- 連線依網域或 `IP:port` 分組，最上層顯示各目的地總流量，可展開個別連線；自動更新可選 1、2、5、10 或 30 秒。顯示速率、累積流量、建連時間、已知目的 IP、出口與命中規則，不解密 HTTPS 路徑或內容。
 - 使用者啟用的自適應，依連線成功／逾時與延遲選擇出口，只影響新連線。
 - Ubuntu systemd、macOS LaunchAgent、依 macOS network service 套用及還原 PAC。
 - 明確啟動的 GitHub 診斷與限量下載比較。

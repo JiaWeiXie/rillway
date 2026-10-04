@@ -218,7 +218,7 @@ func TestEmbeddedUIAndSecurityHeaders(t *testing.T) {
 		t.Fatal("unexpected asset exposed")
 	}
 	w := request(h, "GET", "/", "", "", "")
-	for _, text := range []string{"lang=\"en\"", "id=\"flows\"", "id=\"license-value\" type=\"password\"", "/app.js", "Management token", "Connections", "Outbounds", "Routing rules", "Settings", "Adaptive routing", "value=\"direct\">Direct", "rel=\"icon\" type=\"image/png\" href=\"/brand/rillway-mark.png\""} {
+	for _, text := range []string{"lang=\"en\"", "id=\"flow-groups\"", "id=\"flow-refresh\"", "id=\"license-value\" type=\"password\"", "/app.js", "Management token", "Connections", "Outbounds", "Routing rules", "Settings", "Adaptive routing", "value=\"direct\">Direct", "support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac", "rel=\"icon\" type=\"image/png\" href=\"/brand/rillway-mark.png\""} {
 		if !strings.Contains(w.Body.String(), text) {
 			t.Fatalf("missing UI contract %s", text)
 		}

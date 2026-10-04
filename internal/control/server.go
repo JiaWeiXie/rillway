@@ -44,6 +44,9 @@ func New(backend Backend, adminToken string) http.Handler {
 	h := &handler{backend: backend, token: adminToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/config", h.protect(h.getConfig))
+	mux.HandleFunc("GET /api/v1/defaults", h.protect(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, config.DefaultsForForms(h.backend.Config()))
+	}))
 	mux.HandleFunc("PUT /api/v1/config", h.protect(h.putConfig))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
 	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))

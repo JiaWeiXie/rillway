@@ -15,7 +15,7 @@ function element(id = '') {
     attributes:{}, classList:{toggle(){}},
     getAttribute(name){return this.attributes[name] ?? null;},
     setAttribute(name,value){this.attributes[name] = value;},
-    contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
+    showModal(){this.open=true;},close(){this.open=false;},contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
 }
 function storage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -106,6 +106,21 @@ async function browser(initialLocale) {
   `,b.context);
   assert.doesNotMatch(b.get('outbound-list').innerHTML,/data-(?:delete|edit)-outbound="0"/);
   assert.match(b.get('outbound-list').innerHTML,/data-delete-outbound="1"/);
+
+  const grouped=JSON.parse(vm.runInContext(`JSON.stringify(groupFlows([
+    {index:0,f:{host:'github.com',port:'443',download_bytes:1024,download_bytes_per_second:100,closed:false}},
+    {index:1,f:{host:'github.com',port:'80',upload_bytes:512,upload_bytes_per_second:20,closed:true}},
+    {index:2,f:{ip:'2001:db8::1',port:'443',download_bytes:256,closed:false}},
+    {index:3,f:{ip:'2001:db8::1',port:'8443',upload_bytes:128,closed:false}}
+  ]))`,b.context));
+  const github=grouped.find(group=>group.destination==='github.com');
+  assert.equal(github.connections.length,2,'domain ports should share one destination group');
+  assert.equal(github.active,1);
+  assert.equal(github.transferred,1536);
+  assert(grouped.some(group=>group.destination==='[2001:db8::1]:443'));
+  assert(grouped.some(group=>group.destination==='[2001:db8::1]:8443'),'IP destinations must include the port in their group');
+  const hostIP=JSON.parse(vm.runInContext(`JSON.stringify(groupFlows([{index:0,f:{host:'192.0.2.8',ip:'192.0.2.8',port:'443'}}]))`,b.context));
+  assert.equal(hostIP[0].destination,'192.0.2.8:443','an IP in the host field must still include its port');
   vm.runInContext(`
     deletingOutbound={id:'warp',config:{outbounds:[
       {id:'direct',type:'direct',enabled:true,public_internet:true},
@@ -127,7 +142,7 @@ async function browser(initialLocale) {
   // Browser QA covers layout and form preservation. Here only stub visual
   // refresh work, keeping the shipped error and locale-switch behavior intact.
   vm.runInContext(`
-    navigate=connection=()=>{};
+    navigate=connection=renderFlows=()=>{};
     pollStatuses=()=>{};
   `,b.context);
   const safeSource='Enter a valid management token to sign in.';
@@ -174,6 +189,37 @@ async function browser(initialLocale) {
   assert.equal(b.get('glossary-empty').hidden,true);
   assert.equal(vm.runInContext('JSON.stringify(cfg)',b.context),configBeforeSearch);
   assert.equal(b.sessionStorage.getItem('rillway-token'),'existing-management-token');
+
+  // Defaults are real values; switching types and languages preserves edits.
+  b.context.defaults={outbounds:{warp:{id:'warp-2',type:'warp',enabled:true,public_internet:true,proxy_address:'127.0.0.1:40000',warp_binary:'warp-cli'},wireguard:{id:'wireguard',type:'wireguard',enabled:false,public_internet:true,config_file:'/daemon/secrets/wireguard.conf'},tailscale:{id:'tailscale',type:'tailscale',enabled:false,public_internet:false,hostname:'rillway-tailscale',state_dir:'/daemon/tailscale/tailscale'}},rule:{id:'rule',domains:['github.com'],outbound:'direct',family:'auto'}};
+  b.context.fetch=async()=>({ok:true,json:async()=>b.context.defaults});
+  vm.runInContext("cfg={outbounds:[{id:'direct',type:'direct'},{id:'warp',type:'warp',proxy_address:'127.0.0.1:45678'}],rules:[],listeners:{pac:'127.0.0.1:17893'},adaptive:{candidates:[]},default_outbound:'direct'}",b.context);
+  await vm.runInContext('openOutbound()',b.context);
+  assert.equal(b.get('out-address').value,'127.0.0.1:40000');
+  assert.equal(b.get('out-binary').value,'warp-cli');
+  assert.equal(b.get('out-id').value,'warp-2');
+  b.get('out-address').value='127.0.0.1:45555';
+  b.get('out-id').value='公司 🚀';
+  b.get('out-type').value='wireguard';vm.runInContext('changeOutboundType()',b.context);
+  assert.equal(b.get('out-id').value,'公司 🚀');
+  assert.equal(b.get('out-file').value,'/daemon/secrets/wireguard.conf');
+  assert.equal(b.get('out-enabled').checked,false);
+  b.get('out-type').value='tailscale';vm.runInContext('changeOutboundType()',b.context);
+  assert.equal(b.get('out-public').disabled,true);
+  assert.equal(b.get('out-public').checked,false);
+  b.get('out-type').value='warp';vm.runInContext('changeOutboundType();switchLocale(\'en\')',b.context);
+  assert.equal(b.get('out-address').value,'127.0.0.1:45555');
+  assert.equal(b.get('out-id').value,'公司 🚀');
+  await vm.runInContext('openOutbound(1)',b.context);
+  assert.equal(b.get('out-address').value,'127.0.0.1:45678','editing must keep existing custom values');
+  assert.equal(b.get('out-id').disabled,true);
+  await vm.runInContext('openRule()',b.context);
+  assert.equal(b.get('rule-domains').value,'github.com');
+  assert.equal(b.get('rule-family').value,'');
+  await vm.runInContext("openRule(-1,{ip:'192.0.2.8',outbound:'warp'})",b.context);
+  assert.equal(b.get('rule-domains').value,'','IP rule must not keep the default GitHub domain');
+  assert.equal(b.get('rule-cidrs').value,'192.0.2.8/32');
+  assert.equal(b.get('rule-setup-hint').hidden,true);
 
   let request;
   b.context.fetch=async(url,options)=>{request={url,options};return {

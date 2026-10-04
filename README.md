@@ -11,6 +11,8 @@ and see how that path performs.
 Keep your company's Tailscale on your Mac. Send public traffic through a PAC file
 to an Ubuntu VM, where Rillway routes it through direct, WARP, or WireGuard.
 
+The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered.
+
 ## One executable, guided installation
 
 Each release target is **one standalone executable**. It includes the proxy,
@@ -88,7 +90,7 @@ service operations, upgrades, Docker exports, and Mac PAC restoration.
 - HTTPS Web UI and Bubble Tea TUI share `/api/v1`, token authentication, revision checks, and atomic configuration updates.
 - English and Traditional Chinese (`zh-Hant`) UI/CLI; bundled Web fonts work offline. Terminal glyphs use your terminal's fonts.
 - A searchable bilingual **Glossary** explains 37 terms with examples, including the difference between a direct outbound and bypassing the proxy. Open it from the Web UI sidebar.
-- Per-second connection, rate, byte, latency, known destination IP, outbound, and rule observations. HTTPS paths/content are not decrypted.
+- Connections are grouped by domain or `IP:port`. Each destination shows total traffic and expands to individual connections; automatic refresh offers 1, 2, 5, 10, or 30 seconds. Observations include rates, transferred bytes, latency, known destination IP, outbound, and rule. HTTPS paths/content are not decrypted.
 - Opt-in adaptive routing based on connection success/timeouts and latency; only new connections change routes.
 - Ubuntu systemd, macOS LaunchAgent, reversible PAC settings per macOS network service.
 - Explicit GitHub diagnostics and bounded download comparisons.

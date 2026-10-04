@@ -14,7 +14,7 @@ rillway tui --lang en --config .local/config.json
 
 `--lang en|zh-Hant` 優先於 `RILLWAY_LANG`，預設英文。Web UI 語言獨立選擇。TUI 按 `L`／`Ctrl+L` 切換，輸入文字時使用 `Ctrl+L`。使用者資料與未知的上游訊息維持原文。Web 字體內建；終端機缺字時，請自行選擇支援中文／Emoji 的終端字體，工具不會安裝主機字體。
 
-接受 `--config FILE` 的指令預設使用 OS 使用者設定目錄：Linux `$XDG_CONFIG_HOME/rillway/config.json`（通常為 `~/.config/rillway/config.json`），macOS `~/Library/Application Support/rillway/config.json`。相對路徑以目前目錄解析。**systemd 服務使用 `/etc/rillway/config.json`，本機 CLI 請明確指定。** 舊版服務可能仍使用 `/var/lib/rillway/config.json`，應先查看 unit。不要讓第二個 daemon 占用相同 listener 或 Tailscale state。遠端 TUI 不會開啟伺服器設定／state。
+Linux 的設定預設先找既有 `/etc/rillway/config.json`，再找舊安裝的 `/var/lib/rillway/config.json`；都不存在時使用 `$XDG_CONFIG_HOME/rillway/config.json`，通常為 `~/.config/rillway/config.json`。macOS 使用 `~/Library/Application Support/rillway/config.json`。`--config FILE` 可明確覆寫，相對路徑以目前目錄解析。Linux 正式設定為私有檔案，本機管理請用 `sudo`。不要讓第二個 daemon 占用相同 listener 或 Tailscale state。遠端 TUI 使用獨立的連線紀錄，不會修改伺服器設定檔。
 
 成功與 help 的結束碼為 `0`；錯誤選項、安裝輸入 EOF、驗證或操作失敗為 `1`。最後確認輸入非 `yes` 時會取消，結束碼 `0`，不寫檔。訊號會取消執行；`serve`／TUI 持續執行直到停止。一般輸出走 stdout，最後 CLI 錯誤走 stderr。`pac`、`docker export`、`diagnose`、`licenses` 可重新導向輸出。憑證從檔案讀取，setup／init 只印出權杖路徑。
 
@@ -83,23 +83,35 @@ rillway tui --url https://192.0.2.20:17892 \
 | `--url URL` | 遠端 HTTPS 管理網址；不載入或初始化本機設定 |
 | `--token-file FILE` | 管理權杖檔案，遠端模式必填 |
 | `--ca PEM` | 受信任伺服器憑證／CA PEM；遠端未填則使用系統 trust |
+| `--client-config FILE` | TUI 連線紀錄，儲存驗證成功的網址與檔案路徑 |
 
 本機模式從設定取得 URL、權杖及憑證路徑，可由選項覆寫。TUI 管理已執行的 daemon，不會啟動前景 daemon。Linux 服務設定／state 是私有檔案，本機操作需相應權限。遠端模式請安全複製公開憑證與私有權杖到用戶端，權杖設 `0600`，透過可信方式核對指紋。沒有略過 TLS 驗證的選項。
 
+第一次指定 VM 的 `--url`、`--token-file` 與 `--ca`，連線成功後就會記住。下次可直接執行 `rillway tui`。紀錄位於 OS 使用者設定目錄的 `rillway/client.json`，權限 `0600`；只保存網址與檔案路徑，不複製權杖內容。明確指定 `--url` 或 `--config` 可覆寫記錄。要管理本機安裝／啟動功能，使用 `--config FILE`。
+
+連不到服務時，畫面會說明原因，按 `o` 可修改 HTTPS 網址、權杖與憑證檔案。按 `?` 查看使用方式；尚未載入設定時不會顯示假的版本或空白 Proxy 位址。連線成功後，使用說明會顯示實際 Proxy／PAC 位址。
+
 | 按鍵 | 功能 |
 | --- | --- |
-| `Tab`／右，Shift+Tab／左 | 切換觀察、出口、規則頁 |
+| `o` | 服務連線設定；沿用目前值，修改後 Enter 連線 |
+| `?` | 使用說明 |
+| `Tab`／右，Shift+Tab／左 | 切換連線總覽、出口與 VPN、服務設定 |
 | `j`／下、`k`／上 | 選取列 |
-| `r` | 更新 |
+| `r` | 更新，斷線後也能重試 |
 | `a` | 切換自適應 |
-| 觀察頁 Enter | 為選取主機建立規則，選擇出口／IP family；`f` 切換自適應 |
+| 連線總覽 Enter | 為選取主機建立規則，預選目前出口；`f` 切換 IP 版本 |
+| 出口頁 `+` | 新增出口，預設 WARP；常用值已填好 |
+| 表單 Tab／↑↓ | 換欄位；類型與開關用 ←→，Ctrl+U 清空文字 |
+| 表單 Enter／Esc | 儲存或連線／取消；儲存失敗保留輸入 |
 | 出口頁 `n`、`c`、`d`、`v` | 註冊、連線、斷線、驗證選定出口 |
 | 出口頁小寫 `l` | 輸入 WARP+ license，輸入遮罩顯示 |
 | `i` 再 Enter | 安裝新本機服務，遠端模式不提供 |
-| `L`／Ctrl+L | 切換中英 |
+| `s` 再 Enter | 啟動已安裝的本機服務，遠端模式不提供 |
+| `L`／Ctrl+L | 切換中英；文字表單用 Ctrl+L，保留輸入 |
 | Escape | 取消表單，非表單時離開 |
 | `q`／Ctrl+C | 離開；輸入時 Ctrl+C 也會退出 |
 
+Web UI 和 TUI 共用預設值：WARP 位址 `127.0.0.1:40000`、指令 `warp-cli`。WireGuard 設定檔路徑、Tailscale 節點名稱與獨立 state 路徑也會填好；這些路徑屬於執行服務的主機。WireGuard／Tailscale 初始停用，請提供自己的 WireGuard 設定或啟用 Tailscale 後登入。工具不會產生帳號金鑰，Tailscale 維持公司／私網用途。新增規則預填 `github.com` 與目前預設出口，可改成實際目的地。
 Web UI 另外提供 profile／規則編輯與安全刪除出口；`direct` 不可刪除，有引用的出口需要明確指定替代出口。
 
 ## `service`：systemd／LaunchAgent
@@ -143,7 +155,7 @@ sudo rillway client apply --service "Wi-Fi" \
 sudo rillway client restore --backup "$HOME/rillway-proxy-backup.json"
 ```
 
-`pac --config FILE` 將 PAC 輸出至 stdout，不修改系統；daemon 也提供 `/proxy.pac`。公司網域／CIDR 在 Mac bypass，公開流量送往 Ubuntu；不提供公開流量的自動 DIRECT fallback。
+`pac --config FILE` 將 PAC 輸出至 stdout，不修改系統；daemon 也提供 `/proxy.pac`。公司網域／CIDR 在 Mac bypass，公開流量送往 Ubuntu；不提供公開流量的自動 DIRECT fallback。macOS 可在「網路 → 詳細資訊 → 代理伺服器」開啟「自動代理伺服器設定」並填入 PAC URL；完整畫面步驟見 [Apple：在 Mac 上輸入代理伺服器設定](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac)。
 
 `client` 只支援 macOS。list 列出 **network service 名稱**，例如 Wi-Fi、USB Ethernet，不是 en0。apply 接受 `--service`（預設 Wi-Fi）、必填 `--pac-url`、`--backup`（預設目前目錄的 `rillway-proxy-backup.json`）。先備份 PAC URL／狀態及手動 Proxy 啟用狀態，再設定 PAC、停用手動 Proxy；保留原 server／port／憑證。拒絕覆寫既有備份，套用失敗會嘗試還原。`restore --backup FILE` 還原後才刪除快照。只有此明確指令會修改選定的 Mac 網路服務。
 

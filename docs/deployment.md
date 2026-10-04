@@ -67,6 +67,8 @@ rillway tui --url https://192.0.2.20:17892 --token-file ./admin.token --ca ./adm
 
 ## Mac PAC
 
+Apple 的操作路徑是「系統設定 → 網路 → 選擇服務 → 詳細資訊 → 代理伺服器」，開啟「自動代理伺服器設定」後填入 PAC URL。畫面位置與完整步驟見 [Apple：在 Mac 上輸入代理伺服器設定](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac)。
+
 先把公司網域加入 `pac.bypass_domains`；CIDR 加入 `pac.bypass_cidrs`。預設略過 RFC1918、loopback、link-local、Tailscale CGNAT、IPv6 ULA 及 `.ts.net`。PAC 在 **Mac** 解析公司名稱，保留現有 Tailscale DNS。DNS 查到私網位址也會 bypass；仍建議公司網域明確列入，避免 DNS 不可用時送出公司名稱。
 
 公開流量送往 Ubuntu；Ubuntu 的 `direct` 仍會留下觀察資訊。Mac 的 `DIRECT` bypass 完全不經 Rillway，所以不會出現在介面上。PAC 對公開網站不附加自動 `DIRECT` fallback，VM 停機時公開代理連線會失敗。

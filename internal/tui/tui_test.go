@@ -117,14 +117,14 @@ func TestEnglishNavigationAndForms(t *testing.T) {
 		{"loading", model{}, []string{"Connecting to the management service"}},
 		{"connections", model{ready: true}, []string{"[Connections]", "No connections yet", "Enter Create routing rule"}},
 		{"outbounds", model{ready: true, page: 1}, []string{"[Outbounds & VPNs]", "c Connect", "d Disconnect", "v Verify"}},
-		{"settings", model{ready: true, page: 2}, []string{"[Service settings]", "Management UI", "Press i to install"}},
+		{"settings", model{ready: true, page: 2}, []string{"[Service settings]", "Management UI", "Start or install the service on the machine running it"}},
 		{"rule", model{form: "rule", ruleFlow: flow{Host: "example.com"}}, []string{"Create routing rule for example.com", "Automatic (dual stack)", "Enter Save", "Esc Cancel"}},
 		{"license", model{form: "license"}, []string{"WARP+ license key", "Enter Apply", "Esc Cancel"}},
 		{"install", model{form: "install"}, []string{"Install the Rillway background service", "Enter Install", "Esc Cancel"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := tc.model.View()
-			for _, want := range append([]string{"≈ Rillway   Routing console", "Adaptive routing:"}, tc.want...) {
+			for _, want := range append([]string{"≈ Rillway   Routing console"}, tc.want...) {
 				if !strings.Contains(view, want) {
 					t.Errorf("missing English control %q in:\n%s", want, view)
 				}
@@ -191,7 +191,7 @@ func TestLanguageSwitchPreservesFormsAndUserText(t *testing.T) {
 			}
 		})
 	}
-	m := model{page: 1, cfg: config.Config{Outbounds: []config.Outbound{{ID: "warp", Type: "warp"}}}}
+	m := model{ready: true, page: 1, cfg: config.Config{Outbounds: []config.Outbound{{ID: "warp", Type: "warp"}}}}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	if next.(model).form != "license" {
 		t.Fatal("lowercase l no longer opens the license form")

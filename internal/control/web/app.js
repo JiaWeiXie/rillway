@@ -11,10 +11,13 @@ const rate = n => `${bytes(n)}/s`;
 const typeName = value => { const source = ({direct:'Direct',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[value]); return source ? t(source) : value; };
 const stateKey = t => String(t || '').toLowerCase();
 const stateName = value => { const source = ({ready:'Available',connected:'Connected',running:'Running',starting:'Starting',stopped:'Stopped',disconnected:'Disconnected',disabled:'Disabled',error:'Error',unavailable:'Unavailable',needslogin:'Sign-in required',needsmachineauth:'Awaiting admin approval',needs_login:'Sign-in required',needs_auth:'Sign-in required',unsupported_account:'Account unsupported',unsupported_client:'Version unsupported'}[stateKey(value)]); return source ? t(source) : value || t('Status pending'); };
-let dockerBundle = null, deletingOutbound = null;
+let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
+const refreshChoices = [1,2,5,10,30];
+let flowPollTimer, refreshSeconds = 1, openFlowGroups = new Set();
+try { const saved = Number(localStorage.getItem('rillway-flow-refresh-seconds')); if(refreshChoices.includes(saved)) refreshSeconds = saved; } catch (_) {}
 
 async function api(path, options = {}) {
   const headers = {'Authorization': `Bearer ${token}`, 'Accept-Language': i18n.locale, ...options.headers};
@@ -91,29 +94,62 @@ async function pollStatuses() {
   finally { statusPolling = false; }
 }
 function flowActive(f) { return !f.closed || f.closed === '0001-01-01T00:00:00Z'; }
+function ipLiteral(value) {
+  value = String(value || '').replace(/^\[|\]$/g,'');
+  return value.includes(':') || /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value);
+}
+function destinationAddress(f) {
+  const host = f.host || f.domain;
+  if(host && !ipLiteral(host)) return host;
+  const ip = f.ip || host || t('Unknown');
+  if(!f.port) return ip;
+  return `${ip.includes(':') ? `[${ip}]` : ip}:${f.port}`;
+}
+function groupFlows(items) {
+  const groups = new Map();
+  items.forEach(({f,index}) => {
+    const host = f.host || f.domain, destination = destinationAddress(f), key = `${host && !ipLiteral(host) ? 'domain' : 'address'}:${destination}`;
+    if(!groups.has(key)) groups.set(key,{key,destination,connections:[],active:0,uploadRate:0,downloadRate:0,transferred:0});
+    const group = groups.get(key);
+    group.connections.push({f,index});
+    group.uploadRate += Number(f.upload_bytes_per_second || f.upload_rate) || 0;
+    group.downloadRate += Number(f.download_bytes_per_second || f.download_rate) || 0;
+    group.transferred += (Number(f.upload_bytes)||0)+(Number(f.download_bytes)||0);
+    if(flowActive(f)) group.active++;
+  });
+  return [...groups.values()].sort((a,b) => b.active-a.active || (b.downloadRate+b.uploadRate)-(a.downloadRate+a.uploadRate) || a.destination.localeCompare(b.destination));
+}
+function flowRow({f,index}) {
+  const host = destinationAddress(f);
+  const ip = f.ip ? `${f.ip}${f.family ? ` · ${f.family}` : ''}` : t('Destination IP unknown; resolved upstream');
+  const sum = (Number(f.upload_bytes)||0)+(Number(f.download_bytes)||0);
+  return `<tr><td><span class="domain">${esc(host)}</span><span class="sub">${esc(ip)}</span></td><td><span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span></td><td class="numeric">${rate(f.download_bytes_per_second || f.download_rate)}</td><td class="numeric">${rate(f.upload_bytes_per_second || f.upload_rate)}</td><td class="numeric">${bytes(sum)}</td><td class="numeric">${Number(f.connect_ms || 0).toFixed(1)} ms</td><td><span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span></td><td><button class="table-action" data-flow="${index}" data-flow-id="${esc(String(f.id ?? index))}">${et('Set outbound')}</button></td></tr>`;
+}
 function renderFlows() {
   const query = $('flow-search').value.toLowerCase();
-  const visible = flows.map((f,index) => ({f,index})).filter(({f}) => [f.host,f.domain,f.ip,f.outbound].join(' ').toLowerCase().includes(query));
+  const visible = flows.map((f,index) => ({f,index})).filter(({f}) => [destinationAddress(f),f.host,f.domain,f.ip,f.port,f.outbound].join(' ').toLowerCase().includes(query));
   let up = 0, down = 0, count = 0;
   for(const f of flows) { up += Number(f.upload_bytes_per_second || f.upload_rate) || 0; down += Number(f.download_bytes_per_second || f.download_rate) || 0; if(flowActive(f)) count++; }
   $('upload-rate').textContent = rate(up); $('download-rate').textContent = rate(down); $('active-count').textContent = count;
   $('flows-empty').hidden = visible.length > 0;
-  const body = $('flows');
-  const rows = new Map([...body.rows].map(row => [row.dataset.flowKey, row]));
-  visible.forEach(({f,index}, position) => {
-    const host = f.host || f.domain || f.ip || t('Unknown');
-    const ip = f.ip ? `${f.ip}${f.family ? ` · ${f.family}` : ''}` : t('Destination IP unknown; resolved upstream');
-    const sum = (Number(f.upload_bytes)||0)+(Number(f.download_bytes)||0);
-    const key = String(f.id ?? `${host}:${f.port}:${index}`);
-    let row = rows.get(key);
-    if(!row) { row = document.createElement('tr'); row.dataset.flowKey = key; for(let i = 0; i < 8; i++) row.append(document.createElement('td')); row.cells[7].innerHTML = '<button class="table-action"></button>'; }
-    rows.delete(key); row.cells[7].firstElementChild.textContent = t('Set outbound');
-    const cells = [`<span class="domain">${esc(host)}${f.port ? `:${esc(f.port)}` : ''}</span><span class="sub">${esc(ip)}</span>`, `<span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span>`, rate(f.download_bytes_per_second || f.download_rate), rate(f.upload_bytes_per_second || f.upload_rate), bytes(sum), `${Number(f.connect_ms || 0).toFixed(1)} ms`, `<span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span>`];
-    cells.forEach((html,i) => { if(row.cells[i].innerHTML !== html) row.cells[i].innerHTML = html; if(i >= 2 && i <= 5) row.cells[i].className = 'numeric'; });
-    row.cells[7].firstElementChild.dataset.flow = index;
-    if(body.rows[position] !== row) body.insertBefore(row,body.rows[position] || null);
-  });
-  rows.forEach(row => row.remove());
+  const container = $('flow-groups'), focused = document.activeElement;
+  const focusGroup = focused?.closest?.('.flow-group')?.dataset.groupKey;
+  const focusFlow = focused?.closest?.('[data-flow-id]')?.dataset.flowId;
+  container.innerHTML = groupFlows(visible).map(group => {
+    const open = query || openFlowGroups.has(group.key);
+    const key = encodeURIComponent(group.key);
+    return `<details class="flow-group" data-group-key="${esc(key)}"${open ? ' open' : ''}><summary><span class="flow-chevron" aria-hidden="true">›</span><span class="flow-destination"><strong>${esc(group.destination)}</strong><small>${et('{count} connections · {active} active',{count:group.connections.length,active:group.active})}</small></span><span class="flow-metric"><small>${et('Download')}</small><strong>${rate(group.downloadRate)}</strong></span><span class="flow-metric"><small>${et('Upload')}</small><strong>${rate(group.uploadRate)}</strong></span><span class="flow-metric"><small>${et('Transferred')}</small><strong>${bytes(group.transferred)}</strong></span></summary><div class="flow-table"><table><thead><tr><th>${et('Connection')}</th><th>${et('Outbound / rule')}</th><th class="numeric">${et('Download')}</th><th class="numeric">${et('Upload')}</th><th class="numeric">${et('Transferred')}</th><th class="numeric">${et('Connect time')}</th><th>${et('Status')}</th><th><span class="sr-only">${et('Actions')}</span></th></tr></thead><tbody>${group.connections.sort((a,b) => Number(flowActive(b.f))-Number(flowActive(a.f))).map(flowRow).join('')}</tbody></table></div></details>`;
+  }).join('');
+  if(focusGroup) {
+    const group = [...container.querySelectorAll('.flow-group')].find(node => node.dataset.groupKey === focusGroup);
+    const target = focusFlow ? [...(group?.querySelectorAll('[data-flow-id]') || [])].find(node => node.dataset.flowId === focusFlow) : group?.querySelector('summary');
+    target?.focus({preventScroll:true});
+  }
+}
+function restartFlowPolling(runNow = false) {
+  clearInterval(flowPollTimer);
+  flowPollTimer = setInterval(poll,refreshSeconds*1000);
+  if(runNow) poll();
 }
 function renderRules() {
   $('rules').innerHTML = (cfg.rules || []).map((r,index) => {
@@ -199,32 +235,63 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function logout() { active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
-function openOutbound(index = -1) {
-  outboundIndex = index; const o = index >= 0 ? cfg.outbounds[index] : {type:'wireguard',enabled:true};
-  if(o.id === 'direct') { notice('The built-in direct outbound cannot be deleted.',true); return; }
+async function openOutbound(index = -1) {
+  try { formDefaults = await api('/defaults'); }
+  catch(error) { notice(error,true); return; }
+  outboundIndex = index;
+  const original = index >= 0 ? cfg.outbounds[index] : null;
+  if(original?.id === 'direct') { notice('The built-in direct outbound cannot be deleted.',true); return; }
+  const type = original?.type || 'warp';
+  const o = {...formDefaults.outbounds[type],...original};
+  if(type === 'warp' && !o.warp_binary) o.warp_binary = formDefaults.outbounds.warp.warp_binary;
+  outboundDrafts = {}; outboundType = type;
   $('outbound-form-title').textContent = t(index >= 0 ? 'Edit outbound' : 'Add outbound');
+  fillOutbound(o);
+  clearError($('outbound-form')); $('outbound-dialog').showModal();
+}
+function fillOutbound(o) {
   const map = {id:'id',type:'type',address:'proxy_address',file:'config_file',hostname:'hostname',state:'state_dir',auth:'auth_key_file',binary:'warp_binary'};
   for(const [element,key] of Object.entries(map)) $(`out-${element}`).value = o[key] || '';
-  $('out-id').disabled = index >= 0; $('out-enabled').checked = o.enabled; $('out-public').checked = !!o.public_internet; $('out-dns').value = (o.dns || []).join('\n');
-  clearError($('outbound-form')); outboundFields(); $('outbound-dialog').showModal();
+  $('out-id').disabled = outboundIndex >= 0; $('out-enabled').checked = !!o.enabled; $('out-public').checked = !!o.public_internet; $('out-dns').value = (o.dns || []).join('\n');
+  outboundFields();
+}
+function changeOutboundType() {
+  const type = $('out-type').value, id = $('out-id').value;
+  const draft = {id, type:outboundType, enabled:$('out-enabled').checked, public_internet:$('out-public').checked, dns:lines($('out-dns').value)};
+  const map = {address:'proxy_address',file:'config_file',hostname:'hostname',state:'state_dir',auth:'auth_key_file',binary:'warp_binary'};
+  for(const [element,key] of Object.entries(map)) draft[key] = $(`out-${element}`).value;
+  outboundDrafts[outboundType] = draft;
+  const next = {...(outboundDrafts[type] || formDefaults.outbounds[type])};
+  if(outboundIndex >= 0 || id !== formDefaults.outbounds[outboundType].id) next.id = id;
+  outboundType = type; fillOutbound(next);
 }
 function outboundFields() {
   const type = $('out-type').value;
   for(const el of document.querySelectorAll('[data-out-field]')) el.hidden = !({proxy:['warp'],wireguard:['wireguard'],tailscale:['tailscale','tsnet'],warp:['warp'],dns:['wireguard','tailscale','tsnet']}[el.dataset.outField] || []).includes(type);
-  if(!['wireguard','tailscale','tsnet'].includes(type)) $('out-dns').value = '';
   $('out-public').disabled = ['tailscale','tsnet'].includes(type);
   if($('out-public').disabled) $('out-public').checked = false;
+  const hints = {
+    warp:'The usual WARP address and command are filled in. Save, then use Register, Connect and Verify outbound. Set WARP+ separately.',
+    wireguard:'The suggested file is on the Rillway server. Replace it with your existing WireGuard file, then enable this outbound. No keys are generated.',
+    tailscale:'The node name and private state folder are filled in. Enable this outbound, save, then use its sign-in link. Public Internet access stays off.',
+    direct:'Direct uses the server network. The built-in direct already exists; you usually do not need another.'
+  };
+  $('out-setup-hint').textContent = t(hints[type]);
 }
-function openRule(index = -1, flow = null) {
-  ruleIndex = index; const r = index >= 0 ? cfg.rules[index] : {id:`rule-${Date.now().toString(36)}`,outbound:cfg.default_outbound};
+async function openRule(index = -1, flow = null) {
+  try { formDefaults = await api('/defaults'); }
+  catch(error) { notice(error,true); return; }
+  ruleIndex = index; const r = index >= 0 ? cfg.rules[index] : formDefaults.rule;
   $('rule-id').value = r.id;
   for(const key of ['domains','suffixes','cidrs']) $(`rule-${key}`).value = (r[key] || []).join('\n');
+  $('rule-setup-hint').hidden = index >= 0 || !!flow;
   if(flow) {
+    $('rule-domains').value = ''; $('rule-suffixes').value = ''; $('rule-cidrs').value = '';
     const host = flow.host || flow.domain || flow.ip || '';
     if(host.includes(':') || /^\d+(\.\d+){3}$/.test(host)) $('rule-cidrs').value = `${host}/${host.includes(':') ? '128' : '32'}`;
     else $('rule-domains').value = host;
   }
-  $('rule-outbound').innerHTML = options(r.adaptive ? '@adaptive' : r.outbound, true);
+  $('rule-outbound').innerHTML = options(r.adaptive ? '@adaptive' : (flow?.outbound || r.outbound), true);
   $('rule-family').value = r.family === 'auto' ? '' : r.family || '';
   candidateBoxes($('rule-candidates'), r.candidates || cfg.adaptive.candidates || [], 'rule-candidate');
   $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive';
@@ -248,6 +315,7 @@ function switchLocale(locale) {
   filterGlossary();
   renderDeleteOutbound();
   renderDockerExport();
+  if($('outbound-dialog').open) outboundFields();
   navigate(currentPage);
   connection(isOnline);
   if(cfg) {
@@ -269,16 +337,29 @@ $('login-form').addEventListener('submit',async e => { e.preventDefault(); token
 $('logout').addEventListener('click',logout);
 $('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));
 $('flow-search').addEventListener('input',renderFlows);
+$('flow-refresh').value = String(refreshSeconds);
+$('flow-refresh').addEventListener('change',e => {
+  const seconds = Number(e.target.value);
+  if(!refreshChoices.includes(seconds)) return;
+  refreshSeconds = seconds;
+  try { localStorage.setItem('rillway-flow-refresh-seconds',String(seconds)); } catch (_) {}
+  restartFlowPolling(true);
+});
+$('flow-groups').addEventListener('toggle',e => {
+  if(!e.target.matches('.flow-group')) return;
+  const key = decodeURIComponent(e.target.dataset.groupKey);
+  if(e.target.open) openFlowGroups.add(key); else openFlowGroups.delete(key);
+},true);
 $('glossary-search').addEventListener('input',filterGlossary);
 $('glossary-clear').addEventListener('click',() => { $('glossary-search').value = ''; filterGlossary(); $('glossary-search').focus(); });
 document.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click',() => { navigate(b.dataset.page); history.replaceState(null,'',`#${b.dataset.page}`); }));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',() => $(b.dataset.close).close()));
 $('license-dialog').addEventListener('close',() => { $('license-value').value = ''; licenseID = ''; });
 $('add-outbound').addEventListener('click',() => openOutbound());
-$('out-type').addEventListener('change',outboundFields);
+$('out-type').addEventListener('change',changeOutboundType);
 $('add-rule').addEventListener('click',() => openRule());
 $('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
-$('flows').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) openRule(-1,flows[Number(b.dataset.flow)]); });
+$('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) openRule(-1,flows[Number(b.dataset.flow)]); });
 $('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
 $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
 $('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
@@ -354,6 +435,6 @@ $('license-form').addEventListener('submit',async e => {
 });
 navigate(location.hash.slice(1));
 i18n.ready.then(() => switchLocale(i18n.locale));
-setInterval(poll,1000);
+restartFlowPolling();
 setInterval(pollStatuses,10000);
 if(token) load().catch(e => { displayError($('login-error'),e); logout(); });

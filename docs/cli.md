@@ -23,14 +23,7 @@ entering text. User data and unknown upstream diagnostics are preserved.
 Web fonts are embedded; install/select a CJK/emoji-capable terminal font yourself
 if terminal glyphs are missing. Rillway does not install host fonts.
 
-Commands accepting `--config FILE` normally default to the OS user configuration
-folder: Linux `$XDG_CONFIG_HOME/rillway/config.json` (normally
-`~/.config/rillway/config.json`), macOS `~/Library/Application Support/rillway/config.json`.
-Relative paths resolve against the current directory. **Installed systemd services
-use `/etc/rillway/config.json`; specify it explicitly for local CLI operations.**
-Legacy services may still use `/var/lib/rillway/config.json`; inspect their unit
-instead of assuming their path. Never run a second daemon on the same listeners or
-Tailscale state. Remote TUI avoids opening the server's configuration/state.
+On Linux, the default configuration first uses an existing `/etc/rillway/config.json`, then the legacy `/var/lib/rillway/config.json`. Otherwise it uses `$XDG_CONFIG_HOME/rillway/config.json`, usually `~/.config/rillway/config.json`. macOS uses `~/Library/Application Support/rillway/config.json`. An explicit `--config FILE` overrides discovery; relative paths resolve from the working directory. Installed Linux configuration is private, so local administration requires the appropriate permissions, usually `sudo`. Do not start a second daemon sharing listeners or Tailscale state. Remote TUI connections have a separate client profile.
 
 Success/help is exit `0`; invalid options, setup EOF, validation failures and
 failed operations return `1`. Cancelling a wizard with an answer other than `yes`
@@ -127,38 +120,43 @@ never replaces an existing certificate automatically.
 sudo rillway tui --config /etc/rillway/config.json
 rillway tui --url https://192.0.2.20:17892 \
   --token-file ./private/admin.token --ca ./private/admin.crt
+# After a successful connection, reuse the remembered service:
+rillway tui
 ```
 
-| Option | Meaning |
+| Option | Purpose |
 | --- | --- |
-| `--config FILE` | Local config; missing local config is initialized |
-| `--url URL` | Remote HTTPS management URL; bypasses local config/initialization |
-| `--token-file FILE` | Management token file; required for remote management |
-| `--ca PEM` | Trusted server certificate/CA PEM; remote omission uses system trust |
+| `--config FILE` | Explicit local configuration; initialized if absent |
+| `--url URL` | Remote HTTPS management URL |
+| `--token-file FILE` | Local management token file |
+| `--ca PEM` | Trusted certificate/CA; otherwise use system trust |
+| `--client-config FILE` | Override the remembered TUI connection file |
 
-Local mode takes URL, token and certificate paths from config unless overridden.
-It manages an already running daemon; it does not launch a foreground daemon.
-Linux service config/state are private, so local CLI access needs the appropriate
-permissions. For remote mode securely copy the public certificate and private
-token to your client, set token `0600`, and verify the fingerprint out of band.
-There is no insecure TLS bypass option.
+A verified connection is remembered in `rillway/client.json` under the OS user configuration directory, with mode `0600`. It contains only the URL and token/certificate file paths, never token contents. Explicit `--url` or `--config` overrides the remembered service. Use `--config FILE` for local installation/start controls. Securely copy the token and public certificate to a remote client, protect the token file, and verify the certificate fingerprint. TLS verification cannot be disabled.
 
-| Key | Behavior |
+The TUI manages a running service. If it cannot connect, it explains the failure and offers `o` to edit the current URL and file paths. It does not show revision zero or pretend an empty connection list was loaded. Press `?` for instructions; actual HTTP proxy and PAC addresses appear after connecting.
+
+| Key | Action |
 | --- | --- |
-| `Tab`/Right, Shift+Tab/Left | Switch observation/outbound/rule pages |
-| `j`/Down, `k`/Up | Select row |
-| `r` | Refresh |
+| `o` | Edit the service connection; Enter connects |
+| `?` | How to use Rillway |
+| `Tab`/Right, Shift+Tab/Left | Switch Connections, Outbounds & VPNs, Service settings |
+| `j`/Down, `k`/Up | Select a row |
+| `r` | Refresh, including retrying an unavailable service |
 | `a` | Toggle adaptive routing |
-| Enter on an observation | Add route for the selected host; choose outbound/family, `f` toggles adaptive |
-| Outbound page: `n`, `c`, `d`, `v` | Register, connect, disconnect, verify selected provider |
-| Outbound page: lowercase `l` | Enter WARP+ license; input is masked |
-| `i`, then Enter | Install a new local service; unavailable in remote mode |
-| `L`/Ctrl+L | Switch English/Traditional Chinese |
+| Connections Enter | Create a rule, preselecting the current outbound; `f` changes IP family |
+| Outbounds `+` | Add an outbound with suggested values; WARP is the initial type |
+| Forms Tab/Up/Down | Select a field; Left/Right changes type or switches; Ctrl+U clears text |
+| Forms Enter/Esc | Save or connect / cancel; failures preserve input |
+| Outbounds `n`, `c`, `d`, `v` | Register, connect, disconnect, verify |
+| Outbounds lowercase `l` | Enter a masked WARP+ license |
+| `i`, then Enter | Install a new local service after confirmation |
+| `s`, then Enter | Start an installed local service after confirmation |
+| `L`/Ctrl+L | Change language; use Ctrl+L while editing text |
 | Escape | Cancel a form, or quit outside a form |
-| `q` / Ctrl+C | Quit (Ctrl+C also exits during input) |
+| `q`/Ctrl+C | Quit; Ctrl+C also works while editing |
 
-The Web UI additionally provides profile/rule editing and safe outbound deletion;
-`direct` is protected, and referenced outbounds require an explicit replacement.
+Web UI and TUI share actual defaults: WARP `127.0.0.1:40000` and `warp-cli`; a WireGuard file suggestion; and a Tailscale node name with a dedicated state directory. VPN paths belong to the server. WireGuard and Tailscale start disabled until you provide a configuration or enable and sign in; credentials are not generated. Tailscale stays private. New rules suggest `github.com` and the current default outbound, which you can replace. Switching types or languages preserves edits. Web UI also provides rule/profile editing and safe deletion; built-in `direct` cannot be deleted, and referenced outbounds require an explicit replacement.
 
 ## `service`: systemd / LaunchAgent
 
@@ -224,6 +222,10 @@ sudo rillway client restore --backup "$HOME/rillway-proxy-backup.json"
 `pac --config FILE` exports the configured PAC to stdout without changing system
 settings. The daemon also serves it at `/proxy.pac`. Company domains/CIDRs bypass
 on the Mac; public traffic uses Ubuntu. PAC has no automatic public DIRECT fallback.
+On macOS, open Network, choose the service, open Details and Proxies, then enable
+Automatic Proxy Configuration and enter the PAC URL. See [Apple's Mac proxy
+settings guide](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac) for
+the current interface steps.
 
 `client` is macOS-only. `list` lists network **service names**, e.g. Wi-Fi or USB
 Ethernet, not `en0`. `apply` options: `--service` (default Wi-Fi), required

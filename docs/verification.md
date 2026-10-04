@@ -188,6 +188,16 @@ mise exec -- go test ./internal/engine -run '^$' -fuzz FuzzRuleHostname -fuzztim
 
 完整專案的可重跑入口是 `mise run check`；它會執行整個專案的 lint、race detector、隨機測試順序及 coverage。`mise run release` 另建置 Linux／macOS 的 amd64、arm64 binary；交叉建置不能取代目標平台執行驗收。
 
+## 常用預設值、TUI 引導與目的地分組（2026-10-04 後續）
+
+- Web UI 與 TUI 的新增出口會取得 daemon 端建議值。WARP 預填 `127.0.0.1:40000` 與 `warp-cli`；WireGuard 預填伺服器設定檔路徑但維持停用；Tailscale 預填獨立節點名稱／state 路徑、維持停用及私網模式，不產生帳號金鑰。新增規則預填 `github.com`、目前預設出口及自動 IP 類型。切換出口類型或語言保留草稿，儲存失敗不清除輸入。
+- TUI 斷線畫面不再顯示假的 revision 0 或「尚無連線」。按 `o` 可設定 VM 的 HTTPS 網址、權杖檔案與憑證，按 `?` 顯示目前可用的實際位址，出口頁按 `+` 使用上述預設值。真實 PTY 驗證涵蓋斷線、說明、嚴格 TLS、連線、繁中切換、類型切換、取消及再次啟動。驗證成功後只記錄網址與檔案路徑，client profile 為 `0600` 且不含 token 內容；這台 Mac 現在執行不帶連線參數的 TUI 會直接連到 NAS VM。
+- Web UI 的目的地依網域分組；沒有網域或 host 是 literal IP 時，依 `IP:port` 分組。每組預設收合並顯示連線數、使用中數量、下載／上傳速率及累計傳輸，展開後顯示個別連線並可建立分流規則。搜尋會展開符合的群組；使用者展開／收合狀態在自動更新及切換語言時保留。
+- 自動更新可選 1、2、5、10 或 30 秒，預設 1 秒，選擇會保留在瀏覽器本機。PAC 設定頁及雙語文件加入 [Apple 的 Mac 代理伺服器設定說明](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac)。
+- 完整 `mise run check` 通過：lint 0 issues，race detector 未發現競態，總 statement coverage **70.5%**。`mise run release` 建置 Linux／macOS 的 amd64、arm64 單一 binary 成功。
+- Browser plugin not available；使用既有 Playwright／隔離 Chrome 對本機暫存 daemon 與 NAS 正式服務，各完成英文／繁中、1440 × 1000／390 × 844 四組互動。頁面識別、非空內容、無錯誤覆蓋層、分組總計、展開／收合、搜尋、建立規則表單、自動更新、locale 保留、Apple PAC 連結及無水平溢出均通過；console error、warning、失敗／外部請求為 0。NAS 驗收只允許 GET／HEAD，沒有修改正式設定或 VPN。
+- Linux amd64 artifact SHA-256 為 `56142e04469be3634df0754bc0a50e4ba3db4b03d6c5656ea158ff40a37d0018`，已備份後原子更新至 NAS VM。更新前後設定、token、TLS cert/key、systemd unit 與官方 WARP registration hashes 相同；服務 active，state `0700`、設定與 token `0600`。HTTP、HTTPS CONNECT、SOCKS5、PAC、嚴格 TLS、未登入 `401` 與權杖管理再次通過；最後讀取的 revision 為 **9**。
+
 ## 尚未驗證的外部環境
 
 以下項目明確為 **未驗證**，不能由一般測試通過推論為已完成：

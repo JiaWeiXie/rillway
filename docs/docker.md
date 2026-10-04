@@ -90,3 +90,13 @@ Docker Hub 的 `registry-1.docker.io`、`auth.docker.io` 及實際下載 CDN 會
 `GET /api/v1/integrations/docker` 回傳預設 Proxy URL、NO_PROXY、loopback／認證提示與四份匯出。`POST` 接受 `{"proxy_url":"http://host:17890","no_proxy":"localhost,.corp.example"}`，只驗證並產生設定；需管理 token、來源 ACL 與同源請求，不更改 revision、VPN 或設定檔。
 
 測試及 NAS 實機結果見 [驗證紀錄](verification.md)。官方設定語意參考 [Docker daemon Proxy](https://docs.docker.com/engine/daemon/proxy/)、[Docker client Proxy](https://docs.docker.com/engine/cli/proxy/)、[OrbStack networking](https://docs.orbstack.dev/docker/network)。
+
+## virtualization host NAS 與同機 VM 的連線
+
+同一台 NAS 上的 VM 若使用 macvtap 接到實體網卡，主機直接從那張網卡連 VM 可能無法互通，見 [libvirt 的 macvtap 說明](https://wiki.libvirt.org/TroubleshootMacvtapHostFail.html)。先確認 NAS 的來源介面、路由與 VM 的來源限制；不要直接開放整個區網或清除防火牆。
+
+本次 virtualization host 的 VM 使用 `vm-uplink` 的 macvtap，NAS 另有能連 VM 的 `host-interface`。實際修正只新增 VM 的 `/32` 路由，從 `host-interface`、NAS `192.0.2.22` 連 `192.0.2.21`；VM 的 Rillway ACL 只新增 NAS `192.0.2.22/32`。NAS 的 `/etc/systemd/system/rillway-vm-route.service` 已啟用並執行，未變更預設路由、兩張網卡的設定或 Docker 設定。此配置僅適用於這台已確認介面的 NAS，其他機器需先核對。
+
+若要還原這次 NAS 路由，可停止並停用該 unit；其 `ExecStop` 只刪除此 `/32` 路由。原路由快照保留在 NAS 的 root 私有資料夾 `/var/lib/rillway-network-backup/`。VM 的 ACL 修改前設定備份為 `/var/backups/rillway-nas-access-20261004/config-before.json`。ACL 還原需合併當前設定，避免覆寫之後新增的規則。
+
+已從 NAS 成功拉取 `curlimages/curl:8.14.1`；沒有建立測試容器。Private GHCR 映像仍須有可用的 GitHub token 與套件讀取權限；本次登入失敗由使用者確認是 token 過期，更新後恢復正常。工具不讀取或管理 GHCR token。路由 unit 的開機與 NAS 韌體更新後行為尚未實測。

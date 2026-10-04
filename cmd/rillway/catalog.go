@@ -54,6 +54,7 @@ var catalog = map[string]string{
 	"comma-separated Docker bypass domains, IPs or CIDRs":        "以逗號分隔的 Docker 略過網域、IP 或 CIDR",
 	"existing Docker JSON to merge; source file is not modified": "要合併的現有 Docker JSON；來源檔案維持原狀",
 
+	"remembered TUI connection file":   "記住 TUI 連線的檔案",
 	"configuration file":               "設定檔",
 	"configuration already exists: %s": "設定檔已存在：%s",
 	"Configuration: %s\nManagement token: %s\nWARP is disabled until explicitly enabled and connected.\n": "設定檔：%s\n管理權杖：%s\nWARP 預設停用，請手動啟用並連線。\n",
@@ -182,7 +183,7 @@ func languageArguments(args []string, preference string) (i18n.Locale, []string,
 		remaining = append(remaining, arg)
 		name := strings.TrimLeft(arg, "-")
 		switch name {
-		case "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input", "listen", "allow-client", "bypass-domains", "http-port", "socks-port", "admin-port", "pac-port":
+		case "client-config", "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input", "listen", "allow-client", "bypass-domains", "http-port", "socks-port", "admin-port", "pac-port":
 			if strings.HasPrefix(arg, "-") && i+1 < len(args) {
 				i++
 				remaining = append(remaining, args[i])
