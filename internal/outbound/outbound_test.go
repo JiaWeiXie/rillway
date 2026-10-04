@@ -96,7 +96,7 @@ func TestWARPStatusSeparatesAccountListenerAndVerification(t *testing.T) {
 		case "--version":
 			return []byte("warp-cli 2026.7.1376.0"), nil
 		case "settings":
-			return []byte("(user set)\tMode: WarpProxy\nLicense: sensitive"), nil
+			return []byte("(user set)\tMode: WarpProxy on port 40000\nLicense: sensitive"), nil
 		case "status":
 			return []byte("Status update: Connected"), nil
 		case "registration":

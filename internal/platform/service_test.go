@@ -13,6 +13,9 @@ func TestServiceTemplates(t *testing.T) {
 	if err != nil || !strings.Contains(u, "User=rillway") || !strings.Contains(u, `"/opt/my app/rillway"`) {
 		t.Fatal(u, err)
 	}
+	if !strings.Contains(u, "StateDirectory=rillway\nStateDirectoryMode=0700\n") {
+		t.Fatal("service state directory must remain private", u)
+	}
 	if _, err = SystemdUnit("/tmp/x\nEvil=y", "/tmp/c"); err == nil {
 		t.Fatal("newline injection")
 	}

@@ -19,7 +19,11 @@ import (
 	"time"
 )
 
-var warpVersionPattern = regexp.MustCompile(`\b[0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+\b`)
+var (
+	warpVersionPattern   = regexp.MustCompile(`\b[0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+\b`)
+	warpModeLinePattern  = regexp.MustCompile(`^(?:\([^()\r\n]+\)[ \t]+)?Mode:[ \t]*(.*)$`)
+	warpProxyPortPattern = regexp.MustCompile(`(?i)^warpproxy[ \t]+on[ \t]+port[ \t]+([0-9]{1,5})$`)
+)
 
 type (
 	commandRunner func(context.Context, string, ...string) ([]byte, error)
@@ -152,24 +156,37 @@ func warpUnlimited(s string) bool {
 
 func warpMode(s string) string {
 	for _, line := range strings.Split(s, "\n") {
-		if _, value, ok := strings.Cut(line, "Mode:"); ok {
-			switch strings.ToLower(strings.TrimSpace(value)) {
-			case "warpproxy", "proxy":
+		field := warpModeLinePattern.FindStringSubmatch(strings.TrimSpace(line))
+		if field == nil {
+			continue
+		}
+		value := strings.TrimSpace(field[1])
+		switch strings.ToLower(value) {
+		case "warpproxy", "proxy":
+			return "proxy"
+		case "warp":
+			return "warp"
+		case "tunnelonly", "tunnel_only":
+			return "tunnel_only"
+		case "warpdoh", "warp+doh":
+			return "warp+doh"
+		case "doh":
+			return "doh"
+		case "dot":
+			return "dot"
+		case "warp+dot", "warpdot":
+			return "warp+dot"
+		}
+		// Official clients also report "WarpProxy on port 40000". Require the
+		// entire value and a valid decimal port; mentions of proxy mode in other
+		// fields or unrecognized suffixes do not establish the current mode.
+		if match := warpProxyPortPattern.FindStringSubmatch(value); match != nil {
+			port, err := strconv.Atoi(match[1])
+			if err == nil && port >= 1 && port <= 65535 {
 				return "proxy"
-			case "warp":
-				return "warp"
-			case "tunnelonly", "tunnel_only":
-				return "tunnel_only"
-			case "warpdoh", "warp+doh":
-				return "warp+doh"
-			case "doh":
-				return "doh"
-			case "dot":
-				return "dot"
-			case "warp+dot", "warpdot":
-				return "warp+dot"
 			}
 		}
+		return "unknown"
 	}
 	return "unknown"
 }

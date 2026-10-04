@@ -45,6 +45,7 @@ ExecStart=%s serve --config %s
 Restart=on-failure
 RestartSec=5
 StateDirectory=rillway
+StateDirectoryMode=0700
 WorkingDirectory=/var/lib/rillway
 UMask=0077
 NoNewPrivileges=yes
