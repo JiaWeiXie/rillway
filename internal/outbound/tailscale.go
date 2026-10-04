@@ -25,6 +25,12 @@ import (
 type tailscale struct {
 	cfg          config.Outbound
 	server       *tsnet.Server
+	stateLock    *os.File
+	closeOnce    sync.Once
+	closeErr     error
+	login        func(context.Context) error
+	logout       func(context.Context) error
+	setRunning   func(context.Context, bool) error
 	status       func(context.Context) (*ipnstate.Status, error)
 	addresses    func() (netip.Addr, netip.Addr)
 	dialNetstack func(context.Context, netip.Addr, netip.AddrPort) (net.Conn, error)
@@ -51,6 +57,16 @@ func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error)
 	if info, err := os.Stat(cfg.StateDir); err != nil || info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("tailscale state_dir must have mode 0700")
 	}
+	stateLock, err := lockTailscaleState(cfg.StateDir)
+	if err != nil {
+		return nil, err
+	}
+	keepLock := false
+	defer func() {
+		if !keepLock {
+			_ = stateLock.Close()
+		}
+	}()
 	auth := ""
 	if cfg.AuthKeyFile != "" {
 		info, e := os.Stat(cfg.AuthKeyFile)
@@ -89,9 +105,17 @@ func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error)
 		_ = s.Close()
 		return nil, errors.New("embedded Tailscale netstack is unavailable")
 	}
+	keepLock = true
 	return &tailscale{
 		cfg:       cfg,
 		server:    s,
+		stateLock: stateLock,
+		login:     lc.StartLoginInteractive,
+		logout:    lc.Logout,
+		setRunning: func(ctx context.Context, running bool) error {
+			_, err := lc.EditPrefs(ctx, &ipn.MaskedPrefs{Prefs: ipn.Prefs{WantRunning: running}, WantRunningSet: true})
+			return err
+		},
 		status:    lc.Status,
 		addresses: s.TailscaleIPs,
 		dialNetstack: func(ctx context.Context, source netip.Addr, destination netip.AddrPort) (net.Conn, error) {
@@ -99,8 +123,19 @@ func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error)
 		},
 	}, nil
 }
-func (t *tailscale) ID() string   { return t.cfg.ID }
-func (t *tailscale) Close() error { return t.server.Close() }
+func (t *tailscale) ID() string { return t.cfg.ID }
+func (t *tailscale) Close() error {
+	t.closeOnce.Do(func() {
+		if t.server != nil {
+			t.closeErr = t.server.Close()
+		}
+		if t.stateLock != nil {
+			t.closeErr = errors.Join(t.closeErr, t.stateLock.Close())
+		}
+	})
+	return t.closeErr
+}
+
 func (t *tailscale) Status(ctx context.Context) Status {
 	s := Status{ID: t.ID(), Type: "tailscale", State: "unavailable", PublicInternet: false}
 	t.mu.RLock()
@@ -110,12 +145,7 @@ func (t *tailscale) Status(ctx context.Context) Status {
 		s.State = "stopped"
 		return s
 	}
-	lc, e := t.server.LocalClient()
-	if e != nil {
-		s.Detail = e.Error()
-		return s
-	}
-	raw, e := lc.Status(ctx)
+	raw, e := t.status(ctx)
 	if e != nil {
 		s.Detail = e.Error()
 		return s
@@ -335,15 +365,17 @@ func dnsAddresses(packet []byte) ([]netip.Addr, error) {
 func (t *tailscale) Action(ctx context.Context, action, value string) error {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	lc, err := t.server.LocalClient()
-	if err != nil {
-		return err
-	}
 	switch action {
 	case "login":
-		return lc.StartLoginInteractive(ctx)
+		if err := t.login(ctx); err != nil {
+			return err
+		}
+		t.mu.Lock()
+		t.stopped = false
+		t.mu.Unlock()
+		return nil
 	case "logout":
-		if err := lc.Logout(ctx); err != nil {
+		if err := t.logout(ctx); err != nil {
 			return err
 		}
 		t.mu.Lock()
@@ -352,7 +384,7 @@ func (t *tailscale) Action(ctx context.Context, action, value string) error {
 		return nil
 	case "connect", "disconnect":
 		running := action == "connect"
-		_, err = lc.EditPrefs(ctx, &ipn.MaskedPrefs{Prefs: ipn.Prefs{WantRunning: running}, WantRunningSet: true})
+		err := t.setRunning(ctx, running)
 		if err == nil {
 			t.mu.Lock()
 			t.stopped = !running

@@ -25,6 +25,7 @@ const (
 	maxOutput  = 12 << 10
 	maxGitList = 1 << 20
 	maxSource  = 8 << 20
+	maxAsset   = 32 << 20
 	cacheDir   = ".cache/agent-hooks"
 )
 
@@ -267,6 +268,18 @@ func relevant(path string) bool {
 	return strings.HasSuffix(path, ".go") || fullCheckFile(path) || hookScript(path) || path == "cliff.toml" || strings.HasPrefix(filepath.ToSlash(path), "internal/control/web/")
 }
 
+// Embedded fonts and images are hashed too: they change the shipped UI and
+// must invalidate the cached check, but can legitimately exceed source limits.
+func sourceLimit(path string) int64 {
+	if strings.HasPrefix(filepath.ToSlash(path), "internal/control/web/") {
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".ttf", ".woff2", ".png", ".webp", ".jpg", ".jpeg", ".ico":
+			return maxAsset
+		}
+	}
+	return maxSource
+}
+
 func hookScript(path string) bool {
 	path = filepath.ToSlash(path)
 	return path == ".githooks/pre-commit" || path == ".githooks/commit-msg" || path == "scripts/hooks/commit-cliff.toml" || (strings.HasPrefix(path, "scripts/hooks/") && strings.HasSuffix(path, ".sh"))
@@ -414,7 +427,8 @@ func (c checker) treeHash(ctx context.Context, changed []string) (string, error)
 		}
 		count++
 		total += info.Size()
-		if info.Size() > maxSource || total > 128<<20 || count > 10000 {
+		limit := sourceLimit(relative)
+		if info.Size() > limit || total > 128<<20 || count > 10000 {
 			return errors.New("source size limit")
 		}
 		// Root also prevents an escaping symlink introduced between Lstat/Open.
@@ -423,9 +437,9 @@ func (c checker) treeHash(ctx context.Context, changed []string) (string, error)
 			return err
 		}
 		_, _ = fmt.Fprintf(h, "source:%s\x00%d\x00", relative, info.Size())
-		n, copyErr := io.Copy(h, io.LimitReader(file, maxSource+1))
+		n, copyErr := io.Copy(h, io.LimitReader(file, limit+1))
 		closeErr := file.Close()
-		if copyErr != nil || closeErr != nil || n > maxSource {
+		if copyErr != nil || closeErr != nil || n > limit {
 			return errors.New("source read failed")
 		}
 		_, _ = io.WriteString(h, "\x00")

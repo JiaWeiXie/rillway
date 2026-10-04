@@ -337,3 +337,52 @@ func TestCellPreservesGraphemesAndDisplayWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshPreservesSelectedDestination(t *testing.T) {
+	m := model{ready: true, selected: 1, flows: []flow{{ID: 10, Host: "first.example"}, {ID: 20, Host: "selected.example"}}}
+	updated, _ := m.Update(loadedMsg{snapshot: snapshot{Flows: []flow{{ID: 20, Host: "selected.example"}, {ID: 30, Host: "new.example"}}}})
+	m = updated.(model)
+	if m.selected != 0 {
+		t.Fatal("refresh moved selection to a different connection")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if updated.(model).ruleFlow.Host != "selected.example" {
+		t.Fatal("routing editor opened for a different destination")
+	}
+	m = updated.(model)
+	m.form = ""
+	updated, _ = m.Update(loadedMsg{snapshot: snapshot{Flows: nil}})
+	m = updated.(model)
+	if m.selected != 0 {
+		t.Fatal("empty refresh left an invalid selection")
+	}
+	_ = m.View()
+}
+
+func TestRefreshPreservesSelectedOutbound(t *testing.T) {
+	m := model{ready: true, page: 1, selected: 1, cfg: config.Config{Outbounds: []config.Outbound{{ID: "direct"}, {ID: "warp"}}}}
+	updated, _ := m.Update(loadedMsg{cfg: config.Config{Outbounds: []config.Outbound{{ID: "warp"}, {ID: "direct"}}}})
+	m = updated.(model)
+	if m.cfg.Outbounds[m.selected].ID != "warp" {
+		t.Fatal("refresh moved selection to a different outbound")
+	}
+}
+
+func TestInFlightRefreshDoesNotReplaceOpenEditor(t *testing.T) {
+	for _, form := range []string{"rule", "outbound"} {
+		t.Run(form, func(t *testing.T) {
+			original := config.Config{Revision: 7, Outbounds: []config.Outbound{{ID: "direct"}, {ID: "warp"}}}
+			m := model{ready: true, loading: true, form: form, cfg: original, ruleChoice: 1}
+			next, _ := m.Update(loadedMsg{cfg: config.Config{Revision: 8, Outbounds: []config.Outbound{{ID: "direct"}}}})
+			m = next.(model)
+			if m.loading || m.cfg.Revision != 7 || len(m.cfg.Outbounds) != 2 || m.cfg.Outbounds[m.ruleChoice].ID != "warp" {
+				t.Fatal("in-flight refresh changed the editor revision or routing choice")
+			}
+			m.form = ""
+			next, _ = m.Update(loadedMsg{cfg: config.Config{Revision: 8, Outbounds: []config.Outbound{{ID: "direct"}}}})
+			if next.(model).cfg.Revision != 8 {
+				t.Fatal("refresh did not resume after closing the editor")
+			}
+		})
+	}
+}

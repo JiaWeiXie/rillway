@@ -40,7 +40,7 @@ func adaptiveDefaults(a config.Adaptive) config.Adaptive {
 	if a.ImprovementPercent <= 0 {
 		a.ImprovementPercent = 25
 	}
-	if a.ImprovementMillis <= 0 {
+	if a.ImprovementMillis < 0 {
 		a.ImprovementMillis = 50
 	}
 	if a.CooldownSeconds <= 0 {

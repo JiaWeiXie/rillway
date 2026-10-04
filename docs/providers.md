@@ -71,7 +71,8 @@ Rillway 內嵌 [tsnet](https://tailscale.com/docs/features/tsnet)，建立獨立
 - 其他公司網域必須設定 `dns`，而 resolver IP 本身必須能經過已生效的 tailnet／subnet route。查詢以 TCP port 53 在 tunnel 內進行；resolver 必須支援 TCP DNS。
 - 解析失敗不轉送公共 resolver。解析出的 IP 也必須符合目前 peer 或已核准的 subnet route，才呼叫 tsnet 建連。
 - 此版不支援 Tailscale exit node，不允許 Tailscale 當自適應公網出口；`public_internet: true` 會被拒絕。
-- 同一個 `state_dir` 不能同時由 daemon 與另一個測試／程序開啟。修改節點身分或重用既有 state 的設定時，先安排重新啟動。
+- 同一個 `state_dir` 不能同時由 daemon 與另一個測試／程序開啟。Rillway 在啟動節點前取得 `.rillway.lock` 排他鎖，持有到節點關閉；另一個 Rillway 程序會收到「狀態目錄已在使用中」的錯誤。程序結束後由系統釋放鎖，留下鎖檔是正常的，請勿在節點運行時刪除它。此鎖只協調 Rillway 程序，其他 tsnet 應用也應使用自己的目錄。修改節點身分或重用既有 state 的設定時，先安排重新啟動。
+- 「登出」或「斷線」後可按「登入」重新授權；成功開始登入流程後，Web UI 會顯示登入連結。若登入操作失敗，出口仍維持停止狀態。
 
 Mac 的 PAC bypass 公司網域／IP 時，流量走 Mac 原有 Tailscale，不會進入 Rillway 的觀察畫面。只有刻意把某條規則送往 Ubuntu 上的 `office` 出口時，才會使用上述獨立節點。
 

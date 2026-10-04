@@ -107,6 +107,45 @@ async function browser(initialLocale) {
   assert.doesNotMatch(b.get('outbound-list').innerHTML,/data-(?:delete|edit)-outbound="0"/);
   assert.match(b.get('outbound-list').innerHTML,/data-delete-outbound="1"/);
 
+  vm.runInContext(`
+    i18n.setLocale('zh-Hant');
+    renderPACList('domains',[{value:'company.example',enabled:true},{value:'<custom>',enabled:false}]);
+  `,b.context);
+  assert.match(b.get('pac-domains').innerHTML,/aria-label="讓 company\.example 略過 Proxy"/,'PAC switches must identify their destination');
+  assert.match(b.get('pac-domains').innerHTML,/aria-label="讓 &lt;custom&gt; 略過 Proxy"/,'destination names must be escaped in accessible labels');
+  vm.runInContext("i18n.setLocale('en');renderPACList('cidrs',[{value:'10.0.0.0/8',enabled:true}]);",b.context);
+  assert.match(b.get('pac-cidrs').innerHTML,/aria-label="Bypass 10\.0\.0\.0\/8"/);
+
+  vm.runInContext('cfg.outbounds[1].enabled=false;renderOutbounds()',b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-action="connect" data-id="warp" disabled/,'disabled outbounds must not offer an unavailable connect action');
+  assert.match(b.get('outbound-list').innerHTML,/data-license="warp" disabled/);
+  assert.match(b.get('outbound-list').innerHTML,/Use Edit to enable/);
+  vm.runInContext('cfg.outbounds[1].enabled=true;renderOutbounds()',b.context);
+
+  let restoredOutboundFocus=0;
+  const oldEdit={hasAttribute:key=>key==='data-edit-outbound',closest:()=>({dataset:{outboundId:'warp'}})};
+  const newEdit={disabled:false,focus(){restoredOutboundFocus++;}};
+  const newCard={dataset:{outboundId:'warp'},querySelectorAll:()=>[newEdit]};
+  b.document.activeElement=oldEdit;
+  b.get('outbound-list').querySelectorAll=()=>[newCard];
+  vm.runInContext('renderOutbounds()',b.context);
+  assert.equal(restoredOutboundFocus,1,'outbound status refresh must keep keyboard focus on the same outbound');
+  let restoredAuthFocus=0;
+  const oldAuth={hasAttribute:key=>key==='data-auth-outbound',closest:()=>({dataset:{outboundId:'tailnet'}})};
+  const newAuth={focus(){restoredAuthFocus++;}};
+  const authCard={dataset:{outboundId:'tailnet'},querySelectorAll:selector=>selector==='[data-auth-outbound]'?[newAuth]:[]};
+  b.document.activeElement=oldAuth;
+  b.get('outbound-list').querySelectorAll=()=>[authCard];
+  vm.runInContext(`cfg.outbounds.push({id:'tailnet',type:'tailscale',enabled:true});statuses.push({id:'tailnet',auth_url:'https://login.tailscale.com/a/example'});renderOutbounds()`,b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-auth-outbound="tailnet" href="https:\/\/login\.tailscale\.com\/a\/example"/);
+  assert.equal(restoredAuthFocus,1,'outbound status refresh must keep keyboard focus on the sign-in link');
+  vm.runInContext('cfg.outbounds.pop();statuses.pop()',b.context);
+  b.document.activeElement=null;
+  vm.runInContext("pendingOutboundActions.add('warp/connect');renderOutbounds();",b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-action="connect" data-id="warp" disabled/,'status refresh must not re-enable a pending action');
+  vm.runInContext("pendingOutboundActions.delete('warp/connect');renderOutbounds();",b.context);
+  assert.match(b.get('outbound-list').innerHTML,/data-action="connect" data-id="warp">/);
+
   const grouped=JSON.parse(vm.runInContext(`JSON.stringify(groupFlows([
     {index:0,f:{id:10,host:'github.com',port:'443',outbound:'warp-plus',rule:'rule-ghcr',download_bytes:1024,download_bytes_per_second:100,closed:false}},
     {index:1,f:{id:11,host:'github.com',port:'80',outbound:'direct',rule:'default',upload_bytes:512,upload_bytes_per_second:20,closed:true}},

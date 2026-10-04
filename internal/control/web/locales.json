@@ -536,7 +536,12 @@
     "The suggested file is on the Rillway server. Replace it with your existing WireGuard file, then enable this outbound. No keys are generated.": "The suggested file is on the Rillway server. Replace it with your existing WireGuard file, then enable this outbound. No keys are generated.",
     "The node name and private state folder are filled in. Enable this outbound, save, then use its sign-in link. Public Internet access stays off.": "The node name and private state folder are filled in. Enable this outbound, save, then use its sign-in link. Public Internet access stays off.",
     "Direct uses the server network. The built-in direct already exists; you usually do not need another.": "Direct uses the server network. The built-in direct already exists; you usually do not need another.",
-    "The suggested site is github.com. Replace it with the website you want to route; leave IP ranges blank unless you need them.": "The suggested site is github.com. Replace it with the website you want to route; leave IP ranges blank unless you need them."
+    "The suggested site is github.com. Replace it with the website you want to route; leave IP ranges blank unless you need them.": "The suggested site is github.com. Replace it with the website you want to route; leave IP ranges blank unless you need them.",
+    "Bypass {destination}": "Bypass {destination}",
+    "Use Edit to enable this outbound before connecting.": "Use Edit to enable this outbound before connecting.",
+    "The Tailscale state lock must be a private regular file.": "The Tailscale state lock must be a private regular file.",
+    "The Tailscale state directory is already in use by another Rillway process. Use a separate state directory.": "The Tailscale state directory is already in use by another Rillway process. Use a separate state directory.",
+    "Could not lock the Tailscale state directory.": "Could not lock the Tailscale state directory."
   },
   "zh-Hant": {
     " (disabled)": "（停用）",
@@ -1075,6 +1080,11 @@
     "The suggested file is on the Rillway server. Replace it with your existing WireGuard file, then enable this outbound. No keys are generated.": "這個檔案路徑指的是 Rillway 伺服器。請改成你已有的 WireGuard 設定檔，再啟用出口；這裡不會產生金鑰。",
     "The node name and private state folder are filled in. Enable this outbound, save, then use its sign-in link. Public Internet access stays off.": "節點名稱與私有狀態資料夾已填好。啟用並儲存後，使用出口卡片上的連結登入；公開網際網路功能維持關閉。",
     "Direct uses the server network. The built-in direct already exists; you usually do not need another.": "Direct 使用伺服器的網路。系統已有內建 direct，通常不需要再新增。",
-    "The suggested site is github.com. Replace it with the website you want to route; leave IP ranges blank unless you need them.": "先填入 github.com 作為範例，請改成你要分流的網站。沒有特定需求時，IP 範圍可留白。"
+    "The suggested site is github.com. Replace it with the website you want to route; leave IP ranges blank unless you need them.": "先填入 github.com 作為範例，請改成你要分流的網站。沒有特定需求時，IP 範圍可留白。",
+    "Bypass {destination}": "讓 {destination} 略過 Proxy",
+    "Use Edit to enable this outbound before connecting.": "請先按「編輯」啟用這個出口，再執行連線。",
+    "The Tailscale state lock must be a private regular file.": "Tailscale 狀態鎖必須是只有擁有者可存取的一般檔案。",
+    "The Tailscale state directory is already in use by another Rillway process. Use a separate state directory.": "另一個 Rillway 程序正在使用這個 Tailscale 狀態資料夾，請改用獨立的資料夾。",
+    "Could not lock the Tailscale state directory.": "無法鎖定 Tailscale 狀態資料夾。"
   }
 }

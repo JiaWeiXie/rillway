@@ -3,11 +3,14 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"The Tailscale state lock must be a private regular file.":                                                                             "Tailscale 狀態鎖必須是只有擁有者可存取的一般檔案。",
+	"The Tailscale state directory is already in use by another Rillway process. Use a separate state directory.":                          "另一個 Rillway 程序正在使用這個 Tailscale 狀態資料夾，請改用獨立的資料夾。",
+	"Could not lock the Tailscale state directory.":                                                                                        "無法鎖定 Tailscale 狀態資料夾。",
 	"Rillway is already installed or has retained files. Back up the existing installation and update its binary instead of reinstalling.": "Rillway 已安裝或有保留檔案。請備份現有安裝並更新執行檔，勿重新安裝。",
 	"service listener %s must use a literal IP and a port between 1024 and 65535":                                                          "服務監聽位址 %s 必須使用 IP 位址及介於 1024 與 65535 的連接埠",
-	"listener %s is unavailable: %w":                                        "監聽位址 %s 無法使用：%w",
-	"Service removed; account, /etc/rillway and /var/lib/rillway retained.": "服務已移除；保留帳號、/etc/rillway 與 /var/lib/rillway。",
-	"LaunchAgent removed; configuration and state retained.":                "LaunchAgent 已移除；保留設定與狀態。",
+	"listener %s is unavailable: %w":                                                                                                       "監聽位址 %s 無法使用：%w",
+	"Service removed; account, /etc/rillway and /var/lib/rillway retained.":                                                                "服務已移除；保留帳號、/etc/rillway 與 /var/lib/rillway。",
+	"LaunchAgent removed; configuration and state retained.":                                                                               "LaunchAgent 已移除；保留設定與狀態。",
 
 	"The built-in direct outbound must remain enabled with type direct and Internet access.":                    "內建 direct 出口必須保持啟用、類型為 direct 並具有網際網路存取能力。",
 	"The built-in direct outbound cannot be deleted.":                                                           "內建 direct 出口不可刪除。",

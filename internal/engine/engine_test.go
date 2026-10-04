@@ -356,3 +356,24 @@ func FuzzRuleHostname(f *testing.F) {
 		_ = privateHost(host, config.PAC{})
 	})
 }
+
+func TestAdaptiveHonorsZeroAbsoluteImprovement(t *testing.T) {
+	e, now := testEngine()
+	e.cfg.Adaptive = config.Default(t.TempDir()).Adaptive
+	e.cfg.Adaptive.ImprovementMillis = 0
+	d := e.destinationLocked("zero", "public.example:443", "tcp", route{outbound: "direct", candidates: []string{"direct", "warp"}})
+	d.switched = now.Add(-11 * time.Minute)
+	for range 3 {
+		e.recordLocked(d, "direct", 40*time.Millisecond, nil)
+	}
+	for range 3 {
+		e.recordLocked(d, "warp", 20*time.Millisecond, nil)
+	}
+	if d.current != "direct" {
+		t.Fatal("switched without two rounds")
+	}
+	e.recordLocked(d, "warp", 20*time.Millisecond, nil)
+	if d.current != "warp" {
+		t.Fatal("configured zero millisecond threshold was replaced by the default")
+	}
+}

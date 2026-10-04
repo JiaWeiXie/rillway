@@ -423,3 +423,52 @@ func TestInheritedLiveAndRaceOptionsAreRemoved(t *testing.T) {
 		t.Fatal("module writes must be disabled and GOPATH must match mise")
 	}
 }
+
+func TestTreeHashIncludesLargeEmbeddedFonts(t *testing.T) {
+	c, _ := fixture(t)
+	putFile(t, c.root, "internal/control/web/fonts/test.ttf", "font")
+	font, err := os.OpenFile(filepath.Join(c.root, "internal/control/web/fonts/test.ttf"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = font.Close() }()
+	if err := font.Truncate(maxSource + 1); err != nil {
+		t.Fatal(err)
+	}
+	before, err := c.treeHash(context.Background(), []string{"internal/control/web/app.js"})
+	if err != nil {
+		t.Fatalf("bundled font blocked unrelated edits: %v", err)
+	}
+	if _, err := font.WriteAt([]byte("new font"), 0); err != nil {
+		t.Fatal(err)
+	}
+	after, err := c.treeHash(context.Background(), []string{"internal/control/web/app.js"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("font changes did not invalidate the cached check")
+	}
+	if err := font.Truncate(maxAsset + 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.treeHash(context.Background(), nil); err == nil {
+		t.Fatal("unbounded font accepted")
+	}
+}
+
+func TestTreeHashStillBoundsSourceFiles(t *testing.T) {
+	c, _ := fixture(t)
+	putFile(t, c.root, "internal/control/web/app.js", "source")
+	f, err := os.OpenFile(filepath.Join(c.root, "internal/control/web/app.js"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Truncate(maxSource + 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.treeHash(context.Background(), nil); err == nil {
+		t.Fatal("source file exceeded its size limit")
+	}
+}

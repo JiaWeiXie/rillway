@@ -33,6 +33,7 @@ const pacPresetNotes = {
   'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
 };
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
+const pendingOutboundActions = new Set();
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
@@ -103,7 +104,7 @@ function renderPACList(kind, entries) {
   const container = $(`pac-${kind}`), valueLabel = kind === 'domains' ? 'Domain or suffix' : 'IP address range (CIDR)';
   container.innerHTML = entries.map((raw,index) => {
     const entry = normalizePACEntry(raw), presetSource = pacPresetNotes[entry.preset] || '';
-    return `<article class="pac-entry${entry.enabled ? '' : ' disabled'}" data-pac-index="${index}" data-preset="${esc(entry.preset)}" data-preset-value="${esc(entry.value)}"><div class="pac-entry-top"><label class="toggle-control"><input type="checkbox" role="switch" data-pac-enabled${entry.enabled ? ' checked' : ''}><span class="toggle-track" aria-hidden="true"></span><span class="pac-toggle-state">${et(entry.enabled ? 'Enabled' : 'Disabled')}</span></label><button type="button" class="pac-remove" data-remove-pac aria-label="${et('Remove bypass entry')}">${et('Remove')}</button></div><div class="pac-entry-fields"><label><span>${et(valueLabel)}</span><input data-pac-value value="${esc(entry.value)}" required spellcheck="false" placeholder="${esc(kind === 'domains' ? 'company.example' : '10.0.0.0/8')}"></label><label><span>${et('Note (optional)')}</span><input data-pac-note value="${esc(entry.note)}" maxlength="500" placeholder="${et('Add a note for people managing this setting')}"></label></div>${presetSource ? `<p class="pac-preset-note" data-preset-note="${esc(entry.preset)}"><strong>${et('Built-in note:')}</strong> <span>${et(presetSource)}</span></p>` : ''}</article>`;
+    return `<article class="pac-entry${entry.enabled ? '' : ' disabled'}" data-pac-index="${index}" data-preset="${esc(entry.preset)}" data-preset-value="${esc(entry.value)}"><div class="pac-entry-top"><label class="toggle-control"><input type="checkbox" role="switch" aria-label="${et('Bypass {destination}',{destination:entry.value})}" data-pac-enabled${entry.enabled ? ' checked' : ''}><span class="toggle-track" aria-hidden="true"></span><span class="pac-toggle-state">${et(entry.enabled ? 'Enabled' : 'Disabled')}</span></label><button type="button" class="pac-remove" data-remove-pac aria-label="${et('Remove bypass entry')}">${et('Remove')}</button></div><div class="pac-entry-fields"><label><span>${et(valueLabel)}</span><input data-pac-value value="${esc(entry.value)}" required spellcheck="false" placeholder="${esc(kind === 'domains' ? 'company.example' : '10.0.0.0/8')}"></label><label><span>${et('Note (optional)')}</span><input data-pac-note value="${esc(entry.note)}" maxlength="500" placeholder="${et('Add a note for people managing this setting')}"></label></div>${presetSource ? `<p class="pac-preset-note" data-preset-note="${esc(entry.preset)}"><strong>${et('Built-in note:')}</strong> <span>${et(presetSource)}</span></p>` : ''}</article>`;
   }).join('') || `<div class="pac-list-empty">${et(kind === 'domains' ? 'No domain bypasses. Add one if a local service must stay off the Proxy.' : 'No IP range bypasses. Add one if a private network must stay off the Proxy.')}</div>`;
 }
 function serializePACList(kind) {
@@ -132,6 +133,7 @@ function translatePACRows() {
   }
   for(const row of document.querySelectorAll('.pac-entry')) {
     const input = row.querySelector('[data-pac-enabled]');
+    input.setAttribute('aria-label',t('Bypass {destination}',{destination:row.querySelector('[data-pac-value]').value}));
     row.querySelector('.pac-toggle-state').textContent = t(input.checked ? 'Enabled' : 'Disabled');
     const note = row.querySelector('[data-preset-note]');
     if(note) {
@@ -233,7 +235,7 @@ function renderFlows() {
     const route = groupRouteSummary(group);
     const outbound = route.outboundCount > 1 ? t('Multiple outbounds') : route.outbound || t('Unspecified');
     const rule = route.routeCount > 1 ? t('{count} routing paths',{count:route.routeCount}) : route.rule || t('Default rule');
-    return `<details class="flow-group" data-group-key="${esc(key)}"${open ? ' open' : ''}><summary><span class="flow-chevron" aria-hidden="true">›</span><span class="flow-destination"><strong>${esc(group.destination)}</strong><small>${et('{count} connections · {active} active',{count:group.connections.length,active:group.active})}</small></span><span class="flow-route"><span class="badge">${esc(outbound)}</span><small>${esc(rule)}</small></span><span class="flow-metric"><small>${et('Download')}</small><strong>${rate(group.downloadRate)}</strong></span><span class="flow-metric"><small>${et('Upload')}</small><strong>${rate(group.uploadRate)}</strong></span><span class="flow-metric"><small>${et('Transferred')}</small><strong>${bytes(group.transferred)}</strong></span><button type="button" class="table-action flow-action" data-group-action="true" data-flow="${route.index}" data-flow-id="${esc(String(route.flow.id ?? route.index))}">${et('Set outbound')}</button></summary><div class="flow-table"><table><thead><tr><th>${et('Connection')}</th><th>${et('Outbound / rule')}</th><th class="numeric">${et('Download')}</th><th class="numeric">${et('Upload')}</th><th class="numeric">${et('Transferred')}</th><th class="numeric">${et('Connect time')}</th><th>${et('Status')}</th></tr></thead><tbody>${group.connections.sort((a,b) => Number(flowActive(b.f))-Number(flowActive(a.f))).map(flowRow).join('')}</tbody></table></div></details>`;
+    return `<details class="flow-group" data-group-key="${esc(key)}"${open ? ' open' : ''}><summary><span class="flow-chevron" aria-hidden="true">›</span><span class="flow-destination"><strong>${esc(group.destination)}</strong><small>${et('{count} connections · {active} active',{count:group.connections.length,active:group.active})}</small></span><span class="flow-route"><span class="badge">${esc(outbound)}</span><small>${esc(rule)}</small></span><span class="flow-metric"><small>${et('Download')}</small><strong>${rate(group.downloadRate)}</strong></span><span class="flow-metric"><small>${et('Upload')}</small><strong>${rate(group.uploadRate)}</strong></span><span class="flow-metric flow-total"><small>${et('Transferred')}</small><strong>${bytes(group.transferred)}</strong></span><button type="button" class="table-action flow-action" data-group-action="true" data-flow="${route.index}" data-flow-id="${esc(String(route.flow.id ?? route.index))}">${et('Set outbound')}</button></summary><div class="flow-table"><table><thead><tr><th>${et('Connection')}</th><th>${et('Outbound / rule')}</th><th class="numeric">${et('Download')}</th><th class="numeric">${et('Upload')}</th><th class="numeric">${et('Transferred')}</th><th class="numeric">${et('Connect time')}</th><th>${et('Status')}</th></tr></thead><tbody>${group.connections.sort((a,b) => Number(flowActive(b.f))-Number(flowActive(a.f))).map(flowRow).join('')}</tbody></table></div></details>`;
   }).join('');
   if(focusGroup) {
     const group = [...container.querySelectorAll('.flow-group')].find(node => node.dataset.groupKey === focusGroup);
@@ -254,13 +256,23 @@ function renderRules() {
 }
 function renderOutbounds() {
   if(!cfg) return;
+  const focused = document.activeElement;
+  const focusedID = focused?.closest?.('[data-outbound-id]')?.dataset.outboundId;
+  const focusAttribute = ['data-action','data-license','data-edit-outbound','data-delete-outbound','data-auth-outbound'].find(key => focused?.hasAttribute?.(key));
+  const focusValue = focusAttribute === 'data-action' ? focused.getAttribute(focusAttribute) : '';
+
   $('outbound-list').innerHTML = cfg.outbounds.map((o,index) => {
     const s = statuses.find(s => s.id === o.id) || {};
     const good = ['ready','connected','running'].includes(stateKey(s.state)), bad = ['error','unavailable','unsupported_account','unsupported_client'].includes(stateKey(s.state));
     const authURL = typeof s.auth_url === 'string' && /^https:\/\//i.test(s.auth_url) ? s.auth_url : '';
     const actionButtons = o.type === 'warp' ? [['connect','Connect'],['disconnect','Disconnect'],['register','Register'],['verify','Verify outbound']] : ['tailscale','tsnet'].includes(o.type) ? [['connect','Connect'],['disconnect','Disconnect'],['login','Sign in'],['logout','Sign out']] : o.type === 'wireguard' ? [['connect','Connect'],['disconnect','Disconnect']] : [];
-    return `<article class="outbound-card"><div><div class="outbound-heading"><h3>${esc(o.id)}</h3><span class="badge${good ? ' good' : bad ? ' bad' : ' warn'}">${esc(o.enabled ? stateName(s.state) : t('Disabled'))}</span></div><p class="detail">${esc(s.detail_source ? t(s.detail_source) : s.detail || typeName(o.type))}</p><div class="outbound-meta"><span>${esc(typeName(o.type))}</span><span>${et(o.public_internet ? 'Internet access' : 'Fixed / private outbound')}</span>${s.account ? `<span>${et('Account: {value}',{value:s.account})}</span>` : ''}${s.version ? `<span>${et('Version {value}',{value:s.version})}</span>` : ''}${s.mode ? `<span>${et('Mode {value}',{value:s.mode})}</span>` : ''}${o.type === 'warp' ? `<span>${et('Proxy listener: {state}',{state:t(s.listener ? 'Listening' : 'Not ready')})}</span>` : ''}${s.verified_at && !s.verified_at.startsWith('0001-') ? `<span>${et('Last verified {date}',{date:i18n.date(s.verified_at)})}</span>` : ''}</div>${authURL ? `<p class="hint"><a href="${esc(authURL)}" target="_blank" rel="noopener noreferrer">${et('Open Tailscale sign-in')}</a></p>` : ''}</div><div class="outbound-actions">${actionButtons.map(([action,label]) => `<button class="quiet" data-action="${action}" data-id="${esc(o.id)}"${action === 'register' && s.account ? ' disabled' : ''}>${et(action === 'register' && s.account ? 'Registered' : label)}</button>`).join('')}${o.type === 'warp' ? `<button class="quiet" data-license="${esc(o.id)}">${et('WARP+ license')}</button>` : ''}${o.id === 'direct' ? `<span class="hint">${et('Built-in outbound; cannot be deleted')}</span>` : `<button class="quiet" data-edit-outbound="${index}">${et('Edit')}</button><button class="danger" data-delete-outbound="${index}">${et('Delete')}</button>`}</div></article>`;
+    return `<article class="outbound-card" data-outbound-id="${esc(o.id)}"><div><div class="outbound-heading"><h3>${esc(o.id)}</h3><span class="badge${good ? ' good' : bad ? ' bad' : ' warn'}">${esc(o.enabled ? stateName(s.state) : t('Disabled'))}</span></div><p class="detail">${esc(s.detail_source ? t(s.detail_source) : s.detail || typeName(o.type))}</p><div class="outbound-meta"><span>${esc(typeName(o.type))}</span><span>${et(o.public_internet ? 'Internet access' : 'Fixed / private outbound')}</span>${s.account ? `<span>${et('Account: {value}',{value:s.account})}</span>` : ''}${s.version ? `<span>${et('Version {value}',{value:s.version})}</span>` : ''}${s.mode ? `<span>${et('Mode {value}',{value:s.mode})}</span>` : ''}${o.type === 'warp' ? `<span>${et('Proxy listener: {state}',{state:t(s.listener ? 'Listening' : 'Not ready')})}</span>` : ''}${s.verified_at && !s.verified_at.startsWith('0001-') ? `<span>${et('Last verified {date}',{date:i18n.date(s.verified_at)})}</span>` : ''}</div>${!o.enabled ? `<p class="hint">${et('Use Edit to enable this outbound before connecting.')}</p>` : ''}${authURL ? `<p class="hint"><a data-auth-outbound="${esc(o.id)}" href="${esc(authURL)}" target="_blank" rel="noopener noreferrer">${et('Open Tailscale sign-in')}</a></p>` : ''}</div><div class="outbound-actions">${actionButtons.map(([action,label]) => `<button class="quiet" data-action="${action}" data-id="${esc(o.id)}"${!o.enabled || action === 'register' && s.account || pendingOutboundActions.has(`${o.id}/${action}`) ? ' disabled' : ''}>${et(action === 'register' && s.account ? 'Registered' : label)}</button>`).join('')}${o.type === 'warp' ? `<button class="quiet" data-license="${esc(o.id)}"${o.enabled ? '' : ' disabled'}>${et('WARP+ license')}</button>` : ''}${o.id === 'direct' ? `<span class="hint">${et('Built-in outbound; cannot be deleted')}</span>` : `<button class="quiet" data-edit-outbound="${index}">${et('Edit')}</button><button class="danger" data-delete-outbound="${index}">${et('Delete')}</button>`}</div></article>`;
   }).join('') || `<div class="empty"><h3>${et('Add your first outbound')}</h3><p>${et('Start with Direct, then add WARP or WireGuard.')}</p></div>`;
+  if(focusedID && focusAttribute) {
+    const card = [...$('outbound-list').querySelectorAll('[data-outbound-id]')].find(node => node.dataset.outboundId === focusedID);
+    const target = [...(card?.querySelectorAll(`[${focusAttribute}]`) || [])].find(node => focusAttribute !== 'data-action' || node.getAttribute(focusAttribute) === focusValue);
+    if(target && !target.disabled) target.focus({preventScroll:true});
+  }
 }
 
 async function loadDocker() {
@@ -456,7 +468,7 @@ $('add-rule').addEventListener('click',() => openRule());
 $('add-pac-domain').addEventListener('click',() => addPACEntry('domains'));
 $('add-pac-cidr').addEventListener('click',() => addPACEntry('cidrs'));
 for(const kind of ['domains','cidrs']) {
-  $(`pac-${kind}`).addEventListener('change',e => { if(e.target.matches('[data-pac-enabled]')) updatePACSwitch(e.target); });
+  $(`pac-${kind}`).addEventListener('change',e => { if(e.target.matches('[data-pac-enabled]')) updatePACSwitch(e.target); if(e.target.matches('[data-pac-value]')) { const row = e.target.closest('.pac-entry'); row.querySelector('[data-pac-enabled]').setAttribute('aria-label',t('Bypass {destination}',{destination:e.target.value})); } });
   $(`pac-${kind}`).addEventListener('click',e => {
     const remove = e.target.closest('[data-remove-pac]');
     if(remove) remove.closest('.pac-entry').remove();
@@ -499,7 +511,13 @@ $('outbound-list').addEventListener('click',async e => {
   const del = e.target.closest('[data-delete-outbound]');
   if(del) { openDeleteOutbound(Number(del.dataset.deleteOutbound)); return; }
   const action = e.target.closest('[data-action]'); if(!action) return;
-  action.disabled = true; try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); } catch(error) { notice(error,true); } finally { action.disabled = false; }
+  const key = `${action.dataset.id}/${action.dataset.action}`;
+  if(pendingOutboundActions.has(key)) return;
+  pendingOutboundActions.add(key);
+  action.disabled = true;
+  try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); }
+  catch(error) { notice(error,true); }
+  finally { pendingOutboundActions.delete(key); renderOutbounds(); }
 });
 $('delete-outbound-dialog').addEventListener('close',() => { deletingOutbound = null; });
 $('delete-outbound-form').addEventListener('submit',async e => {

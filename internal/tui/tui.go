@@ -171,10 +171,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
+		// A refresh already in flight must not replace the revision or outbound
+		// choices behind an open editor. Its save must retain conflict protection.
+		if m.form == "rule" || m.form == "outbound" {
+			return m, nil
+		}
 		m.err = msg.err
 		if msg.err == nil {
+			var selectedFlow uint64
+			var selectedOutbound string
+			if m.page == 0 && m.selected < len(m.flows) {
+				selectedFlow = m.flows[m.selected].ID
+			}
+			if m.page == 1 && m.selected < len(m.cfg.Outbounds) {
+				selectedOutbound = m.cfg.Outbounds[m.selected].ID
+			}
 			m.cfg = msg.cfg
 			m.flows = msg.snapshot.Flows
+			if selectedFlow != 0 {
+				for i, f := range m.flows {
+					if f.ID == selectedFlow {
+						m.selected = i
+						break
+					}
+				}
+			}
+			if selectedOutbound != "" {
+				for i, o := range m.cfg.Outbounds {
+					if o.ID == selectedOutbound {
+						m.selected = i
+						break
+					}
+				}
+			}
 			m.ready = true
 			if m.rememberPending && m.remember != nil {
 				m.rememberPending = false
