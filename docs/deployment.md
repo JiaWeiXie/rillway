@@ -1,5 +1,7 @@
 # Ubuntu VM 與 Mac 部署
 
+此專案的指定主機是 `operator@192.0.2.21`，SSH 與 VM 環境已完成唯讀確認，尚未部署。實際資訊與金鑰參照見 [NAS Ubuntu 部署目標](deployment-target.md)；下列 `192.0.2.20`／`.30` 為操作範例。
+
 ## NAS VM 配額
 
 個人使用起始配置：**Ubuntu Server 26.04 LTS、2 vCPU、4 GB RAM、32 GB 磁碟、1 張橋接虛擬網卡**。若也在 VM 編譯與跑 race，建議 8 GB／64 GB。這是工程起始配額，未宣稱已在你的 NAS 上量測吞吐；需依 CPU 與同時連線數調整。
