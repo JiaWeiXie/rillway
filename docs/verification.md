@@ -204,3 +204,13 @@ Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/Ji
 - Apple Silicon 主機及共用核心、核心網路 offload、CPU 時間配額與 TBF 都無法重現路由器 SoC。更高 CPU 配額未保證更高速度／更低記憶體；這些單輪數字不構成 CPU scaling 或實體路由器速度結論。流量產生與目的端共用同一測試 peer，也不等同三台獨立實體機器。
 - 測試後兩台機器還原原本兩核心／4 GiB，移除臨時 CPUAffinity 與 TBF，恢復 Docker／containerd、停止合成目的端。真實設定、帳號、Token、憑證與測試金鑰未進入 Git；原始結果留在忽略的私有目錄。
 - 本輪 `mise run check` 通過：Lint 零問題、所有套件的 race／shuffle／coverage 測試通過，包含新增壓測工具。新增工具與文件的 Gitleaks 目錄掃描未發現秘密，私人 denylist 的追蹤來源與 437 個可達歷史 blob／metadata 審查通過。還原後 WireGuard、Tailscale 實際小量請求及 WARP Connected／healthy 狀態正常；壓測階段未推送、發布或更新正式 VM。
+
+## 2026-10-05：相依更新 PR 與每月彙整
+
+- 核對五個 Dependabot PR 的上游 tag 與完整 action SHA，包括來源證明 action 內部固定的 `actions/attest` SHA；合併保留原始 PR commits。
+- 修正 mise-action 新 SHA 尚未加入 GitHub Actions 允許清單造成的 CI 啟動失敗，只加入已核對的 SHA，沒有放寬成 wildcard。
+- 產物上傳明確保留 archive 模式，下載明確解壓縮並在 digest 不符時失敗；發布工作仍不執行 repository 程式碼。
+- `mise run check` 通過：Lint 0 issues、完整 race／shuffle／coverage，以及五項每月報表測試。測試涵蓋 Go JSON 串流、替換模組略過、Actions 去重與 annotated tag、上游資料跳脫、只更新 bot 自己的 issue，以及無效產物拒絕發布。
+- `mise run security` 通過：私人 denylist／可達 Git 歷史／秘密掃描與 workflow 檢查未命中；四平台 Go 檢查仍只有未匯入 package 的既有 module 層級警告。
+- 實際執行唯讀報表收集，可列出 Go 與 Actions 更新。設定改為每月 1 日台灣時間 09:17 更新同一個 bot issue，停用版本及安全修補 PR；REST 回讀確認自動安全修補關閉，漏洞警示仍啟用。
+- 本輪不更動正式 VM、VPN 或網路設定。Hosted CI、每月 issue 與發布結果以對應的公開 Actions／Release 紀錄為準。

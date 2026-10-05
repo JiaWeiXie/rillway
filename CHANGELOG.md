@@ -2,6 +2,16 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## 0.2.1 - 2026-10-05
+
+### Maintenance
+
+- **deps:** bump actions/download-artifact from 4.3.0 to 8.0.1
+- **deps:** bump actions/checkout from 6.1.0 to 7.0.1
+- **deps:** bump jdx/mise-action from 3.6.3 to 5.0.1
+- **deps:** bump actions/upload-artifact from 4.6.2 to 7.0.1
+- **deps:** bump actions/attest-build-provenance from 3.0.0 to 4.2.2
+- **ci:** merge reviewed action updates and report dependencies monthly
 ## 0.2.0 - 2026-10-05
 
 ### Features
