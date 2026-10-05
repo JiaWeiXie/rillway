@@ -44,6 +44,15 @@ mise run fuzz
 - 人工查看目前追蹤的四張 Web UI 截圖：只顯示本機合成流量、沒有 Token、私人主機位址或姓名。文字掃描不代表已自動驗證圖片內的所有內容。
 - 本輪尚未建立 GitHub remote／repository、執行 hosted CI、產生 GitHub attestation、公開 Release 或啟用 repository 保護；相關流程已準備，實際設定與驗收仍待指定 repository 後完成。沒有部署本輪認證限速修改到正式 VM。
 
+## 2026-10-05：公開 GitHub repository 設定
+
+- 公開 repository 為 [JiaWeiXie/rillway](https://github.com/JiaWeiXie/rillway)，已設定專案介紹、topics、雙語 README 的 CI／Release／MIT badge、下載連結與公開 CODEOWNERS。
+- REST API 回讀確認 secret scanning、push protection、Dependabot security updates 及私下漏洞回報啟用。沒有加入 VM／VPN repository secrets。
+- `main` ruleset 要求 PR／CODEOWNERS 審查、已解決的對話及五項 GitHub Actions CI 檢查，禁止一般使用者刪除／force push；指定公開維護者保留有紀錄的 bypass。
+- `v*` tags 限定指定維護者建立、更新及刪除。`release` environment 要求指定維護者核准，且只接受 `v*` tags。
+- Actions 預設唯讀、禁止核准 PR，所有外部貢獻者需執行核准；僅允許 GitHub Actions 與指定 SHA 的 mise-action，並要求 action 使用完整 commit SHA。
+- 這一節只記錄設定驗證；首次 hosted CI 與正式 Release 的結果另由公開 workflow／Release 記錄確認。
+
 ## 已覆蓋的行為
 
 - 分流規則優先序、網域邊界、CIDR、雙棧、私網保護與出口 DNS 隔離。
