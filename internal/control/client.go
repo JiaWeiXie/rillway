@@ -24,6 +24,18 @@ type Client struct {
 	token string
 	http  *http.Client
 }
+
+// Info describes the daemon, which may differ from the management client's binary.
+type Info struct {
+	Version string `json:"version"`
+}
+
+func (c *Client) Info(ctx context.Context) (Info, error) {
+	var info Info
+	err := c.request(ctx, http.MethodGet, "/api/v1/info", nil, &info)
+	return info, err
+}
+
 type APIError struct {
 	Status  int
 	Message string

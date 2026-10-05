@@ -221,3 +221,11 @@ Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/Ji
 - `mise run security` 通過：私人 denylist／可達 Git 歷史／秘密掃描與 workflow 檢查未命中；四平台 Go 檢查仍只有未匯入 package 的既有 module 層級警告。
 - 實際執行唯讀報表收集，可列出 Go 與 Actions 更新。設定改為每月 1 日台灣時間 09:17 更新同一個 bot issue，停用版本及安全修補 PR；REST 回讀確認自動安全修補關閉，漏洞警示仍啟用。
 - 本輪不更動正式 VM、VPN 或網路設定。Hosted CI、每月 issue 與發布結果以對應的公開 Actions／Release 紀錄為準。
+
+## 2026-10-05：程式版本與設定修訂號顯示
+
+- 新增需要 Bearer 驗證的 `GET /api/v1/info`，只回傳 daemon 的程式版本。Web UI／TUI 使用伺服器版本；舊服務回傳 404 時明確顯示版本資訊未提供，其他認證或服務錯誤不當作舊版略過。
+- Web UI 將設定修訂號及生效時間移至預設收合的「進階資訊」；TUI 服務設定頁按 `x` 顯示／隱藏修訂號，離開該頁會收起。設定 revision、原子更新及衝突檢查保持原有行為。
+- `mise run check` 通過，涵蓋 Lint、race／shuffle／coverage、雙語文字、API 權限、遠端版本及舊服務相容性；發布腳本測試確認四平台都注入共用版本欄位。使用實際 linker 注入的開發版 binary 啟動隔離的本機 daemon，CLI 與 Web UI 顯示相同版本。
+- Browser plugin 未提供，改用既有 Playwright／Chromium。桌面 1440×960、手機 390×844 的英文及繁體中文畫面皆正常載入、沒有水平溢出或非預期 JavaScript／console 錯誤；實際展開／收合進階資訊，確認修訂號只在展開時可見。另模擬舊服務的 404，確認仍可登入且顯示版本未提供。
+- 瀏覽器僅對隔離的本機自簽憑證測試環境放寬憑證檢查，產品 TLS 驗證未變更。本輪未發布新版本或變更正式 VM、VPN、網路設定；測試程序與臨時憑證已清除。

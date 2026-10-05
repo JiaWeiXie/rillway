@@ -52,6 +52,7 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 
 | 方法與路徑 | 行為 |
 |---|---|
+| GET `/api/v1/info` | 已驗證身分後取得 daemon 的程式版本；與設定 revision 各自獨立 |
 | GET `/api/v1/config` | 目前生效設定與 revision，秘密為檔案參照 |
 | PUT `/api/v1/config` | 完整設定，revision 必須與目前一致，成功後遞增 |
 | GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at |

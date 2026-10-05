@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"rillway/internal/authguard"
+	"rillway/internal/buildinfo"
 	"rillway/internal/config"
 	"rillway/internal/dockerproxy"
 	"rillway/internal/i18n"
@@ -45,6 +46,9 @@ type handler struct {
 func New(backend Backend, adminToken string) http.Handler {
 	h := &handler{backend: backend, token: adminToken, authFailures: authguard.New()}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/info", h.protect(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, Info{Version: buildinfo.Version})
+	}))
 	mux.HandleFunc("GET /api/v1/config", h.protect(h.getConfig))
 	mux.HandleFunc("GET /api/v1/defaults", h.protect(func(w http.ResponseWriter, _ *http.Request) {
 		defaults := config.DefaultsForForms(h.backend.Config())

@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os/exec"
@@ -59,6 +60,7 @@ type (
 	snapshot  = engine.Snapshot
 	loadedMsg struct {
 		cfg        config.Config
+		info       control.Info
 		snapshot   snapshot
 		err        error
 		generation uint64
@@ -82,6 +84,8 @@ type model struct {
 	connection      ConnectionSettings
 	managementToken string
 	tokenVisible    bool
+	advancedVisible bool
+	serverInfo      control.Info
 	localBaseURL    string
 	remember        func(ConnectionSettings) error
 	rememberPending bool
@@ -137,7 +141,15 @@ func (m model) load() tea.Cmd {
 		}
 		var snap snapshot
 		err = json.Unmarshal(raw, &snap)
-		return loadedMsg{cfg: cfg, snapshot: snap, err: err, generation: m.generation}
+		if err != nil {
+			return loadedMsg{err: err, generation: m.generation}
+		}
+		info, err := m.client.Info(m.ctx)
+		var apiError *control.APIError
+		if errors.As(err, &apiError) && apiError.Status == 404 {
+			info, err = control.Info{}, nil // Older daemons do not expose a version.
+		}
+		return loadedMsg{cfg: cfg, info: info, snapshot: snap, err: err, generation: m.generation}
 	}
 }
 
@@ -187,6 +199,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selectedOutbound = m.cfg.Outbounds[m.selected].ID
 			}
 			m.cfg = msg.cfg
+			m.serverInfo = msg.info
 			m.flows = msg.snapshot.Flows
 			if selectedFlow != 0 {
 				for i, f := range m.flows {
@@ -283,10 +296,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.page = (m.page + 1) % 3
 			m.selected = 0
 			m.tokenVisible = false
+			m.advancedVisible = false
 		case "shift+tab", "left":
 			m.page = (m.page + 2) % 3
 			m.selected = 0
 			m.tokenVisible = false
+			m.advancedVisible = false
 		case "j", "down":
 			m.selected++
 			m.clamp()
@@ -309,6 +324,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			if m.ready && m.page == 2 && m.managementToken != "" {
 				m.tokenVisible = !m.tokenVisible
+			}
+		case "x":
+			if m.ready && m.page == 2 {
+				m.advancedVisible = !m.advancedVisible
 			}
 		case "?":
 			m.form = "help"
@@ -518,7 +537,12 @@ func (m model) View() string {
 		if m.connection.BaseURL != "" {
 			fmt.Fprintf(&b, m.text("\n  Service: %s\n"), m.connection.BaseURL)
 		}
-		fmt.Fprintf(&b, m.text("\n\n  Adaptive routing: %s   Configuration revision: %d\n"), m.text(map[bool]string{true: "Enabled", false: "Disabled"}[m.cfg.Adaptive.Enabled]), m.cfg.Revision)
+		if m.serverInfo.Version == "" {
+			b.WriteString(m.text("\n  Program version unavailable\n"))
+		} else {
+			fmt.Fprintf(&b, m.text("\n  Program version: %s\n"), m.serverInfo.Version)
+		}
+		fmt.Fprintf(&b, m.text("  Adaptive routing: %s\n"), m.text(map[bool]string{true: "Enabled", false: "Disabled"}[m.cfg.Adaptive.Enabled]))
 	}
 	if m.form != "" {
 		b.WriteString(m.formView())
@@ -542,6 +566,9 @@ func (m model) View() string {
 		case 2:
 			fmt.Fprintf(&b, m.text("\n  HTTP proxy    %s\n  SOCKS5        %s\n  Management UI %s\n  PAC           %s\n\n  Use PAC bypass for company services on Mac to keep using local Tailscale.\n  Edit PAC and all routing rules in the Web UI.\n"), m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
 			b.WriteString(m.managementTokenView())
+			if m.advancedVisible {
+				fmt.Fprintf(&b, m.text("\n  Advanced information\n  Configuration revision: %d\n  Tracks settings changes and prevents conflicting edits. Separate from the program version.\n"), m.cfg.Revision)
+			}
 			if m.localTarget() && (m.installCommand != nil || m.install != nil) {
 				b.WriteString(m.text("  Press i to install the background service.\n"))
 			} else {
@@ -566,6 +593,7 @@ func (m model) View() string {
 	}
 	if m.ready && m.page == 2 {
 		b.WriteString(m.text("  t Show / hide Web UI token\n"))
+		b.WriteString(m.text("  x Show / hide advanced information\n"))
 	}
 	return b.String()
 }

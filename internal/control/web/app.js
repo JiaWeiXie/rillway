@@ -36,7 +36,7 @@ let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundT
 let outboundGeneration = 0;
 const pendingOutboundActions = new Set();
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
-let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
+let currentPage = 'overview', latestSnapshot = {}, serverInfo = null, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
 const refreshChoices = [1,2,5,10,30];
 let flowPollTimer, refreshSeconds = 1, openFlowGroups = new Set();
@@ -78,8 +78,14 @@ function options(selected, withAdaptive = false) { return (withAdaptive ? `<opti
 function candidateBoxes(container, selected, prefix) { container.innerHTML = candidates().map(o => `<label><input type="checkbox" name="${prefix}" value="${esc(o.id)}"${selected.includes(o.id) ? ' checked' : ''}>${esc(o.id)}</label>`).join('') || `<p class="hint">${et('Enable an outbound with Internet access first.')}</p>`; }
 function checked(container) { return [...container.querySelectorAll('input:checked')].map(i => i.value); }
 
+async function loadInfo() {
+  try { return await api('/info'); }
+  catch(error) { if(error.status === 404) return null; throw error; }
+}
 async function load() {
+  serverInfo = null;
   cfg = await api('/config');
+  serverInfo = await loadInfo();
   active = true; $('login').hidden = true; $('app').hidden = false;
   renderConfig(); await poll(); pollStatuses(); loadDocker();
 }
@@ -155,7 +161,8 @@ async function poll() {
   if(!active || polling) return;
   polling = true;
   try {
-    const snapshot = await api('/stats'); latestSnapshot = snapshot;
+    const snapshot = await api('/stats');
+    serverInfo = await loadInfo(); latestSnapshot = snapshot;
     flows = Array.isArray(snapshot) ? snapshot : snapshot.flows || [];
     renderRevision();
     renderFlows(); connection(true);
@@ -343,7 +350,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { clearOutboundSecrets(); $('outbound-dialog').close(); active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { clearOutboundSecrets(); $('outbound-dialog').close(); active = false; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -417,9 +424,10 @@ async function openRule(index = -1, flow = null) {
 }
 
 function renderRevision() {
+  $('program-version').textContent = serverInfo?.version ? t('Program version: {version}',{version:serverInfo.version}) : t('Program version unavailable');
   const revision = latestSnapshot.config_revision ?? cfg?.revision;
-  $('revision').textContent = revision === undefined ? '' : t('Active revision {revision}',{revision});
-  $('applied-at').textContent = latestSnapshot.applied_at ? t('Applied {date}',{date:i18n.date(latestSnapshot.applied_at)}) : '';
+  $('revision').textContent = revision === undefined ? '' : String(revision);
+  $('applied-at').textContent = latestSnapshot.applied_at ? i18n.date(latestSnapshot.applied_at) : t('Not available');
 }
 async function copyText(value) {
   try { await navigator.clipboard.writeText(value); notice('Configuration copied.'); }

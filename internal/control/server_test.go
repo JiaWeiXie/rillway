@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"rillway/internal/buildinfo"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
 	"strings"
@@ -84,7 +85,7 @@ func request(h http.Handler, method, path, body, token, origin string) *httptest
 
 func TestSensitiveEndpointsRequireBearer(t *testing.T) {
 	h := New(newBackend(), "correct")
-	for _, path := range []string{"/api/v1/config", "/api/v1/stats", "/api/v1/outbounds"} {
+	for _, path := range []string{"/api/v1/info", "/api/v1/config", "/api/v1/stats", "/api/v1/outbounds"} {
 		for _, token := range []string{"", "wrong"} {
 			w := request(h, "GET", path, "", token, "")
 			if w.Code != 401 {
@@ -383,5 +384,29 @@ func TestEmptyPublicMessageUsesSafeFallback(t *testing.T) {
 	err := config.PublicError{Err: errors.New("secret")}
 	if message := publicMessage(err, "safe fallback"); message != "safe fallback" {
 		t.Fatalf("unexpected message %q", message)
+	}
+}
+
+func TestDaemonInfoContainsOnlyVersion(t *testing.T) {
+	server := httptest.NewServer(New(newBackend(), "test-token"))
+	defer server.Close()
+	client, err := NewClient(server.URL, "test-token", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := client.Info(context.Background())
+	if err != nil || info.Version != buildinfo.Version {
+		t.Fatalf("info=%+v error=%v", info, err)
+	}
+	response := request(New(newBackend(), "test-token"), "GET", "/api/v1/info", "", "test-token", "")
+	var fields map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 1 || fields["version"] != buildinfo.Version {
+		t.Fatalf("unexpected daemon metadata: %v", fields)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("daemon metadata may be cached")
 	}
 }

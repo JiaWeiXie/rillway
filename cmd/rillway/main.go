@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"rillway/internal/app"
+	"rillway/internal/buildinfo"
 	"rillway/internal/config"
 	"rillway/internal/diagnostic"
 	"rillway/internal/i18n"
@@ -22,8 +23,6 @@ import (
 	"strings"
 	"syscall"
 )
-
-var version = "0.1.0-dev"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -97,7 +96,7 @@ func runLocalized(ctx context.Context, args []string, out io.Writer) error {
 		if fs.NArg() != 0 {
 			return errors.New("version does not accept positional arguments")
 		}
-		_, err := fmt.Fprintln(out, "Rillway", version)
+		_, err := fmt.Fprintln(out, "Rillway", buildinfo.Version)
 		return err
 	case "help", "--help", "-h":
 		_, err := io.WriteString(out, cliText(ctx, usage))

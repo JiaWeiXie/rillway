@@ -101,7 +101,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(log), "-X main.version=v1.2.3-rc.1") != 4 {
+	if strings.Count(string(log), "-X rillway/internal/buildinfo.Version=v1.2.3-rc.1") != 4 {
 		t.Fatal("version not embedded in every target")
 	}
 	if out, err := run("v1.2.3 -X main.injected=value"); err == nil || !strings.Contains(string(out), "Invalid release version") {

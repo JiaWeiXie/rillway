@@ -139,6 +139,8 @@ A verified connection is remembered in `client.json` in the same OS application 
 
 The TUI manages a running service. If it cannot connect, it explains the failure and offers `o` to edit the current URL and file paths. It does not show revision zero or pretend an empty connection list was loaded. Press `?` for instructions; actual HTTP proxy and PAC addresses appear after connecting. The Service settings page keeps the Web UI management token hidden until you press `t`. Leaving that page hides it again. The token stays in memory for the current TUI process and is never copied into the remembered client profile.
 
+Web UI and TUI show the running **server program version**, not the client version. Configuration revision is a separate counter for settings changes and conflicting-edit protection. Find it in Web UI Settings → Advanced information, or press `x` on the TUI Service settings page. Older servers without version metadata show “Program version unavailable”.
+
 | Key | Action |
 | --- | --- |
 | `o` | Edit the service connection; Enter connects |
@@ -154,6 +156,7 @@ The TUI manages a running service. If it cannot connect, it explains the failure
 | Outbounds `n`, `c`, `d`, `v` | Register, connect, disconnect, verify |
 | Outbounds lowercase `l` | Enter a masked WARP+ license |
 | Service settings `t` | Show or hide the Web UI management token |
+| Service settings `x` | Show or hide advanced information (configuration revision) |
 | `i`, then Enter | Install a new local service after confirmation |
 | `s`, then Enter | Start an installed local service after confirmation |
 | `L`/Ctrl+L | Change language; use Ctrl+L while editing text |

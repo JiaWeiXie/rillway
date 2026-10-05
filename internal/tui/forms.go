@@ -141,6 +141,8 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.connection = settings
 			m.managementToken = managementToken
 			m.tokenVisible = false
+			m.advancedVisible = false
+			m.serverInfo = control.Info{}
 			m.generation++
 			m.ready = false
 			m.loading = true

@@ -70,6 +70,23 @@ async function browser(initialLocale) {
 
 (async()=>{
   const b=await browser();
+  vm.runInContext("cfg={revision:42}; serverInfo={version:'v9.8.7'}; latestSnapshot={config_revision:43}; renderRevision();",b.context);
+  assert.equal(b.get('program-version').textContent,'Program version: v9.8.7');
+  assert.equal(b.get('revision').textContent,'43');
+  assert.equal(b.get('advanced-info').open,false);
+  vm.runInContext("serverInfo=null; renderRevision();",b.context);
+  assert.equal(b.get('program-version').textContent,'Program version unavailable');
+  vm.runInContext("serverInfo={version:'v9.8.7'}; i18n.setLocale('zh-Hant'); renderRevision();",b.context);
+  assert.equal(b.get('program-version').textContent,'程式版本：v9.8.7');
+  vm.runInContext("i18n.setLocale('en');",b.context);
+  const originalFetch=b.context.fetch;
+  for (const status of [404,401,500]) {
+    b.context.fetch=async()=>({ok:false,status,json:async()=>({error:'fixture failure'})});
+    if(status===404) assert.equal(await vm.runInContext('loadInfo()',b.context),null);
+    else await assert.rejects(vm.runInContext('loadInfo()',b.context),error=>error.status===status);
+  }
+
+  b.context.fetch=originalFetch;
   const translate=b.context.RillwayI18n;
   assert.equal(translate.locale,'en','browser language must not change the default');
   assert.equal((await browser('zh-Hant')).context.RillwayI18n.locale,'zh-Hant');

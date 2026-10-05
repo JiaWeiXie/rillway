@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"rillway/internal/buildinfo"
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"strings"
@@ -266,7 +267,7 @@ func changedAgentFields(current, candidate config.Config) []string {
 
 func agentSchema() any {
 	return map[string]any{
-		"binary_version": version, "contract_version": 1,
+		"binary_version": buildinfo.Version, "contract_version": 1,
 		"commands": map[string]string{
 			"schema":   "Offline command discovery; no configuration or credentials needed.",
 			"validate": "Offline syntax and configuration validation; no provider or network checks.",

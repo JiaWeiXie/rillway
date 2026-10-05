@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -267,7 +268,7 @@ func TestLanguageSwitchUpdatesAPIRequests(t *testing.T) {
 		if result := m.load()().(loadedMsg); result.err != nil {
 			t.Fatal(result.err)
 		}
-		for range 2 {
+		for range 3 {
 			if got := <-headers; got != string(locale) {
 				t.Fatalf("Accept-Language = %q, want %q", got, locale)
 			}
@@ -382,6 +383,71 @@ func TestInFlightRefreshDoesNotReplaceOpenEditor(t *testing.T) {
 			next, _ = m.Update(loadedMsg{cfg: config.Config{Revision: 8, Outbounds: []config.Outbound{{ID: "direct"}}}})
 			if next.(model).cfg.Revision != 8 {
 				t.Fatal("refresh did not resume after closing the editor")
+			}
+		})
+	}
+}
+
+func TestServerVersionAndAdvancedRevision(t *testing.T) {
+	for _, locale := range []i18n.Locale{i18n.English, i18n.TraditionalChinese} {
+		m := model{ready: true, locale: locale, cfg: config.Config{Revision: 42}, serverInfo: control.Info{Version: "v9.8.7"}, height: 40}
+		if view := m.View(); !strings.Contains(view, "v9.8.7") || strings.Contains(view, "42") {
+			t.Fatalf("unexpected main version display: %s", view)
+		}
+		m.page = 2
+		next, _ := m.Update(key("x"))
+		m = next.(model)
+		if !m.advancedVisible || !strings.Contains(m.View(), "42") {
+			t.Fatal("advanced revision did not open")
+		}
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(model)
+		if m.advancedVisible || strings.Contains(m.View(), "42") {
+			t.Fatal("advanced information remained open after leaving settings")
+		}
+		m.serverInfo = control.Info{}
+		if strings.Contains(m.View(), "v9.8.7") || !strings.Contains(m.View(), m.text("\n  Program version unavailable\n")) {
+			t.Fatal("unknown server version mislabeled")
+		}
+	}
+}
+
+func TestLoadUsesRemoteVersionAndOnlyFallsBackForOlderDaemons(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusNotFound, http.StatusUnauthorized, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/config":
+					_, _ = w.Write([]byte(`{"revision":42}`))
+				case "/api/v1/stats":
+					_, _ = w.Write([]byte(`{"flows":[]}`))
+				case "/api/v1/info":
+					w.WriteHeader(status)
+					_, _ = w.Write([]byte(`{"version":"v9.8.7"}`))
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			client, err := control.NewClient(server.URL, "test-token", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := model{ctx: context.Background(), client: client, generation: 2}
+			loaded := m.load()().(loadedMsg)
+			if status == http.StatusOK && (loaded.err != nil || loaded.info.Version != "v9.8.7") {
+				t.Fatalf("remote version missing: %+v", loaded)
+			}
+			if status == http.StatusNotFound && (loaded.err != nil || loaded.info.Version != "") {
+				t.Fatalf("older daemon fallback failed: %+v", loaded)
+			}
+			if status >= 400 && status != http.StatusNotFound && loaded.err == nil {
+				t.Fatal("metadata failure hidden")
+			}
+			next, _ := m.Update(loadedMsg{generation: 1, info: control.Info{Version: "stale"}})
+			if next.(model).serverInfo.Version != "" {
+				t.Fatal("old service metadata applied")
 			}
 		})
 	}
