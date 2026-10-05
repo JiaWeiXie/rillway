@@ -68,6 +68,20 @@ There are no required long-lived repository secrets. Public PRs never trigger
 `pull_request_target`/`workflow_run`, do not receive private credentials, and do not
 write releases. Automated dependency updates must retain immutable action SHAs.
 
+
+Dependency monitoring uses a monthly digest issue, refreshed on the first day of
+each month (09:17 Asia/Taipei). The workflow reuses its own open issue and reports
+Go module and pinned GitHub Actions updates without modifying source. It can also
+be run manually. Dependabot version PR limits are zero; disable **Dependabot
+security updates** in repository settings as well, while retaining **Dependabot
+alerts**, to prevent security PRs. Security alerts remain independent of this
+monthly schedule. Forks must apply these repository settings themselves.
+
+When updating a third-party action SHA, verify its upstream tag and update the
+repository Actions allowlist to that exact reviewed SHA before running CI. Do not
+replace the allowlist with a wildcard. Artifact uploads explicitly retain archive
+mode; downloads extract that archive and reject a digest mismatch.
+
 ## Release flow
 
 Release is opt-in: a maintainer pushes a version tag reachable from reviewed `main`.

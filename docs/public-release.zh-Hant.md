@@ -36,7 +36,12 @@ RILLWAY_PRIVACY_PATTERNS=/path/outside/repository/private-denylist.txt \
 5. Actions 預設唯讀、禁止自動核准 PR、要求外部貢獻者執行前審核，限制允許使用的 action。不要用能接觸家用網路的 self-hosted runner，也不要加入部署／VPN 秘密。
 6. 確認可公開內容與 refs，只推送指定 branch／tag；依帳號方案在私有 repository 跑 CI，再公開。公開時使用的方案也必須支援已設定的保護。
 
-這些 workflows 不需要長效 repository secrets。公開 PR 沒有私人憑證，使用唯讀 Token，不會建立 Release，也不使用 `pull_request_target`／`workflow_run`。Dependabot 每週提出 Go／Actions 更新，維護者仍需審查與保留固定 action SHA。
+這些 workflows 不需要長效 repository secrets。公開 PR 沒有私人憑證，使用唯讀 Token，不會建立 Release，也不使用 `pull_request_target`／`workflow_run`。相依套件由每月 issue 彙整，維護者仍需審查與保留固定 action SHA。
+
+
+相依套件改用每月更新一次的彙整 issue：每月 1 日台灣時間 09:17 檢查 Go 套件與固定 SHA 的 GitHub Actions，不修改原始碼，也不建立更新 PR。Workflow 會更新自己已開啟的同一個 issue，也可手動執行。Dependabot 的版本更新 PR 上限設為 0；repository 設定還必須關閉 **Dependabot security updates**，同時保留 **Dependabot alerts**，才能避免安全修補 PR。漏洞警示不受每月排程限制。Fork 必須自行設定。
+
+更新第三方 action 時，先核對上游 tag 與 SHA，再將該 SHA 加入 GitHub Actions 允許清單，才能執行 CI；不要放寬成 wildcard。上傳產物明確使用 archive 模式，下載時解壓縮，digest 不符就拒絕繼續。
 
 ## GitHub Release
 

@@ -3,10 +3,11 @@ updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    # Updates are reported by dependency-digest.yml, without opening PRs.
+    open-pull-requests-limit: 0
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 0

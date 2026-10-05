@@ -31,11 +31,11 @@ run = "golangci-lint fmt ./..."
 run = ["golangci-lint config verify", "golangci-lint run ./..."]
 
 [tasks.test]
-run = "go test ./..."
+run = ["go test ./...", "python3 -m unittest discover -s scripts -p '*_test.py'"]
 
 [tasks.check]
 depends = ["lint"]
-run = ["mkdir -p coverage", "go test -race -shuffle=on -coverprofile=coverage/coverage.out ./..."]
+run = ["mkdir -p coverage", "go test -race -shuffle=on -coverprofile=coverage/coverage.out ./...", "python3 -m unittest discover -s scripts -p '*_test.py'"]
 
 [tasks."test:live"]
 run = "go test -tags=live -v ./tests/live/..."
