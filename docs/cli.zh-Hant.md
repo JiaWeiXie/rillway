@@ -2,6 +2,8 @@
 
 [English](cli.md) · [繁體中文](cli.zh-Hant.md) · [README](../README.zh-Hant.md)
 
+非互動 JSON 指令、預覽、錯誤狀態與公開操作 Skill 見 [Agent CLI](agent-cli.zh-Hant.md)。請用 `rillway agent schema` 查詢指令。
+
 下列 `rillway` 是 Linux 安裝後的入口；尚未安裝時使用 `./rillway`，開發使用 `./bin/rillway`。選項放在指令及子指令後方；全域 `--lang` 可放前方或後方。`rillway help` 列出指令，`rillway COMMAND --help` 列出選項；子指令使用 `rillway service install --help`、`rillway docker export --help`。**不帶參數會開啟 TUI，不會自動進入安裝引導。**
 
 ## 語言、路徑、輸出與結束狀態

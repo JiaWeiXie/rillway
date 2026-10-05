@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rillway Operations"
+  short_description: "Install, configure, diagnose and upgrade Rillway"
+  default_prompt: "Use $rillway-ops to diagnose my proxy and plan a safe fix."

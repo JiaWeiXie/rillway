@@ -12,12 +12,28 @@ import (
 )
 
 var catalog = map[string]string{
-	"licenses does not accept positional arguments":    "licenses 不接受位置參數",
-	"version does not accept positional arguments":     "version 不接受位置參數",
-	"new setup configuration file":                     "首次安裝的暫存設定檔",
-	"specific local IPv4 or IPv6 address; no wildcard": "指定本機 IPv4 或 IPv6 位址；不可使用萬用位址",
-	"allowed client IPs or CIDRs, comma-separated":     "允許的用戶端 IP 或 CIDR，以逗號分隔",
-	"company bypass domains, comma-separated":          "公司略過網域，以逗號分隔",
+	"Invalid language. Use en or zh-Hant.":                                                                                         "語言無效。請使用 en 或 zh-Hant。",
+	"Could not write JSON output.":                                                                                                 "無法寫入 JSON 輸出。",
+	"Management access denied. Check the token and allowed client address.":                                                        "管理介面拒絕存取。請確認權杖與允許的用戶端位址。",
+	"Configuration changed elsewhere. Fetch it again and review a new plan.":                                                       "設定已被其他操作修改。請重新讀取並預覽新的變更。",
+	"The server rejected the operation. Check settings in the Web UI.":                                                             "伺服器拒絕此操作。請在 Web UI 確認設定。",
+	"Management connection failed. Check the service, address and trusted certificate. For writes, inspect state before retrying.": "管理連線失敗。請確認服務、位址與受信任憑證。寫入操作請先確認目前狀態，再決定是否重試。",
+	"Use rillway agent schema to discover commands.":                                                                               "請用 rillway agent schema 查詢可用指令。",
+	"Invalid arguments. Use rillway agent schema.":                                                                                 "參數無效。請用 rillway agent schema 查詢用法。",
+	"This operation requires --yes. Review its effects first.":                                                                     "此操作需要 --yes。請先確認影響範圍。",
+	"Choose an outbound ID and connect, disconnect or verify.":                                                                     "請指定出口 ID，並選擇 connect、disconnect 或 verify。",
+	"Provide one configuration JSON object with --input FILE or --input - (maximum 256 KiB).":                                      "請用 --input FILE 或 --input - 提供一份設定 JSON 物件（上限 256 KiB）。",
+	"Configuration validation failed. Check the documented configuration fields.":                                                  "設定驗證失敗。請依文件確認設定欄位。",
+	"Edit listener and security settings on the server, then restart the service.":                                                 "請在伺服器上修改監聽與安全設定，再重新啟動服務。",
+	"Cannot read local configuration. Select --config or an explicit remote --url and --token-file.":                               "無法讀取本機設定。請指定 --config，或明確指定遠端 --url 與 --token-file。",
+	"Cannot read a valid management token from --token-file or the local configuration.":                                           "無法從 --token-file 或本機設定讀取有效的管理權杖。",
+	"Invalid management URL or trusted certificate. Remote management requires HTTPS.":                                             "管理網址或受信任憑證無效。遠端管理必須使用 HTTPS。",
+	"licenses does not accept positional arguments":                                                                                "licenses 不接受位置參數",
+	"version does not accept positional arguments":                                                                                 "version 不接受位置參數",
+	"new setup configuration file":                                                                                                 "首次安裝的暫存設定檔",
+	"specific local IPv4 or IPv6 address; no wildcard":                                                                             "指定本機 IPv4 或 IPv6 位址；不可使用萬用位址",
+	"allowed client IPs or CIDRs, comma-separated":                                                                                 "允許的用戶端 IP 或 CIDR，以逗號分隔",
+	"company bypass domains, comma-separated":                                                                                      "公司略過網域，以逗號分隔",
 	"HTTP Proxy port":       "HTTP Proxy 連接埠",
 	"SOCKS5 port":           "SOCKS5 連接埠",
 	"HTTPS management port": "HTTPS 管理介面連接埠",
@@ -98,6 +114,8 @@ var catalog = map[string]string{
   rillway client apply --service Wi-Fi --pac-url URL --backup FILE
   rillway client restore --backup FILE
   rillway pac --config FILE                將 PAC 輸出至標準輸出
+  rillway agent schema                    查詢非互動 JSON 指令
+  rillway agent status [--config FILE]     讀取目前服務狀態
   rillway docker export --target daemon|client|env|compose --config FILE
   rillway docker export --target client --proxy-url http://HOST:PORT [--input FILE]
   rillway diagnose --config FILE --outbound direct [--family ipv4|ipv6]
@@ -128,8 +146,12 @@ func (e localizedError) Error() string { return e.message }
 func (e localizedError) Unwrap() error { return e.error }
 
 func run(ctx context.Context, args []string, out io.Writer) error {
+	original := args
 	locale, args, err := languageArguments(args, os.Getenv("RILLWAY_LANG"))
 	ctx = i18n.WithLocale(ctx, locale)
+	if err != nil && agentInvocation(original) {
+		return writeAgentResult(ctx, nil, agentFail("invalid_language", "Invalid language. Use en or zh-Hant.", 2), out)
+	}
 	if err == nil {
 		err = runLocalized(ctx, args, out)
 	}
@@ -152,6 +174,21 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return localizedError{error: err, message: message}
 	}
 	return err
+}
+
+func agentInvocation(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--lang" || arg == "-lang" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--lang=") || strings.HasPrefix(arg, "-lang=") {
+			continue
+		}
+		return arg == "agent"
+	}
+	return false
 }
 
 // Language is global, including after a subcommand. Preserve all other values
@@ -183,7 +220,7 @@ func languageArguments(args []string, preference string) (i18n.Locale, []string,
 		remaining = append(remaining, arg)
 		name := strings.TrimLeft(arg, "-")
 		switch name {
-		case "client-config", "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input", "listen", "allow-client", "bypass-domains", "http-port", "socks-port", "admin-port", "pac-port":
+		case "client-config", "config", "outbound", "family", "download-url", "url", "token-file", "ca", "service", "pac-url", "backup", "target", "proxy-url", "no-proxy", "input", "listen", "allow-client", "bypass-domains", "http-port", "socks-port", "admin-port", "pac-port", "timeout", "id", "action":
 			if strings.HasPrefix(arg, "-") && i+1 < len(args) {
 				i++
 				remaining = append(remaining, args[i])

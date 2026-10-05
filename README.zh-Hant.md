@@ -2,6 +2,8 @@
 
 [English](README.md) · [繁體中文](README.zh-Hant.md)
 
+AI Agent 可使用 `rillway agent schema` 查詢非互動 JSON 指令，再讀取狀態、預覽或明確套用設定。公開 MIT 授權的 [rillway-ops Skill](skills/rillway-ops/SKILL.md) 整理通用安裝、設定、故障排除與還原方法。見 [Agent CLI 與 Skill 安裝](docs/agent-cli.zh-Hant.md)。Release 的 `rillway-ops.zip` 只包含指定的公開 Skill 文件及授權，不需要 MCP。
+
 [![CI](https://github.com/JiaWeiXie/rillway/actions/workflows/ci.yml/badge.svg)](https://github.com/JiaWeiXie/rillway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/JiaWeiXie/rillway)](https://github.com/JiaWeiXie/rillway/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

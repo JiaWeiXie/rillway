@@ -14,7 +14,7 @@ func TestReleaseVersionAndArtifactAllowlist(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"release.sh", "release-notices.go"} {
+	for _, name := range []string{"release.sh", "release-notices.go", "package-skill.go"} {
 		b, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -23,6 +23,18 @@ func TestReleaseVersionAndArtifactAllowlist(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err = os.WriteFile(filepath.Join(root, "scripts", name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"LICENSE", "skills/rillway-ops/SKILL.md", "skills/rillway-ops/agents/openai.yaml", "skills/rillway-ops/references/agent-cli.md", "skills/rillway-ops/references/installation.md", "skills/rillway-ops/references/configuration.md", "skills/rillway-ops/references/troubleshooting.md"} {
+		data, err := os.ReadFile(filepath.Join("..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +53,7 @@ if [ "$1" = build ]; then
  printf 'synthetic binary\n' > "$output"
 elif [ "$3" = --prepare ] && [ "$RILLWAY_TEST_MODIFY_SOURCE" = 1 ]; then
  printf 'unexpected generated source\n' >> scripts/release-notices.go
-elif [ "$3" = --hashes-only ]; then
+elif [ "$3" = --hashes-only ] || [ "$2" = scripts/package-skill.go ]; then
  exec "$RILLWAY_TEST_REAL_GO" "$@"
 fi
 `
@@ -82,7 +94,7 @@ fi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(hashes), "private") || strings.Count(string(hashes), "\n") != 4 {
+	if strings.Contains(string(hashes), "private") || strings.Count(string(hashes), "\n") != 5 {
 		t.Fatalf("unlisted artifact included: %s", hashes)
 	}
 	log, err := os.ReadFile(filepath.Join(root, "log"))

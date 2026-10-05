@@ -162,7 +162,7 @@ func generate() error {
 
 func writeHashes() error {
 	var hashes strings.Builder
-	binaries := []string{"dist/rillway-linux-amd64", "dist/rillway-linux-arm64", "dist/rillway-darwin-amd64", "dist/rillway-darwin-arm64"}
+	binaries := []string{"dist/rillway-linux-amd64", "dist/rillway-linux-arm64", "dist/rillway-darwin-amd64", "dist/rillway-darwin-arm64", "dist/rillway-ops.zip"}
 	for _, path := range binaries {
 		f, e := os.Open(path)
 		if e != nil {

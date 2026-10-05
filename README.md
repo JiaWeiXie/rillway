@@ -92,6 +92,12 @@ CLI commands discover the OS default configuration automatically; `--config FILE
 See the [complete CLI reference](docs/cli.md) for every command, option, defaults,
 service operations, upgrades, Docker exports, and Mac PAC restoration.
 
+AI agents can use `rillway agent schema` for noninteractive JSON discovery,
+status, plans and explicit actions. The public MIT-licensed
+[rillway-ops Skill](skills/rillway-ops/SKILL.md) packages generic installation,
+configuration, troubleshooting and rollback guidance. See [Agent CLI and Skill installation](docs/agent-cli.md).
+Release `rillway-ops.zip` contains only reviewed Skill files and license; no MCP is required.
+
 ## Capabilities and limits
 
 - HTTP forwarding, HTTPS CONNECT, SOCKS5 TCP; source CIDR restrictions and optional proxy authentication.

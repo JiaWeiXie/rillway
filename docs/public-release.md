@@ -100,7 +100,8 @@ only this run's artifact, verifies checksums, generates provenance attestations,
 and creates a **draft** GitHub Release. It never executes repository scripts or
 binaries with write privileges. Inspect the draft and attestations before publishing.
 
-Assets are standalone Linux/macOS binaries for amd64/arm64, SHA256SUMS, the exact
+Assets are standalone Linux/macOS binaries for amd64/arm64, the allowlisted
+`rillway-ops.zip` operations Skill, SHA256SUMS, the exact
 Go module inventory, LICENSE and THIRD_PARTY.md. Full dependency/font notices are
 embedded (`rillway licenses`). The VM does not need Go, mise or Node. macOS binaries
 are not Developer ID signed/notarized; Linux/macOS cross-builds do not prove OS or

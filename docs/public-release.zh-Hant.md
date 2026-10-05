@@ -56,7 +56,7 @@ git push origin v0.1.0
 
 有寫入權限的工作另外隔離，使用受保護的 `release` environment，只下載本次 workflow 的產物，核對 checksum、產生來源證明，再建立 **Draft Release**。不執行 repository 腳本或 binary。檢查 draft 與來源證明後，維護者才正式發布。
 
-發布內容為 Linux／macOS 的 amd64／arm64 單一 binary、SHA256SUMS、Go module 清單、LICENSE 與 THIRD_PARTY.md。依賴與字體授權已內嵌，可用 `rillway licenses` 查看。VM 不需 Go、mise 或 Node。macOS 產物尚未經 Developer ID 簽章／notarization；跨平台編譯與版本 tag 都不能代替實機／VPN 驗證或程式簽章。
+發布內容為 Linux／macOS 的 amd64／arm64 單一 binary、只包含指定公開文件的 `rillway-ops.zip` 操作 Skill、SHA256SUMS、Go module 清單、LICENSE 與 THIRD_PARTY.md。依賴與字體授權已內嵌，可用 `rillway licenses` 查看。VM 不需 Go、mise 或 Node。macOS 產物尚未經 Developer ID 簽章／notarization；跨平台編譯與版本 tag 都不能代替實機／VPN 驗證或程式簽章。
 
 下載後可驗證：
 

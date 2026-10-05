@@ -112,6 +112,13 @@ An explicit `/org/project` ID from the user can skip resolution. Prefer fetched 
 
 ## Documentation map
 
+`docs/agent-cli.md` and `docs/agent-cli.zh-Hant.md` document the noninteractive
+CLI contract and public `skills/rillway-ops` installation. Keep the Skill's command
+references aligned with `agent schema`; never import private operational receipts.
+Agent errors must preserve JSON/exit codes without echoing input or raw provider
+errors. `plan` is read-only and cannot promise runtime provider validation. Release
+Skill packaging uses an exact file allowlist, not recursive workspace collection.
+
 `README.md` (English) and `README.zh-Hant.md` are the entry points; detailed command references are `docs/cli.md` and `docs/cli.zh-Hant.md`; `docs/architecture.md` defines routing/API behavior; `docs/providers.md` covers VPN setup and limitations.
 `docs/deployment.md` describes operations, `docs/deployment-target.md` records the intended environment, and `docs/verification.md` records dated evidence.
 `docs/agent-workflow.md` describes local agent hooks, Git hook installation, and agent-side trust requirements.

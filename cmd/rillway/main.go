@@ -29,6 +29,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil && !errors.Is(err, context.Canceled) {
+		var machine *agentFailure
+		if errors.As(err, &machine) {
+			os.Exit(machine.ExitCode)
+		}
 		fmt.Fprintln(os.Stderr, "rillway:", err)
 		os.Exit(1)
 	}
@@ -71,6 +75,8 @@ func runLocalized(ctx context.Context, args []string, out io.Writer) error {
 		command, args = args[0], args[1:]
 	}
 	switch command {
+	case "agent":
+		return agentCommand(ctx, args, os.Stdin, out)
 	case "setup":
 		return setupCommand(ctx, args, os.Stdin, out, setupDependencies{check: platform.CheckNewInstallation, validate: platform.CheckListeners, install: installFromSetup})
 	case "licenses":
@@ -307,6 +313,8 @@ const usage = `Rillway — observable split proxy
   rillway diagnose --config FILE --outbound warp --download-url HTTPS_URL
   rillway licenses                         Print embedded third-party notices
   rillway version
+  rillway agent schema                    Discover non-interactive JSON commands
+  rillway agent status [--config FILE]     Read effective service status
 
 Linux service installation requires sudo; the daemon runs as the rillway user.
 macOS service installation uses the current user's LaunchAgent.

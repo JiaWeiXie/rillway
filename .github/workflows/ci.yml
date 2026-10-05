@@ -74,6 +74,7 @@ jobs:
             dist/rillway-linux-arm64
             dist/rillway-darwin-amd64
             dist/rillway-darwin-arm64
+            dist/rillway-ops.zip
             dist/SHA256SUMS
             dist/MODULES.txt
           if-no-files-found: error

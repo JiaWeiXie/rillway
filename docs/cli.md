@@ -2,6 +2,9 @@
 
 [English](cli.md) · [繁體中文](cli.zh-Hant.md) · [README](../README.md)
 
+For noninteractive JSON operations, plans, exit codes and the public operations
+Skill, see [Agent CLI](agent-cli.md). Discover commands with `rillway agent schema`.
+
 Examples use `rillway` after Linux installation. Before installation, use
 `./rillway`; development uses `./bin/rillway`. Flags come after the command (and
 subcommand), except the global `--lang`, which can appear before or after it.

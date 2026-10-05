@@ -1,5 +1,7 @@
 # AI Agent 專案設定
 
+產品操作請使用 [Agent CLI 與公開 Skill](agent-cli.zh-Hant.md)：`rillway agent schema` 提供 JSON 指令探索，`skills/rillway-ops` 提供通用安裝／設定／除錯／部署方法。下列 hooks 僅供專案開發。
+
 `AGENTS.md` 是 Codex 與其他 coding agent 的共用專案規範。`CLAUDE.md` 只引用它，避免同一規則維護兩份。這些設定不指定模型、不替換使用者的全域權限，也不呼叫外部通知服務。
 
 ## 本機 hooks

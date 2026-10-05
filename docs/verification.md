@@ -4,6 +4,15 @@
 
 ## 一般檢查
 
+## 2026-10-05：Agent CLI 與公開 Skill
+
+- `mise run check` 通過：Lint 0 issues、完整 race／shuffle／coverage 及 Python 測試通過。新增 JSON 成功／失敗格式、結束狀態、中英文錯誤、輸入上限、明確變更意圖、設定版本衝突、無變更不寫入、TLS 拒絕、秘密安全錯誤及遺失回覆不重試的測試。
+- 以隔離、隨測試刪除的本機設定與真實 daemon，驗證受信任 TLS、讀取狀態、設定預覽、原子套用、舊版本拒絕、API 重啟及保存設定恢復。未啟用 VPN、修改系統 Proxy 或操作正式部署。
+- Skill metadata validator 通過。封包測試確認固定七個成員、可重現的 ZIP、額外私有檔案不被收集，以及拒絕符號連結。以實際 binary 另確認 stdout 只有 JSON、正確結束狀態及 stderr 無重複錯誤。
+- `mise run security` 通過；可達程式碼未發現受影響漏洞。一般掃描不代表能識別所有個資或未知漏洞，仍另外使用受限 denylist 檢查公開來源與 Skill 封包。
+
+## 一般檢查命令
+
 ```sh
 mise run check
 mise run build
