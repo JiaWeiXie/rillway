@@ -2,11 +2,20 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## Unreleased
+
+### Features
+
+- **agent:** add safe JSON CLI and public operations skill
 ## 0.2.2 - 2026-10-05
 
 ### Fixes
 
 - **release:** ignore Python test bytecode in clean source checks
+
+### Maintenance
+
+- **release:** prepare v0.2.2 changelog
 ## 0.2.1 - 2026-10-05
 
 ### Fixes
