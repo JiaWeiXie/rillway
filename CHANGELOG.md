@@ -6,7 +6,7 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 ### Maintenance
 
-- **release:** prepare v0.1.0 verified source
+- **release:** finalize v0.1.0 changelog
 ## 0.1.0 - 2026-10-05
 
 ### Features
@@ -30,6 +30,7 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 - **cli:** prefer OS configuration conventions over remembered connections
 - **cli:** follow installed service configuration before fallback paths
 - **security:** reject runtime credentials before staging checks
+- **ci:** freeze tools and reject dirty release source
 
 ### Documentation
 
@@ -47,6 +48,8 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 - **tooling:** configure git-cliff and commit message hooks
 - **security:** remove private deployment details
+- **release:** prepare v0.1.0 verified source
+- detect tracked source changes during tool setup
 
 ### Other changes
 
