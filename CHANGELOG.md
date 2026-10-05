@@ -2,6 +2,11 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## 0.2.2 - 2026-10-05
+
+### Fixes
+
+- **release:** ignore Python test bytecode in clean source checks
 ## 0.2.1 - 2026-10-05
 
 ### Fixes
@@ -17,6 +22,7 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 - **deps:** bump actions/attest-build-provenance from 3.0.0 to 4.2.2
 - **ci:** merge reviewed action updates and report dependencies monthly
 - **release:** prepare v0.2.1 changelog
+- **release:** refresh v0.2.1 notes after digest verification
 ## 0.2.0 - 2026-10-05
 
 ### Features
