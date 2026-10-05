@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -36,11 +35,8 @@ func main() {
 }
 
 func defaultPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ".local/config.json"
-	}
-	return installedConfigPath(runtime.GOOS, []string{"/etc/rillway/config.json", "/var/lib/rillway/config.json"}, filepath.Join(dir, "rillway", "config.json"))
+	dir, _ := os.UserConfigDir()
+	return defaultConfigPath(runtime.GOOS, dir, []string{"/etc/rillway/config.json", "/var/lib/rillway/config.json"})
 }
 
 func flags(ctx context.Context, name string, out io.Writer) (*flag.FlagSet, *string) {
@@ -193,50 +189,20 @@ func terminal(ctx context.Context, args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	explicitConfig := false
+	explicitConfig, explicitClient := false, false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "config" {
 			explicitConfig = true
 		}
-	})
-	if *base == "" && !explicitConfig {
-		remembered, e := loadClientProfile(*clientPath)
-		if e == nil {
-			*base = remembered.BaseURL
-			if *tokenPath == "" {
-				*tokenPath = remembered.TokenFile
-			}
-			if *ca == "" {
-				*ca = remembered.CAFile
-			}
-		} else if !os.IsNotExist(e) {
-			return fmt.Errorf("read TUI connection profile: %w", e)
+		if f.Name == "client-config" {
+			explicitClient = true
 		}
-	}
-	local := *base == ""
-	c, err := config.Load(*path)
-	if local && os.IsNotExist(err) {
-		c, err = initialize(ctx, *path)
-	}
-	if local && err != nil {
+	})
+	settings, local, err := resolveTerminalConnection(ctx, *path, *clientPath, explicitConfig, explicitClient, tui.ConnectionSettings{BaseURL: *base, TokenFile: *tokenPath, CAFile: *ca})
+	if err != nil {
 		return err
 	}
-	if local {
-		host, port, _ := net.SplitHostPort(c.Listeners.Admin)
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = "localhost"
-		}
-		*base = "https://" + net.JoinHostPort(host, port)
-		if *tokenPath == "" {
-			*tokenPath = c.Security.AdminTokenFile
-		}
-		if *ca == "" {
-			*ca = c.Security.TLSCertFile
-		}
-	}
-	if !local && *tokenPath == "" {
-		*tokenPath = filepath.Join(filepath.Dir(*clientPath), "remote-admin.token")
-	}
+	*base, *tokenPath, *ca = settings.BaseURL, settings.TokenFile, settings.CAFile
 	token, tokenErr := os.ReadFile(*tokenPath)
 	if tokenErr != nil {
 		tokenErr = tokenReadError(*tokenPath, tokenErr)

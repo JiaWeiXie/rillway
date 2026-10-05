@@ -42,6 +42,7 @@ mise run fuzz
 - systemd／LaunchAgent 產生內容、PAC 套用／還原、Docker 匯出與安全 JSON 合併。
 - 英文／繁體中文 Web UI、TUI、CLI 文案，以及中文與 Emoji 輸入。
 - TUI 的 Web UI 管理權杖預設隱藏、明確顯示、離開頁面自動隱藏，以及 client profile 不保存權杖內容。
+- CLI 依 OS 慣例搜尋設定、Linux 新／舊安裝路徑、macOS 大小寫路徑相容、明確路徑覆寫，以及 TUI 本機設定優先於自動記住的連線。測試確認私有／無效設定不會偷偷切換伺服器，明確設定路徑也不依賴使用者設定目錄的環境變數。
 
 ## 外部環境
 

@@ -23,7 +23,7 @@ entering text. User data and unknown upstream diagnostics are preserved.
 Web fonts are embedded; install/select a CJK/emoji-capable terminal font yourself
 if terminal glyphs are missing. Rillway does not install host fonts.
 
-On Linux, the default configuration first uses an existing `/etc/rillway/config.json`, then the legacy `/var/lib/rillway/config.json`. Otherwise it uses `$XDG_CONFIG_HOME/rillway/config.json`, usually `~/.config/rillway/config.json`. macOS uses `~/Library/Application Support/rillway/config.json`. An explicit `--config FILE` overrides discovery; relative paths resolve from the working directory. Installed Linux configuration is private, so local administration requires the appropriate permissions, usually `sudo`. Do not start a second daemon sharing listeners or Tailscale state. Remote TUI connections have a separate client profile.
+On Linux, the default configuration first uses an existing `/etc/rillway/config.json`, then the legacy `/var/lib/rillway/config.json`. Otherwise it uses `$XDG_CONFIG_HOME/rillway/config.json`, usually `~/.config/rillway/config.json`. macOS uses `~/Library/Application Support/Rillway/config.json`, retaining an existing lowercase `rillway/config.json` for compatibility on case-sensitive filesystems. An explicit `--config FILE` overrides discovery; relative paths resolve from the working directory. Installed Linux configuration is private, so local administration requires the appropriate permissions, usually `sudo`. Do not start a second daemon sharing listeners or Tailscale state. Remote TUI connections have a separate client profile.
 
 Success/help is exit `0`; invalid options, setup EOF, validation failures and
 failed operations return `1`. Cancelling a wizard with an answer other than `yes`
@@ -117,10 +117,10 @@ never replaces an existing certificate automatically.
 ## `tui`: local or remote management
 
 ```sh
-sudo rillway tui --config /etc/rillway/config.json
+sudo rillway tui
 rillway tui --url https://192.0.2.20:17892 \
   --token-file ./private/admin.token --ca ./private/admin.crt
-# After a successful connection, reuse the remembered service:
+# On a client without a local configuration, reuse the remembered service:
 rillway tui
 ```
 
@@ -132,7 +132,7 @@ rillway tui
 | `--ca PEM` | Trusted certificate/CA; otherwise use system trust |
 | `--client-config FILE` | Override the remembered TUI connection file |
 
-A verified connection is remembered in `rillway/client.json` under the OS user configuration directory, with mode `0600`. It contains only the URL and token/certificate file paths, never token contents. Explicit `--url` or `--config` overrides the remembered service. Use `--config FILE` for local installation/start controls. Securely copy the token and public certificate to a remote client, protect the token file, and verify the certificate fingerprint. TLS verification cannot be disabled.
+A verified connection is remembered in `client.json` in the same OS application configuration directory, with mode `0600`; existing lowercase macOS profiles remain supported. It contains only the URL and token/certificate file paths, never token contents. An existing default local configuration takes precedence over an implicitly remembered service. The order is: explicit `--url`, explicit `--config`, an explicitly selected `--client-config` profile, an existing OS default configuration, then an implicit remembered profile. A missing or invalid explicitly selected profile reports an error. Local configuration errors, including permission errors, never silently select another server. Local installation/start controls are available when the local configuration is selected, without requiring `--config`. Securely copy the token and public certificate to a remote client, protect the token file, and verify the certificate fingerprint. TLS verification cannot be disabled.
 
 The TUI manages a running service. If it cannot connect, it explains the failure and offers `o` to edit the current URL and file paths. It does not show revision zero or pretend an empty connection list was loaded. Press `?` for instructions; actual HTTP proxy and PAC addresses appear after connecting. The Service settings page keeps the Web UI management token hidden until you press `t`. Leaving that page hides it again. The token stays in memory for the current TUI process and is never copied into the remembered client profile.
 

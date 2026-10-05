@@ -40,7 +40,7 @@ VM 與 Mac 位址是範例，請使用實際位址。預設只聽 loopback；引
 
 ```sh
 rillway service status
-sudo rillway tui --config /etc/rillway/config.json
+sudo rillway tui
 ```
 
 詳細選項與更新／還原說明見 [CLI：繁體中文](cli.zh-Hant.md)／[CLI: English](cli.md)。若只想準備設定，使用 `setup --no-install --config FILE`，之後 `serve --config FILE` 在前景執行。不要啟動使用相同 listener 或 Tailscale state 的第二個 daemon。

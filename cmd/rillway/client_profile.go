@@ -1,22 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"rillway/internal/config"
 	"rillway/internal/tui"
+	"runtime"
 	"strings"
 )
 
 func defaultClientPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ".local/client.json"
-	}
-	return filepath.Join(dir, "rillway", "client.json")
+	dir, _ := os.UserConfigDir()
+	return userConfigFilePath(runtime.GOOS, dir, "client.json")
 }
 
 func loadClientProfile(path string) (tui.ConnectionSettings, error) {
@@ -86,7 +87,7 @@ func saveClientProfile(path string, settings tui.ConnectionSettings) error {
 }
 
 func installedConfigPath(goos string, candidates []string, fallback string) string {
-	if goos == "linux" {
+	if goos == "linux" || goos == "darwin" {
 		for _, path := range candidates {
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				return path
@@ -94,6 +95,59 @@ func installedConfigPath(goos string, candidates []string, fallback string) stri
 		}
 	}
 	return fallback
+}
+
+func resolveTerminalConnection(ctx context.Context, path, clientPath string, explicitConfig, explicitClient bool, settings tui.ConnectionSettings) (tui.ConnectionSettings, bool, error) {
+	// A discovered local configuration takes precedence over an implicit client
+	// profile, including when permissions prevent reading the private file.
+	if settings.BaseURL == "" && !explicitConfig {
+		_, statErr := os.Stat(path)
+		if !explicitClient && !os.IsNotExist(statErr) {
+			// Local configuration or a filesystem error must be handled below.
+			return localTerminalConnection(ctx, path, settings)
+		}
+		remembered, err := loadClientProfile(clientPath)
+		if err == nil {
+			settings.BaseURL = remembered.BaseURL
+			if settings.TokenFile == "" {
+				settings.TokenFile = remembered.TokenFile
+			}
+			if settings.CAFile == "" {
+				settings.CAFile = remembered.CAFile
+			}
+		} else if explicitClient || !os.IsNotExist(err) {
+			return settings, false, fmt.Errorf("read TUI connection profile: %w", err)
+		}
+	}
+	local := settings.BaseURL == ""
+	if local {
+		return localTerminalConnection(ctx, path, settings)
+	} else if settings.TokenFile == "" {
+		settings.TokenFile = filepath.Join(filepath.Dir(clientPath), "remote-admin.token")
+	}
+	return settings, local, nil
+}
+
+func localTerminalConnection(ctx context.Context, path string, settings tui.ConnectionSettings) (tui.ConnectionSettings, bool, error) {
+	c, err := config.Load(path)
+	if os.IsNotExist(err) {
+		c, err = initialize(ctx, path)
+	}
+	if err != nil {
+		return settings, true, err
+	}
+	host, port, _ := net.SplitHostPort(c.Listeners.Admin)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	settings.BaseURL = "https://" + net.JoinHostPort(host, port)
+	if settings.TokenFile == "" {
+		settings.TokenFile = c.Security.AdminTokenFile
+	}
+	if settings.CAFile == "" {
+		settings.CAFile = c.Security.TLSCertFile
+	}
+	return settings, true, nil
 }
 
 func tokenReadError(path string, err error) error {

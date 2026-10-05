@@ -46,11 +46,8 @@ func installFromSetup(ctx context.Context, path string, input io.Reader, out io.
 
 func setupCommand(ctx context.Context, args []string, input io.Reader, out io.Writer, deps setupDependencies) error {
 	fs := localizedFlags(ctx, "setup", out)
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return err
-	}
-	path := fs.String("config", filepath.Join(dir, "rillway", "config.json"), cliText(ctx, "new setup configuration file"))
+	dir, _ := os.UserConfigDir()
+	path := fs.String("config", userConfigPath(runtime.GOOS, dir), cliText(ctx, "new setup configuration file"))
 	listen := fs.String("listen", "127.0.0.1", cliText(ctx, "specific local IPv4 or IPv6 address; no wildcard"))
 	clients := fs.String("allow-client", "", cliText(ctx, "allowed client IPs or CIDRs, comma-separated"))
 	bypass := fs.String("bypass-domains", "local,ts.net,tailscale.com", cliText(ctx, "company bypass domains, comma-separated"))
@@ -62,7 +59,7 @@ func setupCommand(ctx context.Context, args []string, input io.Reader, out io.Wr
 	}
 	yes := fs.Bool("yes", false, cliText(ctx, "use supplied options without prompts; new installations only"))
 	noInstall := fs.Bool("no-install", false, cliText(ctx, "create configuration and credentials without installing a service"))
-	if err = fs.Parse(args); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

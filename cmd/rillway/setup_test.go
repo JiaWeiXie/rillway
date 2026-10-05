@@ -18,6 +18,19 @@ import (
 	"time"
 )
 
+func TestSetupExplicitConfigWithoutUserConfigEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	deps := setupDependencies{validate: func(context.Context, config.Config) error { return nil }}
+	if err := setupCommand(t.Context(), []string{"--yes", "--no-install", "--config", path}, strings.NewReader(""), io.Discard, deps); err != nil {
+		t.Fatal("explicit setup path depended on OS config environment:", err)
+	}
+	if _, err := config.Load(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSetupInteractive(t *testing.T) {
 	for _, locale := range []i18n.Locale{i18n.English, i18n.TraditionalChinese} {
 		t.Run(string(locale), func(t *testing.T) {

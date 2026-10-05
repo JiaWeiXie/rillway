@@ -14,7 +14,7 @@ rillway tui --lang en --config .local/config.json
 
 `--lang en|zh-Hant` 優先於 `RILLWAY_LANG`，預設英文。Web UI 語言獨立選擇。TUI 按 `L`／`Ctrl+L` 切換，輸入文字時使用 `Ctrl+L`。使用者資料與未知的上游訊息維持原文。Web 字體內建；終端機缺字時，請自行選擇支援中文／Emoji 的終端字體，工具不會安裝主機字體。
 
-Linux 的設定預設先找既有 `/etc/rillway/config.json`，再找舊安裝的 `/var/lib/rillway/config.json`；都不存在時使用 `$XDG_CONFIG_HOME/rillway/config.json`，通常為 `~/.config/rillway/config.json`。macOS 使用 `~/Library/Application Support/rillway/config.json`。`--config FILE` 可明確覆寫，相對路徑以目前目錄解析。Linux 正式設定為私有檔案，本機管理請用 `sudo`。不要讓第二個 daemon 占用相同 listener 或 Tailscale state。遠端 TUI 使用獨立的連線紀錄，不會修改伺服器設定檔。
+Linux 的設定預設先找既有 `/etc/rillway/config.json`，再找舊安裝的 `/var/lib/rillway/config.json`；都不存在時使用 `$XDG_CONFIG_HOME/rillway/config.json`，通常為 `~/.config/rillway/config.json`。macOS 使用 `~/Library/Application Support/Rillway/config.json`；大小寫有區別的檔案系統若只有舊 `rillway/config.json`，仍會沿用。`--config FILE` 可明確覆寫，相對路徑以目前目錄解析。Linux 正式設定為私有檔案，本機管理請用 `sudo`。不要讓第二個 daemon 占用相同 listener 或 Tailscale state。遠端 TUI 使用獨立的連線紀錄，不會修改伺服器設定檔。
 
 成功與 help 的結束碼為 `0`；錯誤選項、安裝輸入 EOF、驗證或操作失敗為 `1`。最後確認輸入非 `yes` 時會取消，結束碼 `0`，不寫檔。訊號會取消執行；`serve`／TUI 持續執行直到停止。一般輸出走 stdout，最後 CLI 錯誤走 stderr。`pac`、`docker export`、`diagnose`、`licenses` 可重新導向輸出。憑證從檔案讀取，setup／init 只印出權杖路徑。
 
@@ -72,7 +72,7 @@ rillway serve --config .local/config.json
 ## `tui`：本機與遠端管理
 
 ```sh
-sudo rillway tui --config /etc/rillway/config.json
+sudo rillway tui
 rillway tui --url https://192.0.2.20:17892 \
   --token-file ./private/admin.token --ca ./private/admin.crt
 ```
@@ -87,7 +87,7 @@ rillway tui --url https://192.0.2.20:17892 \
 
 本機模式從設定取得 URL、權杖及憑證路徑，可由選項覆寫。TUI 管理已執行的 daemon，不會啟動前景 daemon。Linux 服務設定／state 是私有檔案，本機操作需相應權限。遠端模式請安全複製公開憑證與私有權杖到用戶端，權杖設 `0600`，透過可信方式核對指紋。沒有略過 TLS 驗證的選項。
 
-第一次指定 VM 的 `--url`、`--token-file` 與 `--ca`，連線成功後就會記住。下次可直接執行 `rillway tui`。紀錄位於 OS 使用者設定目錄的 `rillway/client.json`，權限 `0600`；只保存網址與檔案路徑，不複製權杖內容。明確指定 `--url` 或 `--config` 可覆寫記錄。要管理本機安裝／啟動功能，使用 `--config FILE`。
+第一次指定 VM 的 `--url`、`--token-file` 與 `--ca`，連線成功後就會記住。沒有本機設定的用戶端，下次可直接執行 `rillway tui`。紀錄位於相同 OS 應用程式設定目錄的 `client.json`，權限 `0600`；macOS 的舊小寫路徑仍相容。只保存網址與檔案路徑，不複製權杖內容。選用順序為：明確指定 `--url`、明確指定 `--config`、明確指定的 `--client-config` 連線紀錄、已存在的 OS 預設設定、最後才是自動記住的連線。明確選用的連線紀錄缺少或無效時會報錯。本機設定無效或無權限讀取時會直接報錯，不會偷偷改連另一台伺服器。選用本機設定時可直接管理安裝／啟動功能，不需要額外加上 `--config`。
 
 連不到服務時，畫面會說明原因，按 `o` 可修改 HTTPS 網址、權杖與憑證檔案。按 `?` 查看使用方式；尚未載入設定時不會顯示假的版本或空白 Proxy 位址。連線成功後，使用說明會顯示實際 Proxy／PAC 位址。服務設定頁的 Web UI 管理權杖預設隱藏，按 `t` 才會顯示；離開該頁會自動隱藏。權杖只留在這次 TUI 執行期間的記憶體，不會複製進連線紀錄。
 
