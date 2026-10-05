@@ -58,6 +58,16 @@ mise run fuzz
 
 私人主機資料、完整操作紀錄與備份位置保存在 repository 之外或已被 Git 忽略的受限資料夾，未加入 Git。
 
+### 2026-10-05：CLI 預設設定路徑更新驗收
+
+來源 commit 為 `616a3b90a9a247dbd193ab126d0521712c92e71d`。`mise run check`、本機建置、四平台發布建置與發布檔雜湊檢查通過，並更新既有 Ubuntu VM。
+
+- VM 同時有新、舊預設設定檔；CLI 沿用 Rillway 安裝 unit 指定的有效設定，沒有改動 unit 或搬移設定。
+- 在 SSH Terminal 中直接執行已安裝的 `rillway`，不傳 `--config`／`--url`；TUI 載入現有設定版本，出口與 listener 正確，管理權杖保持隱藏。
+- 使用隔離的使用者設定目錄及刻意失效的舊 client profile，確認本機服務設定優先，成功連線後只記住網址與憑證檔路徑，不保存權杖內容。
+- `pac`、`docker export --target env` 不加設定路徑即可運作。更新後 TLS、API 權限、PAC、HTTP CONNECT、SOCKS5 與 GHCR 未登入回應均驗證；設定、unit 與憑證／權杖雜湊未變，服務維持 active/enabled。
+- macOS 路徑與舊小寫目錄相容已由自動測試驗證；本次未重新執行 macOS LaunchAgent 安裝或 Ubuntu 首次安裝。
+
 真實出口測試使用 `mise run test:live`，必須明確提供 `RILLWAY_LIVE_CONFIG`。缺少帳號、設定或目標時應回報 `NOT VERIFIED`／`SKIP`，不能把跳過視為成功。
 
 下列項目必須在各自的受控環境重新驗證，repository 不宣稱目前狀態：
