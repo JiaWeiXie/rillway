@@ -80,7 +80,7 @@ run = "go run ./tools/publiccheck"
 
 [tasks."security:vuln"]
 description = "Check reachable Go vulnerabilities against the current official database"
-run = ["GOOS=linux GOARCH=amd64 CGO_ENABLED=0 govulncheck ./...", "GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 govulncheck ./..."]
+run = ["GOOS=linux GOARCH=amd64 CGO_ENABLED=0 govulncheck ./...", "GOOS=linux GOARCH=arm64 CGO_ENABLED=0 govulncheck ./...", "GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 govulncheck ./...", "GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 govulncheck ./..."]
 
 [tasks."ci:lint"]
 description = "Validate GitHub Actions workflows"

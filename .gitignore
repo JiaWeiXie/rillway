@@ -24,3 +24,5 @@ rillway-proxy-backup.json
 *.token
 *.password
 *.tsnet-state
+*.pem
+*.crt

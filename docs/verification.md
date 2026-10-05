@@ -36,7 +36,7 @@ mise run fuzz
 
 - `mise run check` 通過：Lint 0 issues，完整 race／shuffle／coverage 測試通過。新增管理驗證及 HTTP／SOCKS5 共用的登入失敗限速，包含來源正規化、容量上限、到期恢復、並行操作及正確憑證無法繞過暫時封鎖的測試。
 - `mise run security` 通過：目前追蹤內容、所有可達歷史 blob、commit／tag metadata 及私下保存的已知個資 denylist 均未命中；Gitleaks 歷史掃描未找到秘密。私人 denylist 與掃描資料未追蹤。
-- `govulncheck` 依 Linux amd64／macOS arm64 發布設定執行，沒有可達漏洞，也沒有匯入含已知漏洞的 package。Module 層級另列出 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) 的 OpenPGP 警告；Rillway 沒有匯入該 package，沒有藉由升級其他 crypto API 宣稱消除此警告。
+- `govulncheck` 依 Linux／macOS 的 amd64／arm64 四種發布設定執行，沒有可達漏洞，也沒有匯入含已知漏洞的 package。Module 層級另列出 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) 的 OpenPGP 警告；Rillway 沒有匯入該 package，沒有藉由升級其他 crypto API 宣稱消除此警告。
 - `actionlint` 驗證 CI／Release workflow 通過；Actions SHA 從各 upstream repository 的 tag commit 核對。Workflow 設計採 PR 唯讀、關閉 checkout 憑證保存、GitHub 託管 runner、指定產物清單，以及獨立有寫入權限的 Draft Release 工作。
 - Git hook 測試確認文件 commit 也須執行秘密掃描，掃描失敗會阻止提交；檢查使用已暫存副本，不包含忽略的正式資料。
 - Release 測試確認版本進入四平台 linker flags、拒絕參數注入，且 checksum 不納入 dist 中其他未知檔案。四平台發布建置、manifest 雜湊檢查與有時間上限的 parser fuzz 測試通過。

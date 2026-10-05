@@ -7,7 +7,7 @@ import (
 )
 
 func TestPublishablePathsAndData(t *testing.T) {
-	for _, path := range []string{".local/backup.json", ".env", "nested/admin.token", "state/admin.key", "mise.local.toml", "dist/rillway-linux-amd64"} {
+	for _, path := range []string{".local/backup.json", ".env", "nested/admin.token", "state/admin.key", "state/admin.crt", "state/private.pem", "mise.local.toml", "dist/rillway-linux-amd64"} {
 		if !privatePath(path) {
 			t.Fatal("private path allowed", path)
 		}

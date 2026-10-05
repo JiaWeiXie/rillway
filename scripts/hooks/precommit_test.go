@@ -382,3 +382,19 @@ func TestPreCommitRejectsSecretInDocumentation(t *testing.T) {
 		t.Fatalf("secret scan failure allowed commit: %s", output)
 	}
 }
+
+func TestPreCommitRejectsRuntimeCredentialFiles(t *testing.T) {
+	for _, name := range []string{"nested/admin.token", "nested/admin.key", "nested/admin.crt", "nested/private.pem"} {
+		t.Run(name, func(t *testing.T) {
+			f := newHookFixture(t)
+			f.write(t, name, "synthetic fixture\n")
+			f.git(t, "add", "--", name)
+			if output, err := f.run(t); err == nil {
+				t.Fatalf("credential file accepted: %s", output)
+			}
+			if commands := f.commands(t); commands != "" {
+				t.Fatal("private file exported to scanner snapshot")
+			}
+		})
+	}
+}

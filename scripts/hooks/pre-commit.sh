@@ -79,6 +79,9 @@ while IFS= read -r -d '' entry; do
     *) fail "不支援的 Git index mode ${mode}：${path}" ;;
   esac
   case "$path" in
+    *.key|*.token|*.password|*.pem|*.crt|*.tsnet-state)
+      fail "憑證、秘密或 VPN state 不應在 Git index；請取消暫存該檔案。"
+      ;;
     .env.example) ;;
     .git|.git/*|.cache/*|.local/*|.state/*|secrets/*|run/*|logs/*|coverage/*|bin/*|build/*|dist/*|tmp/*|.env|.env.*|mise.local.toml|.mise.local.toml|rillway-proxy-backup.json|.rillway-proxy-backup.json)
       fail "私人設定或產物不應在 Git index：${path}。請先取消暫存該路徑。"

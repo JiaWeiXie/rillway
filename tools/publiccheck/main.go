@@ -23,7 +23,7 @@ func privatePath(name string) bool {
 		}
 	}
 	base := filepath.Base(name)
-	return base == ".env" || strings.HasPrefix(base, ".env.") && base != ".env.example" || strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".token") || strings.HasSuffix(base, ".password") || base == "mise.local.toml" || base == ".mise.local.toml" || strings.Contains(base, "proxy-backup.json")
+	return base == ".env" || strings.HasPrefix(base, ".env.") && base != ".env.example" || strings.HasSuffix(base, ".key") || strings.HasSuffix(base, ".token") || strings.HasSuffix(base, ".password") || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".crt") || strings.HasSuffix(base, ".tsnet-state") || base == "mise.local.toml" || base == ".mise.local.toml" || strings.Contains(base, "proxy-backup.json")
 }
 
 func contentPrivate(data []byte, patterns []string) bool {
