@@ -34,7 +34,7 @@ VM 與 Mac 位址是範例，請使用實際位址。預設只聽 loopback；引
 
 新安裝的有效設定在 **`/etc/rillway/config.json`**，私有 token、TLS 與 VPN state 在 `/var/lib/rillway/`；設定與 state 目錄 `0700`，秘密與設定檔 `0600`。Binary 位於 `/usr/local/lib/rillway/rillway`，PATH 連結 `/usr/local/bin/rillway`。systemd unit 啟用開機啟動並立即 start，只允許 daemon 寫入其設定／state。原暫存的使用者設定保留，安裝後服務不會讀取它。
 
-舊版安裝可能仍使用 **`/var/lib/rillway/config.json`**。新版 binary 可直接使用，不會自行搬移檔案或修改既有 unit。請先查看 `systemctl cat rillway`，再對實際設定操作。
+舊版安裝可能仍使用 **`/var/lib/rillway/config.json`**。新版 binary 可直接使用，不會自行搬移檔案或修改既有 unit。CLI 預設沿用 Rillway 安裝程式所產生 unit 的設定路徑，即使 `/etc/rillway/config.json` 同時存在，也不會蓋過 unit 指定的舊路徑。自行使用 wrapper 或 drop-in 的 unit 請加上 `--config FILE`；可用 `systemctl cat rillway` 確認實際設定。
 
 安裝印出 TLS 指紋與權杖檔案路徑，不輸出秘密內容。核對後信任自簽憑證或改用有效 TLS 憑證，於本機讀取 token 登入 Web UI。HTTP／SOCKS listener 是標準明文 Proxy，限制於可信任 LAN／VPN；ACL 不取代加密，不要公開 port forwarding。setup 不會修改防火牆、Mac proxy、公司 Tailscale、WARP 註冊／license 或 Docker。
 

@@ -79,7 +79,7 @@ sudo rillway tui
 ./rillway serve --config .local/config.json
 ```
 
-CLI commands discover the OS default configuration automatically; `--config FILE` overrides it. Linux prefers an existing `/etc/rillway/config.json`, then legacy `/var/lib/rillway/config.json`, then the user configuration directory. An existing local config takes precedence over an implicit remembered TUI connection.
+CLI commands discover the OS default configuration automatically; `--config FILE` overrides it. Linux first uses the config selected by a Rillway-generated `/etc/systemd/system/rillway.service`, then an existing `/etc/rillway/config.json`, legacy `/var/lib/rillway/config.json`, and the user configuration directory. An existing local config takes precedence over an implicit remembered TUI connection.
 
 See the [complete CLI reference](docs/cli.md) for every command, option, defaults,
 service operations, upgrades, Docker exports, and Mac PAC restoration.

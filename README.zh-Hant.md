@@ -57,7 +57,7 @@ sudo rillway tui
 ./rillway serve --config .local/config.json
 ```
 
-CLI 會自動讀取 OS 預設設定；`--config FILE` 可覆寫。Linux 依序搜尋既有 `/etc/rillway/config.json`、舊 `/var/lib/rillway/config.json`，再使用使用者設定目錄。已存在的本機設定優先於 TUI 自動記住的遠端連線。
+CLI 會自動讀取 OS 預設設定；`--config FILE` 可覆寫。Linux 優先使用 Rillway 安裝程式產生的 `/etc/systemd/system/rillway.service` 所指定的設定，再依序搜尋既有 `/etc/rillway/config.json`、舊 `/var/lib/rillway/config.json`，最後使用使用者設定目錄。已存在的本機設定優先於 TUI 自動記住的遠端連線。
 
 所有指令、選項、預設值、服務操作、升級、Docker 匯出與 Mac PAC 還原，都在 [完整 CLI 操作說明](docs/cli.zh-Hant.md)。
 

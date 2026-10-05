@@ -35,6 +35,9 @@ func main() {
 }
 
 func defaultPath() string {
+	if path := installedServiceConfigPath(runtime.GOOS, "/etc/systemd/system/rillway.service"); path != "" {
+		return path
+	}
 	dir, _ := os.UserConfigDir()
 	return defaultConfigPath(runtime.GOOS, dir, []string{"/etc/rillway/config.json", "/var/lib/rillway/config.json"})
 }

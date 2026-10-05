@@ -14,7 +14,7 @@ rillway tui --lang en --config .local/config.json
 
 `--lang en|zh-Hant` 優先於 `RILLWAY_LANG`，預設英文。Web UI 語言獨立選擇。TUI 按 `L`／`Ctrl+L` 切換，輸入文字時使用 `Ctrl+L`。使用者資料與未知的上游訊息維持原文。Web 字體內建；終端機缺字時，請自行選擇支援中文／Emoji 的終端字體，工具不會安裝主機字體。
 
-Linux 的設定預設先找既有 `/etc/rillway/config.json`，再找舊安裝的 `/var/lib/rillway/config.json`；都不存在時使用 `$XDG_CONFIG_HOME/rillway/config.json`，通常為 `~/.config/rillway/config.json`。macOS 使用 `~/Library/Application Support/Rillway/config.json`；大小寫有區別的檔案系統若只有舊 `rillway/config.json`，仍會沿用。`--config FILE` 可明確覆寫，相對路徑以目前目錄解析。Linux 正式設定為私有檔案，本機管理請用 `sudo`。不要讓第二個 daemon 占用相同 listener 或 Tailscale state。遠端 TUI 使用獨立的連線紀錄，不會修改伺服器設定檔。
+Linux 優先採用 Rillway 安裝程式產生的 `/etc/systemd/system/rillway.service` 所指定的設定，避免未使用的預設檔蓋過正式服務。找不到支援的 unit 時，依序搜尋既有 `/etc/rillway/config.json`、舊安裝的 `/var/lib/rillway/config.json`；都不存在時使用 `$XDG_CONFIG_HOME/rillway/config.json`，通常為 `~/.config/rillway/config.json`。macOS 使用 `~/Library/Application Support/Rillway/config.json`；大小寫有區別的檔案系統若只有舊 `rillway/config.json`，仍會沿用。`--config FILE` 可明確覆寫，相對路徑以目前目錄解析。自行使用 wrapper 或 systemd drop-in 覆寫設定路徑時，請明確指定 `--config FILE`。Linux 正式設定為私有檔案，本機管理請用 `sudo`。不要讓第二個 daemon 占用相同 listener 或 Tailscale state。遠端 TUI 使用獨立的連線紀錄，不會修改伺服器設定檔。
 
 成功與 help 的結束碼為 `0`；錯誤選項、安裝輸入 EOF、驗證或操作失敗為 `1`。最後確認輸入非 `yes` 時會取消，結束碼 `0`，不寫檔。訊號會取消執行；`serve`／TUI 持續執行直到停止。一般輸出走 stdout，最後 CLI 錯誤走 stderr。`pac`、`docker export`、`diagnose`、`licenses` 可重新導向輸出。憑證從檔案讀取，setup／init 只印出權杖路徑。
 
