@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security reports
-    url: https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/privately-reporting-a-security-vulnerability
+    url: https://github.com/JiaWeiXie/rillway/security/advisories/new
     about: Use this repository's Security tab to report vulnerabilities privately. Never paste credentials or private infrastructure details into issues.

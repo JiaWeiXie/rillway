@@ -40,10 +40,11 @@ a private Git bundle, ignored deployment folder, diagnostic log or whole workspa
 
 ## GitHub settings before publication
 
-This checkout is not connected to a GitHub repository yet. The workflow files do
-not configure repository settings by themselves. Before pushing or changing visibility:
+The public repository is [JiaWeiXie/rillway](https://github.com/JiaWeiXie/rillway).
+Workflow files do not configure repository settings by themselves. Maintainers
+should retain these protections; forks need to configure their own settings:
 
-1. Create the intended repository privately, confirm the license, and enable secret
+1. Confirm the MIT license and enable secret
    scanning, push protection, Dependabot alerts and private vulnerability reporting.
    Use account 2FA/passkeys and a GitHub noreply email.
 2. Protect `main`: require PR review, resolved conversations, the CI `security`,
@@ -60,7 +61,7 @@ not configure repository settings by themselves. Before pushing or changing visi
    require approval for outside contributors, and restrict actions to the reviewed
    pinned sources. Do not use self-hosted runners or add private deployment/VPN secrets.
 6. Audit all refs and publishable files. Push only intended branches/tags, run CI in
-   the private repository if the account plan supports it, then make the source public.
+   the private repository if the account plan supports it, before making new source public.
    Configure repository protections in the plan that will apply to public visibility.
 
 There are no required long-lived repository secrets. Public PRs never trigger
@@ -95,9 +96,8 @@ Verify a downloaded Linux binary before installing:
 
 ```sh
 sha256sum --check SHA256SUMS
-# Replace OWNER/REPO with the actual repository, not an example account.
-gh attestation verify ./rillway-linux-amd64 --repo OWNER/REPO \
-  --signer-workflow OWNER/REPO/.github/workflows/release.yml
+gh attestation verify ./rillway-linux-amd64 --repo JiaWeiXie/rillway \
+  --signer-workflow JiaWeiXie/rillway/.github/workflows/release.yml
 ```
 
 Provenance uses GitHub's OIDC/Sigstore service and does not need a private signing

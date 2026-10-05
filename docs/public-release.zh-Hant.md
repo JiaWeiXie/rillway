@@ -27,9 +27,9 @@ RILLWAY_PRIVACY_PATTERNS=/path/outside/repository/private-denylist.txt \
 
 ## GitHub 必須另外設定
 
-目前 checkout 沒有 GitHub remote。Workflow 不會自動啟用 repository 保護，第一次 push／公開前應完成：
+公開專案為 [JiaWeiXie/rillway](https://github.com/JiaWeiXie/rillway)。Workflow 不會自動啟用 repository 保護；維護者應保留以下設定，fork 則需在自己的 repository 另外設定：
 
-1. 先建立私有 repository，確認 LICENSE；啟用 secret scanning、push protection、Dependabot alerts、私下漏洞回報。帳號使用 2FA／passkey，Git 使用 noreply 信箱。
+1. 確認 MIT LICENSE；啟用 secret scanning、push protection、Dependabot alerts、私下漏洞回報。帳號使用 2FA／passkey，Git 使用 noreply 信箱。
 2. 保護 `main`：要求 PR 審查、對話已解決、`security`、`check (ubuntu-24.04)`、`check (macos-15)`、`cross-build`、`service-acceptance` 檢查通過；禁止刪除與 force push。限制 bypass 權限。若啟用 merge queue，先補上對應 CI trigger 並驗證。
 3. 保護 `v*` tags，限制建立、修改與刪除權限。Workflow、驗證、發布與安全政策變更須經審查；CODEOWNERS 使用實際的公開維護者身分，不能填不存在的帳號。
 4. 建立 `release` environment，設定維護者審核及只允許 `v*` tags。必須在第一次推 tag 前設定；YAML 引用 environment 本身不代表已有審核保護。
@@ -57,11 +57,11 @@ git push origin v0.1.0
 
 ```sh
 sha256sum --check SHA256SUMS
-gh attestation verify ./rillway-linux-amd64 --repo OWNER/REPO \
-  --signer-workflow OWNER/REPO/.github/workflows/release.yml
+gh attestation verify ./rillway-linux-amd64 --repo JiaWeiXie/rillway \
+  --signer-workflow JiaWeiXie/rillway/.github/workflows/release.yml
 ```
 
-`OWNER/REPO` 改成實際 repository。來源證明使用 GitHub OIDC／Sigstore，不必保存私人簽章金鑰；它確認產出來源，沒有承諾程式完全沒有漏洞。發布權限與 environment 必須保持受控。
+Fork 請改成自己的 repository。來源證明使用 GitHub OIDC／Sigstore，不必保存私人簽章金鑰；它確認產出來源，沒有承諾程式完全沒有漏洞。發布權限與 environment 必須保持受控。
 
 ## 發生外洩
 

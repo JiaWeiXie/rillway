@@ -2,6 +2,10 @@
 
 [English](README.md) · [繁體中文](README.zh-Hant.md)
 
+[![CI](https://github.com/JiaWeiXie/rillway/actions/workflows/ci.yml/badge.svg)](https://github.com/JiaWeiXie/rillway/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JiaWeiXie/rillway)](https://github.com/JiaWeiXie/rillway/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ![Rillway — Choose your route.](docs/brand/rillway-cover.png)
 
 Rillway is an observable multi-outbound TCP proxy written in Go. Its name joins
@@ -19,6 +23,8 @@ Each release target is **one standalone executable**. It includes the proxy,
 HTTPS Web UI, TUI, tsnet, userspace WireGuard, images, offline Chinese/emoji fonts,
 and third-party notices. The server does not need Go, Node, mise, or external UI
 files. **WARP/WARP+ requires the separately installed official Cloudflare client.**
+
+Download a binary and `SHA256SUMS` from [GitHub Releases](https://github.com/JiaWeiXie/rillway/releases/latest), or build from source.
 
 Choose `dist/rillway-linux-amd64`, `rillway-linux-arm64`, `rillway-darwin-amd64`, or
 `rillway-darwin-arm64` from `mise run release`. Verify against `dist/SHA256SUMS`,
@@ -164,7 +170,7 @@ draft GitHub Release with four standalone binaries, checksums and provenance.
 Private VM/VPN credentials are never required. Repository protections and the
 `release` environment must be configured separately before publication.
 
-Run `mise run security` before a public push. The proposed project license is
+Run `mise run security` before a public push. The project license is
 [MIT](LICENSE); upstream component/font notices retain their own licenses.
 
 ## Documentation

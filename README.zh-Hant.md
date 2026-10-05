@@ -2,6 +2,10 @@
 
 [English](README.md) · [繁體中文](README.zh-Hant.md)
 
+[![CI](https://github.com/JiaWeiXie/rillway/actions/workflows/ci.yml/badge.svg)](https://github.com/JiaWeiXie/rillway/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JiaWeiXie/rillway)](https://github.com/JiaWeiXie/rillway/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ![Rillway — Choose your route.](docs/brand/rillway-cover.png)
 
 Rillway 是以 Go 實作、可觀察的多出口 TCP Proxy。名稱結合 **rill**（小溪）與 **way**（路徑）：讓每條連線選擇適合的出口，並看得到結果。
@@ -13,6 +17,8 @@ Web UI 與 TUI 會先填好常用出口設定。TUI 按 `o` 選擇服務、`?` �
 ## 單一執行檔與引導安裝
 
 每個發布平台只需要 **一個獨立執行檔**，內建 Proxy、HTTPS Web UI、TUI、tsnet、WireGuard userspace 引擎、圖片、離線中文字體／Emoji 字體與第三方授權。伺服器不需要 Go、Node、mise 或外部介面素材。**WARP／WARP+ 仍需另外安裝 Cloudflare 官方 client。**
+
+從 [GitHub Releases](https://github.com/JiaWeiXie/rillway/releases/latest) 下載執行檔與 `SHA256SUMS`，或自行編譯。
 
 從 `mise run release` 的產物選擇 `dist/rillway-linux-amd64`、`rillway-linux-arm64`、`rillway-darwin-amd64` 或 `rillway-darwin-arm64`。依 `dist/SHA256SUMS` 核對雜湊，將執行檔複製到目標主機並命名為 `rillway`：
 
@@ -120,7 +126,7 @@ Rillway 適用於可信任區網／VPN，管理與 Proxy 連接埠應保持私�
 
 CI 執行 Linux／macOS 檢查、秘密與歷史掃描、Go 漏洞檢查、fuzz 及隔離 Ubuntu 服務驗收。審查完成的 `v*` tags 可建立 Draft GitHub Release，包含四種單一 binary、checksum 與來源證明。流程不需要 VM／VPN 憑證；repository 保護及 `release` environment 必須在公開前另外設定。
 
-公開 push 前執行 `mise run security`。專案目前準備的授權為 [MIT](LICENSE)；第三方套件與字體維持原授權。
+公開 push 前執行 `mise run security`。專案授權為 [MIT](LICENSE)；第三方套件與字體維持原授權。
 
 ## 文件
 
