@@ -114,6 +114,14 @@ mise run dev
 
 測試保留 CGO 以使用 race detector；發布採 `CGO_ENABLED=0`。PAC 執行測試只在測試時使用 Node，缺少時明確 skip。Git／Agent hooks 直接呼叫 mise 工具。快取與本機秘密資料由 Git ignore 排除。修改套件或字體授權後需更新 notices，release 會在編譯前自動執行。
 
+## 安全與公開發布
+
+Rillway 適用於可信任區網／VPN，管理與 Proxy 連接埠應保持私有。請參考[安全政策](SECURITY.zh-Hant.md)、[貢獻指南](CONTRIBUTING.md)及[公開發布流程](docs/public-release.zh-Hant.md)。
+
+CI 執行 Linux／macOS 檢查、秘密與歷史掃描、Go 漏洞檢查、fuzz 及隔離 Ubuntu 服務驗收。審查完成的 `v*` tags 可建立 Draft GitHub Release，包含四種單一 binary、checksum 與來源證明。流程不需要 VM／VPN 憑證；repository 保護及 `release` environment 必須在公開前另外設定。
+
+公開 push 前執行 `mise run security`。專案目前準備的授權為 [MIT](LICENSE)；第三方套件與字體維持原授權。
+
 ## 文件
 
 - [CLI: English](docs/cli.md) · [CLI：繁體中文](docs/cli.zh-Hant.md)

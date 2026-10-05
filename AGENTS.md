@@ -118,3 +118,11 @@ An explicit `/org/project` ID from the user can skip resolution. Prefer fetched 
 `docs/changelog.md` describes commit message conventions and git-cliff release notes.
 `docs/docker.md` distinguishes Docker Engine, client/build/container, Desktop, and OrbStack proxy settings. Exports must not mutate Docker settings, leak credentials, or imply container DNS/VPN access was verified.
 Keep examples free of real credentials and use `THIRD_PARTY.md` plus release scripts for dependency/license information.
+
+## Public-source security
+
+- Run `mise run security` before public pushes or release preparation. Gitleaks scans all reachable history; `security:source` checks tracked source, private paths, metadata and optional operator-specific deny patterns stored outside Git.
+- Never upload whole workspaces, private Git bundles, local deployment data or test credentials. Release uploads use an explicit allowlist. Review screenshot pixels separately; text scanners cannot validate images.
+- Public PR jobs stay read-only on hosted disposable runners, with no deployment/VPN secrets. Never introduce `pull_request_target`, untrusted `workflow_run`, self-hosted runners or credential persistence for PR code.
+- Pin actions to verified full upstream commit SHAs. Publishing is isolated from repository-code execution and gated by the protected `release` environment. YAML does not enable repository protections; follow `docs/public-release.md`.
+- Maintain both security policy languages. Do not claim scans, provenance, or rate limiting guarantee security. Revoke exposed credentials before rewriting history.

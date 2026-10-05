@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"rillway/internal/authguard"
 	"rillway/internal/config"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ type Server struct {
 	connections        map[io.ReadWriteCloser]struct{}
 	listeners          map[net.Listener]struct{}
 	closed             bool
+	authFailures       *authguard.Limiter
 }
 
 func New(dialer Dialer, security config.Security, password string) (*Server, error) {
@@ -46,7 +48,7 @@ func New(dialer Dialer, security config.Security, password string) (*Server, err
 	if len(security.ProxyUsername) > 255 || len(password) > 255 {
 		return nil, errors.New("SOCKS credentials must fit in 255 bytes")
 	}
-	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{})}
+	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New()}
 	allowed := security.AllowedClients
 	if len(allowed) == 0 {
 		allowed = []string{"127.0.0.0/8", "::1/128"}
@@ -114,7 +116,13 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "proxy source is not allowed", http.StatusForbidden)
 		return
 	}
+	if s.username != "" && !s.authFailures.Allow(r.RemoteAddr) {
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "too many proxy authentication attempts", http.StatusTooManyRequests)
+		return
+	}
 	if !s.authenticated(r) {
+		s.authFailures.Failure(r.RemoteAddr)
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Rillway"`)
 		http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
 		return

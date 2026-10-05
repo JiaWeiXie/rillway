@@ -86,17 +86,20 @@ while IFS= read -r -d '' entry; do
   esac
 done < "$scratch/index"
 
-if [[ $needs_go == 0 ]]; then
-  printf '%s\n' 'Rillway pre-commit: 沒有 Go 相關的已暫存變更，略過 Go 檢查。'
-  completed=1
-  exit 0
-fi
-
 command -v mise >/dev/null 2>&1 || fail '找不到 mise。請先安裝 mise，並在專案根目錄執行 mise install。'
-
 snapshot="$scratch/snapshot"
 run mkdir "$snapshot"
 run git -C "$repository" checkout-index --all --force --prefix="$snapshot/"
+
+# Scan the exact index, including documentation-only commits. Redact all output;
+# never scan local state or allow inline comments to suppress secret findings.
+cd "$repository"
+run mise exec -- gitleaks dir --config "$repository/.gitleaks.toml" --ignore-gitleaks-allow --redact --no-banner "$snapshot"
+if [[ $needs_go == 0 ]]; then
+  printf '%s\n' 'Rillway pre-commit: 秘密掃描通過，沒有 Go 相關的已暫存變更，略過 Go 檢查。'
+  completed=1
+  exit 0
+fi
 
 printf '%s\n' 'Rillway pre-commit: 正在檢查已暫存副本，工作目錄與 Git index 保持不變。'
 

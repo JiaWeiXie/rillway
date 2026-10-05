@@ -32,6 +32,17 @@ mise run fuzz
 
 以上是本機與模擬出口的驗證，外部帳號及目標平台的實際驗收仍依下節另行進行。
 
+## 2026-10-05 公開專案準備驗證
+
+- `mise run check` 通過：Lint 0 issues，完整 race／shuffle／coverage 測試通過。新增管理驗證及 HTTP／SOCKS5 共用的登入失敗限速，包含來源正規化、容量上限、到期恢復、並行操作及正確憑證無法繞過暫時封鎖的測試。
+- `mise run security` 通過：目前追蹤內容、所有可達歷史 blob、commit／tag metadata 及私下保存的已知個資 denylist 均未命中；Gitleaks 歷史掃描未找到秘密。私人 denylist 與掃描資料未追蹤。
+- `govulncheck` 依 Linux amd64／macOS arm64 發布設定執行，沒有可達漏洞，也沒有匯入含已知漏洞的 package。Module 層級另列出 [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) 的 OpenPGP 警告；Rillway 沒有匯入該 package，沒有藉由升級其他 crypto API 宣稱消除此警告。
+- `actionlint` 驗證 CI／Release workflow 通過；Actions SHA 從各 upstream repository 的 tag commit 核對。Workflow 設計採 PR 唯讀、關閉 checkout 憑證保存、GitHub 託管 runner、指定產物清單，以及獨立有寫入權限的 Draft Release 工作。
+- Git hook 測試確認文件 commit 也須執行秘密掃描，掃描失敗會阻止提交；檢查使用已暫存副本，不包含忽略的正式資料。
+- Release 測試確認版本進入四平台 linker flags、拒絕參數注入，且 checksum 不納入 dist 中其他未知檔案。四平台發布建置、manifest 雜湊檢查與有時間上限的 parser fuzz 測試通過。
+- 人工查看目前追蹤的四張 Web UI 截圖：只顯示本機合成流量、沒有 Token、私人主機位址或姓名。文字掃描不代表已自動驗證圖片內的所有內容。
+- 本輪尚未建立 GitHub remote／repository、執行 hosted CI、產生 GitHub attestation、公開 Release 或啟用 repository 保護；相關流程已準備，實際設定與驗收仍待指定 repository 後完成。沒有部署本輪認證限速修改到正式 VM。
+
 ## 已覆蓋的行為
 
 - 分流規則優先序、網域邊界、CIDR、雙棧、私網保護與出口 DNS 隔離。

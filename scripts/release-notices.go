@@ -69,6 +69,13 @@ func generate() error {
 	sort.Slice(modules, func(i, j int) bool { return modules[i].Path < modules[j].Path })
 	var notices strings.Builder
 	notices.WriteString("Rillway third-party notices. Embedded in the standalone binary.\n\n")
+	license, err := os.ReadFile("LICENSE")
+	if err != nil {
+		return err
+	}
+	notices.WriteString("===== Rillway / LICENSE =====\n")
+	notices.Write(license)
+	notices.WriteString("\n\n")
 	summary, err := os.ReadFile("THIRD_PARTY.md")
 	if err != nil {
 		return err
@@ -155,10 +162,7 @@ func generate() error {
 
 func writeHashes() error {
 	var hashes strings.Builder
-	binaries, err := filepath.Glob("dist/rillway-*")
-	if err != nil {
-		return err
-	}
+	binaries := []string{"dist/rillway-linux-amd64", "dist/rillway-linux-arm64", "dist/rillway-darwin-amd64", "dist/rillway-darwin-arm64"}
 	for _, path := range binaries {
 		f, e := os.Open(path)
 		if e != nil {

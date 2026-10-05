@@ -60,6 +60,7 @@ func newHookFixture(t *testing.T) *hookFixture {
 	}
 	f.env = append(f.env, "PATH="+f.bin, "TMPDIR="+f.scratch, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "HOOK_TEST_REPO="+root, "HOOK_TEST_LOG="+f.log, "HOOK_TEST_EXPECTED=package staged", "HOOK_TEST_STAGED_PATH=main.go")
 	f.writeTool(t, "mise", fakeMise)
+	f.writeTool(t, "gitleaks", fakeSecretTool)
 	f.writeTool(t, "go", fakeCheckedTool)
 	f.writeTool(t, "golangci-lint", fakeCheckedTool)
 	f.git(t, "init", "--initial-branch=main")
@@ -153,19 +154,16 @@ func TestPreCommitUsesOnlyStagedSnapshot(t *testing.T) {
 	}
 }
 
-func TestPreCommitDocsOnlyDoesNotRequireMise(t *testing.T) {
+func TestPreCommitDocsOnlyStillScansSecrets(t *testing.T) {
 	f := newHookFixture(t)
-	if err := os.Remove(filepath.Join(f.bin, "mise")); err != nil {
-		t.Fatal(err)
-	}
 	f.write(t, "docs/notes with spaces.md", "notes\n")
 	f.git(t, "add", "--", "docs/notes with spaces.md")
 	output, err := f.run(t)
 	if err != nil || !strings.Contains(output, "略過 Go 檢查") {
 		t.Fatalf("docs-only check: %v\n%s", err, output)
 	}
-	if commands := f.commands(t); commands != "" {
-		t.Fatalf("docs-only ran tools: %s", commands)
+	if commands := f.commands(t); !strings.Contains(commands, "gitleaks|") || strings.Contains(commands, "golangci-lint|") {
+		t.Fatalf("docs-only did not scan secrets independently: %s", commands)
 	}
 }
 
@@ -365,3 +363,22 @@ fi
 [ "$*" = 'test ./...' ] || exit 100
 exit "${HOOK_TEST_GO_EXIT:-0}"
 `
+
+const fakeSecretTool = `#!/bin/sh
+printf 'gitleaks|%s|%s\n' "$PWD" "$*" >> "$HOOK_TEST_LOG"
+case "$*" in *--redact*--no-banner*) ;; *) exit 99 ;; esac
+for arg do snapshot=$arg; done
+[ -d "$snapshot" ] && [ "$snapshot" != "$HOOK_TEST_REPO" ] || exit 98
+[ ! -e "$snapshot/.local" ] && [ ! -e "$snapshot/secrets" ] || exit 97
+exit "${HOOK_TEST_SECRET_EXIT:-0}"
+`
+
+func TestPreCommitRejectsSecretInDocumentation(t *testing.T) {
+	f := newHookFixture(t)
+	f.write(t, "docs/notes.md", "notes\n")
+	f.git(t, "add", "--", "docs/notes.md")
+	f.env = append(f.env, "HOOK_TEST_SECRET_EXIT=42")
+	if output, err := f.run(t); err == nil {
+		t.Fatalf("secret scan failure allowed commit: %s", output)
+	}
+}

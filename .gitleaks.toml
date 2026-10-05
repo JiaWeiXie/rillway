@@ -1,0 +1,15 @@
+title = "Rillway public-source secret policy"
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-home-path"
+description = "Personal home directory paths do not belong in public source"
+regex = '''/(?:Users|home)/[A-Za-z0-9._-]+'''
+
+[[rules]]
+id = "vpn-secret-assignment"
+description = "High-entropy VPN keys and license assignments"
+regex = '''(?i)(?:private_?key|auth_?key|warp_?license|license_?key|management_?token)["'\s]*[:=]["'\s]*([A-Za-z0-9+/=_-]{32,})'''
+secretGroup = 1
+entropy = 3.5

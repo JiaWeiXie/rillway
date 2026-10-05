@@ -3,6 +3,9 @@ go = "1.27.1"
 "go:golang.org/x/tools/gopls" = "v0.23.0"
 golangci-lint = "2.14.0"
 "aqua:orhun/git-cliff" = "2.13.1"
+"aqua:gitleaks/gitleaks" = "8.30.1"
+"aqua:rhysd/actionlint" = "1.7.12"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [settings]
 lockfile = true
@@ -66,3 +69,22 @@ run = "git-cliff --offline --no-exec --config cliff.toml --output /dev/null"
 [tasks.notices]
 description = "Refresh the third-party notices embedded in the single binary"
 run = "go run scripts/release-notices.go --prepare"
+
+[tasks."security:secrets"]
+description = "Scan every reachable Git commit for secrets with redacted output"
+run = "gitleaks git --config .gitleaks.toml --ignore-gitleaks-allow --redact --no-banner --log-opts=--all ."
+
+[tasks."security:source"]
+description = "Audit tracked files, metadata and all reachable history for private data"
+run = "go run ./tools/publiccheck"
+
+[tasks."security:vuln"]
+description = "Check reachable Go vulnerabilities against the current official database"
+run = ["GOOS=linux GOARCH=amd64 CGO_ENABLED=0 govulncheck ./...", "GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 govulncheck ./..."]
+
+[tasks."ci:lint"]
+description = "Validate GitHub Actions workflows"
+run = "actionlint -shellcheck= .github/workflows/*.yml"
+
+[tasks.security]
+run = ["mise run security:source", "mise run security:secrets", "mise run security:vuln", "mise run ci:lint"]

@@ -19,3 +19,8 @@
 .rillway-proxy-backup.json
 rillway-proxy-backup.json
 /.claude/settings.local.json
+# Runtime credentials may be placed outside the normal secrets directory.
+*.key
+*.token
+*.password
+*.tsnet-state

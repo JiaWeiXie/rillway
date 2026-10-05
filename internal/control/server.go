@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"rillway/internal/authguard"
 	"rillway/internal/config"
 	"rillway/internal/dockerproxy"
 	"rillway/internal/i18n"
@@ -33,15 +34,16 @@ type Backend interface {
 var assets embed.FS
 
 type handler struct {
-	backend Backend
-	token   string
-	applyMu sync.Mutex
+	backend      Backend
+	token        string
+	applyMu      sync.Mutex
+	authFailures *authguard.Limiter
 }
 
 // New returns an HTTP handler. Its listener and TLS belong to the caller.
 // No configuration, statistics, or provider state is available without a token.
 func New(backend Backend, adminToken string) http.Handler {
-	h := &handler{backend: backend, token: adminToken}
+	h := &handler{backend: backend, token: adminToken, authFailures: authguard.New()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/config", h.protect(h.getConfig))
 	mux.HandleFunc("GET /api/v1/defaults", h.protect(func(w http.ResponseWriter, _ *http.Request) {
@@ -119,8 +121,14 @@ func (h *handler) protect(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, r, 503, "The management service has no configured token.")
 			return
 		}
+		if !h.authFailures.Allow(r.RemoteAddr) {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, r, http.StatusTooManyRequests, "Too many sign-in attempts. Wait one minute and try again.")
+			return
+		}
 		provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || subtle.ConstantTimeCompare([]byte(provided), []byte(h.token)) != 1 {
+			h.authFailures.Failure(r.RemoteAddr)
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, r, 401, "Enter a valid management token to sign in.")
 			return

@@ -152,6 +152,21 @@ invoke the mise tools directly.
 Caches and local secrets are ignored by Git. Refresh notices after dependency or
 font-license changes; release does this automatically before compiling.
 
+## Security and releases
+
+Rillway is intended for a trusted LAN/VPN. Keep its ports private and protect
+credentials on the host. See [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [public release guide](docs/public-release.md).
+
+CI runs Linux/macOS checks, secret/history scanning, Go vulnerability checks,
+fuzzing and disposable Ubuntu service acceptance. Reviewed `v*` tags create a
+draft GitHub Release with four standalone binaries, checksums and provenance.
+Private VM/VPN credentials are never required. Repository protections and the
+`release` environment must be configured separately before publication.
+
+Run `mise run security` before a public push. The proposed project license is
+[MIT](LICENSE); upstream component/font notices retain their own licenses.
+
 ## Documentation
 
 - [CLI: English](docs/cli.md) · [CLI：繁體中文](docs/cli.zh-Hant.md)

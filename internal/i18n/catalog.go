@@ -3,6 +3,7 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"Too many sign-in attempts. Wait one minute and try again.":                                                                            "登入嘗試過多，請等一分鐘後再試。",
 	"The Tailscale state lock must be a private regular file.":                                                                             "Tailscale 狀態鎖必須是只有擁有者可存取的一般檔案。",
 	"The Tailscale state directory is already in use by another Rillway process. Use a separate state directory.":                          "另一個 Rillway 程序正在使用這個 Tailscale 狀態資料夾，請改用獨立的資料夾。",
 	"Could not lock the Tailscale state directory.":                                                                                        "無法鎖定 Tailscale 狀態資料夾。",

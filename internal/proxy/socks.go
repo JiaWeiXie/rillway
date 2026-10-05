@@ -139,7 +139,10 @@ func (s *Server) socksAuthenticate(conn net.Conn) bool {
 	if _, err := io.ReadFull(conn, password); err != nil {
 		return false
 	}
-	accepted := same(string(user), s.username) && same(string(password), s.password)
+	accepted := s.authFailures.Allow(conn.RemoteAddr().String()) && same(string(user), s.username) && same(string(password), s.password)
+	if !accepted {
+		s.authFailures.Failure(conn.RemoteAddr().String())
+	}
 	status := byte(1)
 	if accepted {
 		status = 0
