@@ -48,7 +48,7 @@ class DigestTests(unittest.TestCase):
         code = workflow.split("        run: |\n", 1)[1]
         code = "\n".join(line[10:] for line in code.splitlines())
         issue = {"number": 9, "title": digest.TITLE, "body": digest.MARKER + "\nold", "author": {"login": "github-actions[bot]"}}
-        for author, expected in [("github-actions[bot]", "PATCH"), ("someone", "POST")]:
+        for author, expected in [("app/github-actions", "PATCH"), ("github-actions[bot]", "PATCH"), ("someone", "POST")]:
             issue["author"]["login"] = author
             with mock.patch.dict(os.environ, {"GH_REPO": "example/project"}), mock.patch("pathlib.Path.read_text", return_value=digest.MARKER + "\nreport"), mock.patch("subprocess.check_output", return_value=json.dumps([issue])), mock.patch("subprocess.run") as run:
                 exec(compile(code, "workflow-publisher", "exec"), {})

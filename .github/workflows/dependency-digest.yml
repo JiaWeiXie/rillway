@@ -67,7 +67,7 @@ jobs:
               '--json', 'number,title,body,author'], text=True))
           matches = [i for i in issues if i['title'] == title
                      and (i.get('body') or '').startswith(marker + '\n')
-                     and i['author']['login'] == 'github-actions[bot]']
+                     and i['author']['login'] in ('app/github-actions', 'github-actions[bot]')]
           if len(matches) > 1:
               raise SystemExit('Multiple digest issues require maintainer review')
           endpoint = f'repos/{repository}/issues'
