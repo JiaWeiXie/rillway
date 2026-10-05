@@ -4,6 +4,8 @@ on:
     tags: ['v*']
 permissions:
   contents: read
+env:
+  MISE_LOCKED: "1"
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false

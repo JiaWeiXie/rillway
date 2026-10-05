@@ -7,6 +7,14 @@ case "$release_version" in
 esac
 mkdir -p dist
 go run scripts/release-notices.go --prepare
+# Build metadata must describe exactly the reviewed source, including notices.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [ -n "$(git status --porcelain)" ]; then
+    printf '%s\n' 'Release source is dirty; commit reviewed changes before building.' >&2
+    git status --short >&2
+    exit 1
+  fi
+fi
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   target_os=${target%/*}
   target_arch=${target#*/}

@@ -64,6 +64,10 @@ mise run fuzz
 
 Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/JiaWeiXie/rillway/actions/workflows/release.yml) 及 [Releases](https://github.com/JiaWeiXie/rillway/releases) 查看。首次 hosted CI 不代表 Ubuntu 26.04、macOS LaunchAgent、真實 VPN 或家用網路效能已完成驗收。Dependabot 更新仍須獨立審查；未經審查的 action SHA 不會自動加入允許清單。
 
+## 2026-10-05：發布來源一致性修正
+
+正式 binary 檢查發現 CI 安裝工具後改寫 `mise.lock`，Go 因此標示 `vcs.modified=true`。第一輪發布在保護關卡取消，沒有公開 GitHub Release。CI／Release 改用 `MISE_LOCKED=1`；CI 檢查工具安裝不改動追蹤來源，release 在 notices 準備後拒絕任何未提交變更。回歸測試確認生成來源漂移時不會建置 binary，沒有使用停用 VCS metadata 的方式掩蓋狀態。
+
 ## 已覆蓋的行為
 
 - 分流規則優先序、網域邊界、CIDR、雙棧、私網保護與出口 DNS 隔離。

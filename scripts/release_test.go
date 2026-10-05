@@ -39,6 +39,8 @@ if [ "$1" = build ]; then
   previous=$arg
  done
  printf 'synthetic binary\n' > "$output"
+elif [ "$3" = --prepare ] && [ "$RILLWAY_TEST_MODIFY_SOURCE" = 1 ]; then
+ printf 'unexpected generated source\n' >> scripts/release-notices.go
 elif [ "$3" = --hashes-only ]; then
  exec "$RILLWAY_TEST_REAL_GO" "$@"
 fi
@@ -52,10 +54,25 @@ fi
 	if err = os.WriteFile(filepath.Join(root, "dist", "rillway-private-backup"), []byte("not publishable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err = os.WriteFile(filepath.Join(root, ".gitignore"), []byte("/dist/\n/fake-bin/\n/log\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = root
+		if out, gitErr := c.CombinedOutput(); gitErr != nil {
+			t.Fatalf("git: %v %s", gitErr, out)
+		}
+	}
+	git("init", "--quiet")
+	git("add", ".")
+	git("-c", "user.name=Rillway Test", "-c", "user.email=test@rillway.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "test: initialize release fixture")
+	modifySource := false
 	run := func(version string) ([]byte, error) {
 		c := exec.Command("sh", "scripts/release.sh")
 		c.Dir = root
-		c.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "RILLWAY_RELEASE_VERSION="+version, "RILLWAY_TEST_LOG="+filepath.Join(root, "log"), "RILLWAY_TEST_REAL_GO="+realGo)
+		c.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "RILLWAY_RELEASE_VERSION="+version, "RILLWAY_TEST_LOG="+filepath.Join(root, "log"), "RILLWAY_TEST_REAL_GO="+realGo, "RILLWAY_TEST_MODIFY_SOURCE="+map[bool]string{true: "1", false: "0"}[modifySource])
 		return c.CombinedOutput()
 	}
 	if out, err := run("v1.2.3-rc.1"); err != nil {
@@ -77,5 +94,19 @@ fi
 	}
 	if out, err := run("v1.2.3 -X main.injected=value"); err == nil || !strings.Contains(string(out), "Invalid release version") {
 		t.Fatal("linker argument injection accepted")
+	}
+	if err = os.WriteFile(filepath.Join(root, "log"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modifySource = true
+	if out, err := run("v1.2.3"); err == nil || !strings.Contains(string(out), "Release source is dirty") {
+		t.Fatal("generated source drift was accepted")
+	}
+	log, err = os.ReadFile(filepath.Join(root, "log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(log), "build ") {
+		t.Fatal("binaries built after generated source drift")
 	}
 }
