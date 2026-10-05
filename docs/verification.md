@@ -40,6 +40,7 @@ mise run fuzz
 - `actionlint` 驗證 CI／Release workflow 通過；Actions SHA 從各 upstream repository 的 tag commit 核對。Workflow 設計採 PR 唯讀、關閉 checkout 憑證保存、GitHub 託管 runner、指定產物清單，以及獨立有寫入權限的 Draft Release 工作。
 - Git hook 測試確認文件 commit 也須執行秘密掃描，掃描失敗會阻止提交；檢查使用已暫存副本，不包含忽略的正式資料。
 - Release 測試確認版本進入四平台 linker flags、拒絕參數注入，且 checksum 不納入 dist 中其他未知檔案。四平台發布建置、manifest 雜湊檢查與有時間上限的 parser fuzz 測試通過。
+- 來源 commit `18cf723` 的四種 binary 已以 `v0.1.0-rc.1` 預覽版本建置，CLI 版本正確，VCS metadata 顯示 `vcs.modified=false`，四份 checksum 通過。檢查 binary 與 Git source archive 都未命中私下保存的已知個資；source archive 未包含本機 state、憑證、部署紀錄或產物目錄。沒有因此建立任何發布 tag 或公開 Release。
 - 人工查看目前追蹤的四張 Web UI 截圖：只顯示本機合成流量、沒有 Token、私人主機位址或姓名。文字掃描不代表已自動驗證圖片內的所有內容。
 - 本輪尚未建立 GitHub remote／repository、執行 hosted CI、產生 GitHub attestation、公開 Release 或啟用 repository 保護；相關流程已準備，實際設定與驗收仍待指定 repository 後完成。沒有部署本輪認證限速修改到正式 VM。
 
