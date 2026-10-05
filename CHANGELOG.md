@@ -2,11 +2,15 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
-## Unreleased
+## 0.2.0 - 2026-10-05
+
+### Features
+
+- **control:** manage VPN profiles and restart service from the web
 
 ### Maintenance
 
-- **release:** finalize v0.1.0 changelog
+- **release:** prepare v0.2.0 changelog
 ## 0.1.0 - 2026-10-05
 
 ### Features
@@ -50,6 +54,7 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 - **security:** remove private deployment details
 - **release:** prepare v0.1.0 verified source
 - detect tracked source changes during tool setup
+- **release:** finalize v0.1.0 changelog
 
 ### Other changes
 
