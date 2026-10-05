@@ -8,6 +8,10 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 - **control:** manage VPN profiles and restart service from the web
 
+### Documentation
+
+- record cleanup of disposable test environments
+
 ### Maintenance
 
 - **release:** prepare v0.2.0 changelog

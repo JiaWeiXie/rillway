@@ -166,7 +166,7 @@ Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/Ji
 - 新建 x86_64 模擬機連基本命令也無法完成，已停止，改用原生 arm64。這輪沒有把該機器算作 x86_64 通過；既有正式 x86_64 VM 的先前驗收仍是不同證據。
 - Docker 內建 BuildKit 的 nested overlay 掛載被 OrbStack 拒絕；獨立 `docker-container` BuildKit 改用官方支援的 `native` snapshotter 後實際建置通過，未降低 Mac 或既有機器的安全設定。
 - 尚未操作 macOS LaunchAgent／系統 PAC 套用還原、Docker Desktop／OrbStack 的全域代理、公司 Tailnet ACL／subnet routes、第三方 WireGuard 公網 VPN、首次 WARP+ license 套用或長時間 GitHub CDN 下載比較。
-- 所有測試金鑰、登入 URL、設定、主機位址、完整記錄及截圖保留在 Git 忽略的私有目錄或 repository 之外；不放入公開文件。兩台原生測試機保留以供重跑，測試延遲、合成路由與臨時瀏覽器轉送在完成後清理。
+- 測試期間的金鑰、登入 URL、設定、主機位址、完整記錄及截圖只放在 Git 忽略的私有目錄或 repository 之外，不放入公開文件。驗收後先清除測試延遲、合成路由與臨時瀏覽器轉送。依使用者要求，發布前再刪除兩台原生測試機、未能驗收的 x86_64 測試機，以及本機測試金鑰、設定、記錄與截圖；使用者已移除兩個 Tailnet 測試節點。公開報告與可重跑的測試程式保留，正式環境設定及部署備份不受影響。
 
 ## 2026-10-05：家用規格配額壓力測試
 
