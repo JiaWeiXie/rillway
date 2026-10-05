@@ -71,8 +71,10 @@ write releases. Automated dependency updates must retain immutable action SHAs.
 
 Dependency monitoring uses a monthly digest issue, refreshed on the first day of
 each month (09:17 Asia/Taipei). The workflow reuses its own open issue and reports
-Go module and pinned GitHub Actions updates without modifying source. It can also
-be run manually. Dependabot version PR limits are zero; disable **Dependabot
+updates for direct Go modules and pinned GitHub Actions. It excludes transitive and
+development-only modules declared by upstream dependencies, whose vulnerabilities
+remain covered by regular security checks. It does not modify source and can also be
+run manually. Dependabot version PR limits are zero; disable **Dependabot
 security updates** in repository settings as well, while retaining **Dependabot
 alerts**, to prevent security PRs. Security alerts remain independent of this
 monthly schedule. Forks must apply these repository settings themselves.

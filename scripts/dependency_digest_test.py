@@ -28,8 +28,18 @@ class DigestTests(unittest.TestCase):
     def test_json_stream_and_replaced_modules(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            result = digest.collect(root, lambda _: '\n{"Main":true}\n{"Path":"example.org/lib","Version":"v1.0.0","Update":{"Version":"v1.1.0"}}\n{"Replace":{},"Update":{"Version":"v2"}}')
+            result = digest.collect(root, lambda _: '\n{"Main":true}\n{"Path":"example.org/lib","Version":"v1.0.0","Update":{"Version":"v1.1.0"}}\n{"Replace":{},"Update":{"Version":"v2"}}', {"example.org/lib"})
         self.assertEqual(result, [("Go", "example.org/lib", "v1.0.0", "v1.1.0")])
+
+    def test_direct_modules_omits_indirect_requirements(self):
+        module = '{"Require":[{"Path":"example.org/direct"},{"Path":"example.org/indirect","Indirect":true}]}'
+        self.assertEqual(digest.direct_modules(lambda _: module), {"example.org/direct"})
+
+    def test_collect_omits_upstream_development_modules(self):
+        updates = '\n{"Path":"example.org/used","Version":"v1.0.0","Update":{"Version":"v1.1.0"}}\n{"Path":"example.org/upstream-tool","Version":"v1.0.0","Update":{"Version":"v1.1.0"}}'
+        with tempfile.TemporaryDirectory() as directory:
+            result = digest.collect(pathlib.Path(directory), lambda _: updates, {"example.org/used"})
+        self.assertEqual(result, [("Go", "example.org/used", "v1.0.0", "v1.1.0")])
 
     def test_action_lookup_deduplicates_and_resolves_annotated_tag(self):
         sha = "a" * 40
@@ -49,7 +59,7 @@ class DigestTests(unittest.TestCase):
                     return '{"object":{"type":"tag","sha":"tag-object"}}'
                 return '{"object":{"type":"commit","sha":"' + sha + '"}}'
 
-            self.assertEqual(digest.collect(root, run), [])
+            self.assertEqual(digest.collect(root, run, set()), [])
             self.assertEqual(len(calls), 4)
 
     def test_render_sanitizes_upstream_metadata(self):
@@ -57,6 +67,7 @@ class DigestTests(unittest.TestCase):
         self.assertNotIn("<script>", body)
         self.assertNotIn("@all|", body)
         self.assertIn("Checked: 2026-01-01", body)
+        self.assertIn("upstream transitive and development-only modules are excluded", body)
 
     def test_workflow_publisher_reuses_only_bot_owned_digest(self):
         import json

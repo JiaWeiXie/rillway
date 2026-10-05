@@ -30,12 +30,26 @@ def cell(value):
     return re.sub(r"[^a-zA-Z0-9 /._+:-]", "?", str(value))[:240]
 
 
-def collect(root, run=command_json):
+def direct_modules(run=command_json):
+    """Return module requirements Rillway directly declares in go.mod.
+
+    Upstream modules can declare their own development tools and packages. They
+    belong in the complete Go module graph but cannot safely be upgraded on
+    their own. The monthly digest follows only Rillway's direct requirements;
+    dependency vulnerability checks still cover the full build list.
+    """
+    module = json.loads(run(["go", "mod", "edit", "-json"]))
+    return {requirement["Path"] for requirement in module["Require"] if not requirement.get("Indirect")}
+
+
+def collect(root, run=command_json, modules=None):
     updates = []
+    if modules is None:
+        modules = direct_modules(run)
     for module in json_stream(run(["go", "list", "-mod=readonly", "-m", "-u", "-json", "all"])):
         if module.get("Error"):
             raise ValueError("Module update lookup failed")
-        if module.get("Update") and not module.get("Main") and "Replace" not in module:
+        if module.get("Update") and module.get("Path") in modules and not module.get("Main") and "Replace" not in module:
             updates.append(("Go", module["Path"], module["Version"], module["Update"]["Version"]))
     actions = set()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
@@ -62,6 +76,7 @@ def render(updates, repository, date):
         raise ValueError("Invalid repository")
     body = [MARKER, "# Dependency update digest", "", f"Checked: {date.isoformat()} (UTC)", "",
             "This issue is refreshed monthly. No dependencies are changed automatically.", "",
+            "It reports Rillway's direct Go modules and pinned GitHub Actions; upstream transitive and development-only modules are excluded.", "",
             "Available versions need review and CI before installation; an update is not proof of a vulnerability.", ""]
     if updates:
         body += ["| Ecosystem | Dependency | Current | Available |", "| --- | --- | --- | --- |"]
