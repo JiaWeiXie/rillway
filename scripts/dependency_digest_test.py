@@ -8,6 +8,23 @@ import dependency_digest as digest
 
 
 class DigestTests(unittest.TestCase):
+    def test_python_test_cache_does_not_dirty_release_source(self):
+        import subprocess
+        ignore = (pathlib.Path(__file__).parent.parent / ".gitignore").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / ".gitignore").write_text(ignore)
+            subprocess.run(["git", "init", "--quiet", directory], check=True)
+            cache = root / "scripts/__pycache__"
+            cache.mkdir(parents=True)
+            (cache / "dependency_digest.cpython-313.pyc").write_bytes(b"synthetic bytecode")
+            output = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=root, text=True)
+            self.assertNotIn("__pycache__", output)
+            self.assertIn(".gitignore", output)
+            (root / "unexpected.txt").write_text("must still block a release")
+            output = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=root, text=True)
+            self.assertIn("unexpected.txt", output)
+
     def test_json_stream_and_replaced_modules(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

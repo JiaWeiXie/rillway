@@ -26,3 +26,6 @@ rillway-proxy-backup.json
 *.tsnet-state
 *.pem
 *.crt
+.Python
+__pycache__/
+*.py[cod]
