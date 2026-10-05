@@ -4,9 +4,9 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 ## Unreleased
 
-### Documentation
+### Maintenance
 
-- prepare v0.1.0 public release
+- **release:** prepare v0.1.0 verified source
 ## 0.1.0 - 2026-10-05
 
 ### Features
@@ -40,6 +40,8 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 - **deployment:** record Ubuntu binary update verification
 - record installed CLI configuration acceptance
 - record public source and release artifact security checks
+- prepare v0.1.0 public release
+- **security:** record public repository protections
 
 ### Maintenance
 

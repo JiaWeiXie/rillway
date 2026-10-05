@@ -53,6 +53,17 @@ mise run fuzz
 - Actions 預設唯讀、禁止核准 PR，所有外部貢獻者需執行核准；僅允許 GitHub Actions 與指定 SHA 的 mise-action，並要求 action 使用完整 commit SHA。
 - 這一節只記錄設定驗證；首次 hosted CI 與正式 Release 的結果另由公開 workflow／Release 記錄確認。
 
+## 2026-10-05：首次 GitHub hosted CI
+
+來源 commit `96f1be54695685cd897c491333b65e90d04fc348` 的 [CI run 37251254819](https://github.com/JiaWeiXie/rillway/actions/runs/37251254819) 全部通過：
+
+- `security`：Git 歷史／秘密掃描、四平台 Go 漏洞檢查及 workflow 語法檢查。
+- `check (ubuntu-24.04)`／`check (macos-15)`：changelog 驗證、lint、race／shuffle／coverage、本機建置與有時間上限的 fuzz。
+- `cross-build`：Linux／macOS 的 amd64／arm64 四種獨立 binary 與明確的 checksum／module inventory 產物清單。
+- `service-acceptance`：全新、可丟棄的 GitHub Ubuntu 24.04 runner 上實際首次安裝 systemd 服務，驗證低權限帳號、設定／state 權限、TLS／Token、PAC、HTTP Proxy 與服務 stop／start／uninstall。沒有接觸正式 VM 或 VPN 帳號。
+
+Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/JiaWeiXie/rillway/actions/workflows/release.yml) 及 [Releases](https://github.com/JiaWeiXie/rillway/releases) 查看。首次 hosted CI 不代表 Ubuntu 26.04、macOS LaunchAgent、真實 VPN 或家用網路效能已完成驗收。Dependabot 更新仍須獨立審查；未經審查的 action SHA 不會自動加入允許清單。
+
 ## 已覆蓋的行為
 
 - 分流規則優先序、網域邊界、CIDR、雙棧、私網保護與出口 DNS 隔離。
