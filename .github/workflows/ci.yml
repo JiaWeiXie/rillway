@@ -21,6 +21,8 @@ jobs:
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
         with:
           cache: false
+      - name: Verify tool setup preserves tracked source
+        run: git diff --exit-code --stat
       - run: mise run security
   check:
     needs: security
