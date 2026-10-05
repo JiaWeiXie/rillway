@@ -2,11 +2,24 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
-## Unreleased
+## 0.3.1 - 2026-10-05
+
+### Fixes
+
+- **ui:** show server version and hide configuration revisions
+
+### Documentation
+
+- **release:** prepare v0.3.1 changelog
+## 0.3.0 - 2026-10-05
 
 ### Features
 
 - **agent:** add safe JSON CLI and public operations skill
+
+### Documentation
+
+- **release:** prepare operations skill release notes
 ## 0.2.2 - 2026-10-05
 
 ### Fixes
