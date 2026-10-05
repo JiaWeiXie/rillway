@@ -3,6 +3,22 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"The saved Server credentials are unreadable or invalid. Fix them before restarting.":    "無法讀取 Server 憑證，或憑證內容無效。請先修正再重啟。",
+	"A new listener address is unavailable. Fix the Server configuration before restarting.": "新的監聽位址無法使用。請先修正 Server 設定再重啟。",
+
+	"Service restart is not available in this session.":                                  "目前的工作階段不支援重啟服務。",
+	"The saved Server configuration is invalid or unreadable. Fix it before restarting.": "無法讀取 Server 設定，或設定內容無效。請先修正再重啟。",
+	"Could not restart the service.":                                                     "無法重新啟動服務。",
+
+	"An outbound with this name already exists. Choose a different name.":                                   "這個出口名稱已存在，請改用其他名稱。",
+	"WireGuard configuration must be at most 1 MiB.":                                                        "WireGuard 設定內容不得超過 1 MiB。",
+	"The supplied credentials do not match the outbound type.":                                              "提供的憑證與出口類型不符。",
+	"Invalid WireGuard configuration. Check keys, addresses, peers and DNS. Shell hooks are not supported.": "WireGuard 設定無效。請確認金鑰、位址、Peer 與 DNS；不支援 Shell hooks。",
+	"Enter a Tailscale auth key beginning with tskey-auth- (at most 4096 bytes).":                           "請輸入以 tskey-auth- 開頭的 Tailscale 授權金鑰，長度不得超過 4096 bytes。",
+	"Could not save outbound credentials in the server state directory.":                                    "無法將出口憑證儲存到 Server 狀態目錄。",
+	"Invalid outbound settings. Check the name, type, addresses and routing references.":                    "出口設定無效。請確認名稱、類型、位址與分流規則中的引用。",
+	"Could not apply outbound settings. Your previous configuration is unchanged.":                          "無法套用出口設定，原有設定保持不變。",
+
 	"Too many sign-in attempts. Wait one minute and try again.":                                                                            "登入嘗試過多，請等一分鐘後再試。",
 	"The Tailscale state lock must be a private regular file.":                                                                             "Tailscale 狀態鎖必須是只有擁有者可存取的一般檔案。",
 	"The Tailscale state directory is already in use by another Rillway process. Use a separate state directory.":                          "另一個 Rillway 程序正在使用這個 Tailscale 狀態資料夾，請改用獨立的資料夾。",

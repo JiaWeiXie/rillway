@@ -8,8 +8,9 @@ import (
 // FormDefaults supplies editable suggestions, never credentials or host changes.
 // Paths belong to the daemon, not to the machine displaying its UI.
 type FormDefaults struct {
-	Outbounds map[string]Outbound `json:"outbounds"`
-	Rule      Rule                `json:"rule"`
+	Outbounds                map[string]Outbound `json:"outbounds"`
+	Rule                     Rule                `json:"rule"`
+	RestartRequiredOutbounds []string            `json:"restart_required_outbounds,omitempty"`
 }
 
 func DefaultsForForms(c Config) FormDefaults {

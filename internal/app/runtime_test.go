@@ -212,6 +212,28 @@ func TestClosedTailscaleStateOwnerIsReleased(t *testing.T) {
 	}
 }
 
+func TestRestartOnlyFieldsTrackLiveAndRetiredTailscaleOwners(t *testing.T) {
+	state := t.TempDir()
+	r := &Runtime{
+		cfg: config.Config{Outbounds: []config.Outbound{
+			{ID: "active", Type: "tailscale", Enabled: true, StateDir: filepath.Join(state, "active")},
+			{ID: "retired", Type: "tailscale", Enabled: false, StateDir: filepath.Join(state, "retired")},
+			{ID: "unused", Type: "tailscale", StateDir: filepath.Join(state, "unused")},
+		}},
+		tailscaleOwners: map[string]*managed{},
+	}
+	active, retired := &managed{}, &managed{retired: true, active: 1}
+	r.tailscaleOwners[tailscaleStateKey(filepath.Join(state, "active"))] = active
+	r.tailscaleOwners[tailscaleStateKey(filepath.Join(state, "retired"))] = retired
+	if got := r.RestartRequiredOutbounds(); len(got) != 2 || got[0] != "active" || got[1] != "retired" {
+		t.Fatalf("state owner restrictions: %v", got)
+	}
+	retired.closed = true
+	if got := r.RestartRequiredOutbounds(); len(got) != 1 || got[0] != "active" {
+		t.Fatalf("closed owner remained read-only: %v", got)
+	}
+}
+
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

@@ -15,6 +15,8 @@ and see how that path performs.
 Keep your company's Tailscale on your Mac. Send public traffic through a PAC file
 to an Ubuntu VM, where Rillway routes it through direct, WARP, or WireGuard.
 
+The Web UI shows a complete PAC URL to paste into your Mac settings. Import or paste WireGuard profiles in the outbound form; Tailscale supports browser sign-in or an optional auth key. Restart-only Server settings and the complete JSON view are read-only. Use **Settings → Restart service** to reload saved configuration; active Proxy connections close. This restarts listeners and providers within the current daemon process, without sudo; it does not replace the binary or reboot the host.
+
 The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered. On Service settings, press `t` to reveal the Web UI token; leaving the page hides it again.
 
 ## One executable, guided installation
@@ -157,6 +159,8 @@ tests use Node only during testing and explicitly skip if absent. Git/agent hook
 invoke the mise tools directly.
 Caches and local secrets are ignored by Git. Refresh notices after dependency or
 font-license changes; release does this automatically before compiling.
+
+For explicitly enabled tests on owned disposable hosts, see the [stress-testing guide](docs/stress-testing.md). It includes a bounded HTTP/CONNECT/SOCKS5 load generator and explains CPU/memory profiles and VM measurement limits.
 
 ## Security and releases
 

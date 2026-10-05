@@ -254,6 +254,15 @@ async function browser(initialLocale) {
   assert.equal(vm.runInContext('JSON.stringify(cfg)',b.context),configBeforeSearch);
   assert.equal(b.sessionStorage.getItem('rillway-token'),'existing-management-token');
 
+  // A PAC URL is distinct from the Proxy address embedded in that file.
+  b.context.location={hostname:'control.example.net'};
+  assert.equal(vm.runInContext("pacURL('192.0.2.20:17893')",b.context),'http://192.0.2.20:17893/proxy.pac');
+  assert.equal(vm.runInContext("pacURL('[2001:db8::20]:17893')",b.context),'http://[2001:db8::20]:17893/proxy.pac');
+  assert.equal(vm.runInContext("pacURL('0.0.0.0:17893')",b.context),'http://control.example.net:17893/proxy.pac');
+  assert.equal(vm.runInContext("pacURL('')",b.context),'');
+  b.context.location.hostname='[2001:db8::10]';
+  assert.equal(vm.runInContext("pacURL('[::]:17893')",b.context),'http://[2001:db8::10]:17893/proxy.pac');
+
   // Defaults are real values; switching types and languages preserves edits.
   b.context.defaults={outbounds:{warp:{id:'warp-2',type:'warp',enabled:true,public_internet:true,proxy_address:'127.0.0.1:40000',warp_binary:'warp-cli'},wireguard:{id:'wireguard',type:'wireguard',enabled:false,public_internet:true,config_file:'/daemon/secrets/wireguard.conf'},tailscale:{id:'tailscale',type:'tailscale',enabled:false,public_internet:false,hostname:'rillway-tailscale',state_dir:'/daemon/tailscale/tailscale'}},rule:{id:'rule',domains:['github.com'],outbound:'direct',family:'auto'}};
   b.context.fetch=async()=>({ok:true,json:async()=>b.context.defaults});
@@ -266,17 +275,31 @@ async function browser(initialLocale) {
   b.get('out-id').value='公司 🚀';
   b.get('out-type').value='wireguard';vm.runInContext('changeOutboundType()',b.context);
   assert.equal(b.get('out-id').value,'公司 🚀');
-  assert.equal(b.get('out-file').value,'/daemon/secrets/wireguard.conf');
+  assert.equal(b.get('out-file').value,'','new profiles have no saved server file yet');
+  assert.equal(b.get('out-profile').required,true);
   assert.equal(b.get('out-enabled').checked,false);
+  b.get('out-profile').value='private draft';
   b.get('out-type').value='tailscale';vm.runInContext('changeOutboundType()',b.context);
   assert.equal(b.get('out-public').disabled,true);
   assert.equal(b.get('out-public').checked,false);
+  assert.equal(b.get('out-hostname').readOnly,false);
+  b.get('out-type').value='wireguard';vm.runInContext('changeOutboundType()',b.context);
+  assert.equal(b.get('out-profile').value,'private draft','type switches keep an unsaved import');
   b.get('out-type').value='warp';vm.runInContext('changeOutboundType();switchLocale(\'en\')',b.context);
   assert.equal(b.get('out-address').value,'127.0.0.1:45555');
   assert.equal(b.get('out-id').value,'公司 🚀');
   await vm.runInContext('openOutbound(1)',b.context);
   assert.equal(b.get('out-address').value,'127.0.0.1:45678','editing must keep existing custom values');
   assert.equal(b.get('out-id').disabled,true);
+  vm.runInContext("cfg.outbounds.push({id:'tail',type:'tailscale',enabled:true,state_dir:'/daemon/tail',hostname:'existing-tail',dns:['100.100.20.1']})",b.context);
+  b.context.defaults.restart_required_outbounds=['tail'];
+  await vm.runInContext('openOutbound(2)',b.context);
+  assert.equal(b.get('out-type').disabled,true);
+  assert.equal(b.get('out-hostname').readOnly,true);
+  assert.equal(b.get('out-dns').readOnly,true);
+  assert.equal(b.get('out-key').readOnly,true);
+  assert.equal(b.get('out-restart-hint').hidden,false);
+  assert.equal(b.get('out-key').value,'','existing credentials are never filled in');
   await vm.runInContext('openRule()',b.context);
   assert.equal(b.get('rule-domains').value,'github.com');
   assert.equal(b.get('rule-family').value,'');

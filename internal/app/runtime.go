@@ -1,11 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"rillway/internal/config"
@@ -23,6 +26,54 @@ type Runtime struct {
 	tailscaleOwners map[string]*managed
 	Engine          *engine.Engine
 	appliedAt       time.Time
+	restart         chan struct{}
+}
+
+// PrepareRestart validates the saved configuration before the HTTP handler
+// acknowledges the request. The callback runs only after that response flushes.
+func (r *Runtime) PrepareRestart(ctx context.Context) (func(), error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.restart == nil || ctx.Err() != nil {
+		return nil, config.PublicError{Message: "Service restart is not available in this session."}
+	}
+	next, err := config.Load(r.path)
+	if err != nil {
+		return nil, config.PublicError{Message: "The saved Server configuration is invalid or unreadable. Fix it before restarting."}
+	}
+	if _, err := tls.LoadX509KeyPair(next.Security.TLSCertFile, next.Security.TLSKeyFile); err != nil {
+		return nil, config.PublicError{Message: "The saved Server credentials are unreadable or invalid. Fix them before restarting."}
+	}
+	for _, filename := range []string{next.Security.AdminTokenFile, next.Security.ProxyPasswordFile} {
+		if filename == "" {
+			continue
+		}
+		data, err := os.ReadFile(filename)
+		if err != nil || len(bytes.TrimSpace(data)) == 0 {
+			return nil, config.PublicError{Message: "The saved Server credentials are unreadable or invalid. Fix them before restarting."}
+		}
+	}
+	currentAddresses := map[string]bool{}
+	for _, address := range []string{r.cfg.Listeners.HTTP, r.cfg.Listeners.SOCKS5, r.cfg.Listeners.Admin, r.cfg.Listeners.PAC} {
+		currentAddresses[address] = true
+	}
+	for _, address := range []string{next.Listeners.HTTP, next.Listeners.SOCKS5, next.Listeners.Admin, next.Listeners.PAC} {
+		if address == "" || currentAddresses[address] {
+			continue
+		}
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			return nil, config.PublicError{Message: "A new listener address is unavailable. Fix the Server configuration before restarting."}
+		}
+		_ = listener.Close()
+	}
+	signal := r.restart
+	return func() {
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
+	}, nil
 }
 
 func New(ctx context.Context, path string, c config.Config) (*Runtime, error) {
@@ -104,6 +155,24 @@ func clone(c config.Config) config.Config {
 	return d
 }
 func (r *Runtime) Config() config.Config { r.mu.Lock(); defer r.mu.Unlock(); return clone(r.cfg) }
+
+// RestartRequiredOutbounds includes retired nodes with open connections. Their
+// state directories cannot be safely opened by a replacement provider yet.
+func (r *Runtime) RestartRequiredOutbounds() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ids []string
+	for _, o := range r.cfg.Outbounds {
+		if o.Type != "tailscale" {
+			continue
+		}
+		if owner := r.tailscaleOwners[tailscaleStateKey(o.StateDir)]; owner != nil && !owner.isClosed() {
+			ids = append(ids, o.ID)
+		}
+	}
+	return ids
+}
+
 func (r *Runtime) Snapshot() any {
 	r.mu.Lock()
 	defer r.mu.Unlock()

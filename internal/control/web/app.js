@@ -33,6 +33,7 @@ const pacPresetNotes = {
   'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
 };
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
+let outboundGeneration = 0;
 const pendingOutboundActions = new Set();
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, lastNotice = null, isOnline = false;
@@ -341,11 +342,12 @@ function filterGlossary() {
   $('glossary-count').textContent = t('{shown} of {total} terms',{shown,total:terms.length});
   $('glossary-empty').hidden = shown !== 0;
 }
-function logout() { active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
+function logout() { clearOutboundSecrets(); $('outbound-dialog').close(); active = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
-  outboundIndex = index;
+  outboundGeneration++; outboundIndex = index;
   const original = index >= 0 ? cfg.outbounds[index] : null;
   if(original?.id === 'direct') { notice('The built-in direct outbound cannot be deleted.',true); return; }
   const type = original?.type || 'warp';
@@ -359,7 +361,10 @@ async function openOutbound(index = -1) {
 function fillOutbound(o) {
   const map = {id:'id',type:'type',address:'proxy_address',file:'config_file',hostname:'hostname',state:'state_dir',auth:'auth_key_file',binary:'warp_binary'};
   for(const [element,key] of Object.entries(map)) $(`out-${element}`).value = o[key] || '';
-  $('out-id').disabled = outboundIndex >= 0; $('out-enabled').checked = !!o.enabled; $('out-public').checked = !!o.public_internet; $('out-dns').value = (o.dns || []).join('\n');
+  $('out-id').disabled = outboundIndex >= 0; $('out-type').disabled = outboundIndex >= 0;
+  $('out-profile').value = o.wireguard_config || ''; $('out-key').value = o.tailscale_auth_key || ''; $('out-upload').value = '';
+  if(outboundIndex < 0) $('out-file').value = '';
+  $('out-enabled').checked = !!o.enabled; $('out-public').checked = !!o.public_internet; $('out-dns').value = (o.dns || []).join('\n');
   outboundFields();
 }
 function changeOutboundType() {
@@ -367,6 +372,7 @@ function changeOutboundType() {
   const draft = {id, type:outboundType, enabled:$('out-enabled').checked, public_internet:$('out-public').checked, dns:lines($('out-dns').value)};
   const map = {address:'proxy_address',file:'config_file',hostname:'hostname',state:'state_dir',auth:'auth_key_file',binary:'warp_binary'};
   for(const [element,key] of Object.entries(map)) draft[key] = $(`out-${element}`).value;
+  draft.wireguard_config = $('out-profile').value; draft.tailscale_auth_key = $('out-key').value;
   outboundDrafts[outboundType] = draft;
   const next = {...(outboundDrafts[type] || formDefaults.outbounds[type])};
   if(outboundIndex >= 0 || id !== formDefaults.outbounds[outboundType].id) next.id = id;
@@ -379,10 +385,15 @@ function outboundFields() {
   if($('out-public').disabled) $('out-public').checked = false;
   const hints = {
     warp:'The usual WARP address and command are filled in. Save, then use Register, Connect and Verify outbound. Set WARP+ separately.',
-    wireguard:'The suggested file is on the Rillway server. Replace it with your existing WireGuard file, then enable this outbound. No keys are generated.',
+    wireguard:'Import or paste your VPN provider configuration below, then enable and save this outbound. No keys are generated.',
     tailscale:'The node name and private state folder are filled in. Enable this outbound, save, then use its sign-in link. Public Internet access stays off.',
     direct:'Direct uses the server network. The built-in direct already exists; you usually do not need another.'
   };
+  $('out-profile').required = type === 'wireguard' && outboundIndex < 0;
+  const original = cfg?.outbounds[outboundIndex];
+  const existingTail = outboundIndex >= 0 && ['tailscale','tsnet'].includes(type) && (formDefaults.restart_required_outbounds || []).includes(original?.id);
+  for(const id of ['out-hostname','out-dns','out-key']) $(id).readOnly = existingTail;
+  $('out-restart-hint').hidden = !existingTail;
   $('out-setup-hint').textContent = t(hints[type]);
 }
 async function openRule(index = -1, flow = null) {
@@ -410,12 +421,28 @@ function renderRevision() {
   $('revision').textContent = revision === undefined ? '' : t('Active revision {revision}',{revision});
   $('applied-at').textContent = latestSnapshot.applied_at ? t('Applied {date}',{date:i18n.date(latestSnapshot.applied_at)}) : '';
 }
+async function copyText(value) {
+  try { await navigator.clipboard.writeText(value); notice('Configuration copied.'); }
+  catch (_) { notice('Copy failed. Select the text and copy it manually.',true); }
+}
+function pacURL(address) {
+  if(!address) return '';
+  const wildcard = /^(?:0\.0\.0\.0|\[::\]|):(\d+)$/;
+  const match = address.match(wildcard);
+  if(match) address = `${location.hostname}:${match[1]}`;
+  if(match && location.hostname.includes(':') && !location.hostname.startsWith('[')) address = `[${location.hostname}]:${match[1]}`;
+  return `http://${address}/proxy.pac`;
+}
 function renderConfigText() {
   if(!cfg) return;
   renderRevision();
   $('adaptive-description').textContent = t(cfg.adaptive.enabled ? 'Choose outbounds for new connections using availability and probe results. Explicit rules take priority.' : 'When disabled, connections use routing rules and the default outbound.');
-  $('pac-hint').textContent = t('PAC listener: {address}. Use an address your Mac can reach on the Ubuntu host.',{address:cfg.listeners.pac || t('Not configured')});
+  $('pac-url').value = pacURL(cfg.listeners.pac);
+  $('pac-copy').disabled = !$('pac-url').value;
+  $('pac-hint').textContent = t(cfg.listeners.pac ? 'Use a PAC URL your Mac can reach. A loopback address works only on the Server itself. Saving PAC rules does not change the listener or apply settings to your Mac.' : 'PAC is not configured. Enable its listener in the Server configuration and restart the service.');
   $('listeners').innerHTML = Object.entries(cfg.listeners).map(([k,v]) => `<dt>${esc(t({http:'HTTP Proxy',socks5:'SOCKS5',admin:'Management UI',pac:'PAC'}[k] || k))}</dt><dd>${esc(v || t('Not configured'))}</dd>`).join('');
+  const security = cfg.security || {};
+  $('server-security').innerHTML = `<dt>${et('Allowed client networks')}</dt><dd>${esc((security.allowed_clients || []).join(', ') || t('Not configured'))}</dd><dt>${et('Proxy username')}</dt><dd>${esc(security.proxy_username || t('Not configured'))}</dd><dt>${et('Management token and TLS credentials')}</dt><dd>${et('Managed on Server; secret contents are never shown.')}</dd>`;
 }
 function switchLocale(locale) {
   i18n.setLocale(locale);
@@ -480,16 +507,47 @@ $('adaptive-toggle').addEventListener('change',async () => { const next = cloneC
 $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
 $('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
 $('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = serializePACList('domains'); next.pac.bypass_cidrs = serializePACList('cidrs'); try { await save(next); } catch(error) { notice(error,true); } });
-$('save-json').addEventListener('click',async () => { try { const next = JSON.parse($('config-json').value); await save(next); } catch(e) { notice(e instanceof SyntaxError ? sourceError('Invalid JSON. Check the configuration syntax.') : e,true); } });
+$('restart-service').addEventListener('click',() => { clearError($('restart-form')); $('restart-dialog').showModal(); });
+$('restart-form').addEventListener('submit',async e => {
+  e.preventDefault(); const button = $('confirm-restart'); button.disabled = true;
+  try {
+    await api('/service/restart',{method:'POST',body:'{}'});
+    $('restart-dialog').close(); active = false; connection(false);
+    notice('Restarting the service. Existing connections will close. Waiting for it to return.');
+    let recovered = false;
+    for(let attempt = 0; attempt < 30; attempt++) {
+      await new Promise(resolve => setTimeout(resolve,1000));
+      try { await load(); recovered = true; break; } catch (_) { active = false; }
+    }
+    if(recovered) notice('Service restarted. The saved configuration is now active.');
+    else notice('The service has not returned at this address. If its address or credentials changed, open the new address and sign in again.',true);
+  } catch(error) { errorIn(e.target,error); }
+  finally { button.disabled = false; }
+});
+$('copy-json').addEventListener('click',() => copyText($('config-json').value));
+$('pac-copy').addEventListener('click',() => copyText($('pac-url').value));
+$('out-upload').addEventListener('change',async () => {
+  const file = $('out-upload').files?.[0], generation = outboundGeneration; if(!file) return;
+  if(file.size > 1048576) { errorIn($('outbound-form'),sourceError('WireGuard configuration must be at most 1 MiB.')); $('out-upload').value = ''; return; }
+  try { const text = await file.text(); if(generation !== outboundGeneration || !$('outbound-dialog').open) return; $('out-profile').value = text; clearError($('outbound-form')); }
+  catch (_) { if(generation === outboundGeneration && $('outbound-dialog').open) errorIn($('outbound-form'),sourceError('Could not read the selected configuration file.')); }
+});
+$('outbound-dialog').addEventListener('close',() => { if(!$('outbound-dialog').open) clearOutboundSecrets(); });
 $('reset-json').addEventListener('click',() => load().catch(e => notice(e,true)));
 $('outbound-form').addEventListener('submit',async e => {
   e.preventDefault(); const next = cloneConfig(); const original = outboundIndex >= 0 ? next.outbounds[outboundIndex] : {};
   const o = {...original,id:$('out-id').value.trim(),type:$('out-type').value,enabled:$('out-enabled').checked,public_internet:$('out-public').checked,proxy_address:$('out-address').value.trim(),config_file:$('out-file').value.trim(),hostname:$('out-hostname').value.trim(),state_dir:$('out-state').value.trim(),auth_key_file:$('out-auth').value.trim(),warp_binary:$('out-binary').value.trim(),dns:lines($('out-dns').value)};
   if(o.type !== 'warp') { o.proxy_address = ''; o.warp_binary = ''; }
-  if(o.type !== 'wireguard') o.config_file = '';
+  if(o.type !== 'wireguard' || outboundIndex < 0) o.config_file = '';
   if(!['tailscale','tsnet'].includes(o.type)) { o.hostname = ''; o.state_dir = ''; o.auth_key_file = ''; }
-  if(outboundIndex >= 0) next.outbounds[outboundIndex] = o; else next.outbounds.push(o);
-  try { await save(next); $('outbound-dialog').close(); } catch(error) { errorIn(e.target,error); }
+  if(outboundIndex >= 0 && o.type === 'tailscale' && (formDefaults.restart_required_outbounds || []).includes(o.id)) { for(const key of ['hostname','state_dir','auth_key_file','dns']) o[key] = original[key]; }
+  try {
+    const body = {revision:cfg.revision,create:outboundIndex < 0,outbound:o};
+    if(o.type === 'wireguard' && $('out-profile').value.trim()) body.wireguard_config = $('out-profile').value;
+    if(o.type === 'tailscale' && $('out-key').value.trim()) body.tailscale_auth_key = $('out-key').value;
+    cfg = await api('/outbounds',{method:'PUT',body:JSON.stringify(body)});
+    clearOutboundSecrets(); $('outbound-dialog').close(); renderConfig(); notice('Configuration saved. New connections will use the updated rules.'); await poll();
+  } catch(error) { errorIn(e.target,error); }
 });
 $('rule-form').addEventListener('submit',async e => {
   e.preventDefault(); const next = cloneConfig(); const adaptive = $('rule-outbound').value === '@adaptive';

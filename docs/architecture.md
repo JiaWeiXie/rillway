@@ -60,3 +60,12 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |
 
 設定驗證、provider 建立、私有檔案原子寫入完成後才套用。無效更新與寫入失敗保留原設定；409 表示其他介面已更新版本。listener、ACL、TLS／登入安全設定，以及使用同一 state directory 的執行中 Tailscale 變更，需要在本機修改檔案並重啟 daemon。改變出口時會保留舊 provider，直到既有連線結束才釋放。
+
+## Web UI 的設定邊界
+
+- PAC 顯示獨立的完整 `http://host:port/proxy.pac` 網址與複製按鈕；這與 PAC 內的 HTTP Proxy 位址不同。Wildcard listener 以目前管理頁的 hostname 組合網址，IPv6 保留方括號。Loopback listener 不會被偽裝成區網可連的服務。
+- Listener、來源限制、管理認證與完整 JSON 為唯讀；在 Server 修改設定後重新啟動。分流、出口、自適應與 PAC 規則使用各自的表單更新。Docker 匯出不會遠端修改另一台主機。
+- `PUT /api/v1/outbounds` 接受 `revision`、`create`、`outbound`，以及選用的 `wireguard_config` 或 `tailscale_auth_key`。秘密只寫入私有檔案，不進入回應或可攜設定內容。新建模式拒絕重複名稱；驗證、同源與認證檢查、revision 衝突均在寫檔之前執行。Runtime 套用衝突／失敗會清除新檔。原始 provider 錯誤保持遮罩。
+- 上傳的設定檔不會執行 Shell hooks，也不能指定檔案寫入位置。狀態目錄仍在使用中的既有 Tailscale，其節點身分與 DNS 欄位顯示唯讀及重啟說明，避免開啟第二個 state owner；啟停和登入操作仍透過既有 API。
+
+- `POST /api/v1/service/restart` 使用相同的 Bearer、來源及同源保護。先驗證儲存設定、憑證及新的監聽位址，HTTP `202` 回應 flush 後才觸發重啟。所有 Proxy 連線關閉，Runtime／listeners 完成清理並重新開啟，Tailscale state owner 先釋放後建立。重啟在原本的低權限 daemon 程序內完成，不執行 shell／sudo／service-manager 指令，也不載入新 binary。Web UI 需要確認操作，最多等待 30 秒並顯示恢復／新位址登入提示。

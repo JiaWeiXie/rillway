@@ -18,9 +18,29 @@ import (
 	"time"
 )
 
-// Serve opens every listener before publishing readiness, and tears down all
-// listeners if any requested address cannot be bound.
+var errRestart = errors.New("service restart requested")
+
+// Serve restarts its listeners and runtime in the same low-privilege process.
+// It needs no shell commands, sudo policy, or service-manager privileges.
 func Serve(ctx context.Context, path string, c config.Config, ready func(string)) error {
+	for {
+		err := serveOnce(ctx, path, c, ready)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if !errors.Is(err, errRestart) {
+			return err
+		}
+		c, err = config.Load(path)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// serveOnce opens every listener before publishing readiness, and tears down
+// all listeners if any requested address cannot be bound.
+func serveOnce(ctx context.Context, path string, c config.Config, ready func(string)) error {
 	token, fp, err := platform.EnsureCredentials(c)
 	if err != nil {
 		return err
@@ -41,6 +61,7 @@ func Serve(ctx context.Context, path string, c config.Config, ready func(string)
 		return err
 	}
 	defer func() { _ = r.Close() }()
+	r.restart = make(chan struct{}, 1)
 	p, err := proxy.New(r.Engine, c.Security, password)
 	if err != nil {
 		return err
@@ -138,6 +159,8 @@ func Serve(ctx context.Context, path string, c config.Config, ready func(string)
 	var serveErr error
 	select {
 	case <-ctx.Done():
+	case <-r.restart:
+		serveErr = errRestart
 	case serveErr = <-failures:
 	}
 	cancel()

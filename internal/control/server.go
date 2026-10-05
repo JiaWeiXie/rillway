@@ -47,11 +47,17 @@ func New(backend Backend, adminToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/config", h.protect(h.getConfig))
 	mux.HandleFunc("GET /api/v1/defaults", h.protect(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, config.DefaultsForForms(h.backend.Config()))
+		defaults := config.DefaultsForForms(h.backend.Config())
+		if backend, ok := h.backend.(interface{ RestartRequiredOutbounds() []string }); ok {
+			defaults.RestartRequiredOutbounds = backend.RestartRequiredOutbounds()
+		}
+		writeJSON(w, 200, defaults)
 	}))
 	mux.HandleFunc("PUT /api/v1/config", h.protect(h.putConfig))
+	mux.HandleFunc("POST /api/v1/service/restart", h.protect(h.restartService))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
 	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))
+	mux.HandleFunc("PUT /api/v1/outbounds", h.protect(h.saveOutbound))
 	mux.HandleFunc("DELETE /api/v1/outbounds/{id}", h.protect(h.deleteOutbound))
 	mux.HandleFunc("GET /api/v1/integrations/docker", h.protect(h.dockerExport))
 	mux.HandleFunc("POST /api/v1/integrations/docker", h.protect(h.dockerExport))

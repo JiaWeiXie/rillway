@@ -30,6 +30,12 @@ type APIError struct {
 	Source  string
 }
 
+// Restart acknowledges a full listener/provider restart. The caller must
+// reconnect afterwards; existing Proxy streams are intentionally closed.
+func (c *Client) Restart(ctx context.Context) error {
+	return c.request(ctx, http.MethodPost, "/api/v1/service/restart", struct{}{}, nil)
+}
+
 func (e *APIError) Error() string { return fmt.Sprintf("management API (%d): %s", e.Status, e.Message) }
 
 // NewClient verifies TLS normally; caFile adds a local CA without disabling verification.

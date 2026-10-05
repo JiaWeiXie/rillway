@@ -51,7 +51,7 @@ SOCKS5 以網域發起連線時，由 WARP 解析 DNS，Rillway 不會猜測目�
 
 Rillway 內嵌 [tsnet](https://tailscale.com/docs/features/tsnet)，建立獨立節點，不控制宿主現有的 Tailscale App／daemon。
 
-新增 `tailscale` 出口，設定專用 `state_dir` 與 hostname，取消「公網出口」。State directory 必須為權限 `0700`；選填 `auth_key_file` 必須為 `0600`。沒有 auth key 時從 Web UI 的登入連結授權該節點；tailnet 的 ACL、裝置核准及 subnet route 核准仍由 Tailscale 管理。
+在 Web UI 新增 `tailscale` 出口時，只需設定節點名稱，程式會安排專用的私有 `state_dir`，並關閉「公網出口」。授權金鑰可直接填入選用的密碼欄位，或留空使用瀏覽器登入，不需要先在 Server 建立 auth key 檔案。狀態目錄仍在使用中的既有節點，其身分、auth key、DNS 與狀態目錄在 Web UI 為唯讀；需在 Server 修改設定後重啟，避免同時開啟同一份 state。使用設定檔／TUI 管理時，仍支援既有的檔案參照。State directory 必須為權限 `0700`；選填 `auth_key_file` 必須為 `0600`。沒有 auth key 時從 Web UI 的登入連結授權該節點；tailnet 的 ACL、裝置核准及 subnet route 核准仍由 Tailscale 管理。
 
 ```json
 {
@@ -78,7 +78,7 @@ Mac 的 PAC bypass 公司網域／IP 時，流量走 Mac 原有 Tailscale，不�
 
 ## WireGuard
 
-WireGuard 的裝置與網路堆疊都內嵌 binary，不執行 `wg-quick`，也不建立宿主 TUN 或修改宿主路由。匯入設定檔需為權限 `0600`，最多 1 MiB。
+WireGuard 的裝置與網路堆疊都內嵌 binary，不執行 `wg-quick`，也不建立宿主 TUN 或修改宿主路由。在 Web UI 選擇 WireGuard 後，可從目前裝置匯入 `.conf` 或直接貼上內容，最多 1 MiB。設定會先以同一個受限解析器驗證，再以 `0600` 儲存到 Server 的專用 `0700` 資料夾，API 與重新開啟的表單只顯示檔案參照，不回傳私鑰。編輯時留空保留既有設定；貼上新內容會建立新的私有檔案，儲存或套用失敗會刪除新檔案並保留原設定。替換或刪除出口不會刪除舊憑證檔，Server 管理者可在確認不再使用後清理。使用設定檔／TUI 的既有檔案參照仍受 `0600` 權限限制。
 
 ```ini
 [Interface]

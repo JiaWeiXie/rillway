@@ -97,3 +97,20 @@ rillway service uninstall
 ```
 
 不加 sudo：使用者 LaunchAgent 與 GUI 登入 session。binary 複製至 `~/Library/Application Support/Rillway/`，plist 在 `~/Library/LaunchAgents/io.rillway.daemon.plist`。安裝保留設定路徑，移動或刪除設定會影響下次啟動。Mac 的 WARP 可否以 Local Proxy 使用仍依官方 client 版本、帳號及模式驗證結果判定。
+
+## 拋棄式 Ubuntu 執行驗收
+
+使用全新、專供測試的 Ubuntu 24.04 或 26.04 機器。這組明確啟動的驗收會修改已儲存設定、重新啟動 Rillway，並發送測試用 HTTP／HTTPS 請求，因此需要網際網路。它不會註冊 VPN 帳號，也不會修改主機的 DNS 或路由。
+
+使用 `setup` 安裝執行檔後，把 `scripts/acceptance-runtime.py` 複製到測試機的 `/tmp/acceptance-runtime.py`，在該機器執行：
+
+```sh
+sudo touch /var/lib/rillway/disposable-test.marker
+sudo env RILLWAY_RUNTIME_ACCEPTANCE=1 python3 /tmp/acceptance-runtime.py
+```
+
+標記檔與環境變數缺一不可；不要在正式主機建立標記檔。測試涵蓋私有檔案權限、預設設定路徑、HTTP／CONNECT／SOCKS5、API 驗證與版本衝突、占用連接埠與無效設定的重啟拒絕、載入新監聽位址、實際 systemd 停止／啟動／重啟，以及傳輸統計。
+
+相依工具只有 Python 標準函式庫、curl 與 systemctl。憑證保留在私有檔案，不印出或放入命令列參數。測試會還原臨時 listener 修改，留下單一測試用 PAC bypass 條目供檢查；同一測試機可重跑。
+
+OrbStack 的機器共用 Linux 核心。必須檢查 systemd 實際生效的防護屬性，OrbStack 可能覆寫 unit 裡的設定。機器內的 BuildKit 也可能因巢狀 overlay 掛載限制，需要改用 `native` snapshotter。這些結果不能取代完整 hypervisor VM 的核心、網卡及安全隔離驗收。

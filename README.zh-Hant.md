@@ -14,6 +14,8 @@ Mac 保留公司的 Tailscale；公開網站經 PAC 送到 Ubuntu VM，再由 Ri
 
 Web UI 與 TUI 會先填好常用出口設定。TUI 按 `o` 選擇服務、`?` 查看說明，切到出口頁按 `+` 新增。驗證成功的服務連線會記住，下次可直接開啟 TUI。服務設定頁按 `t` 可顯示 Web UI 權杖；離開該頁就會自動隱藏。
 
+Web UI 會顯示可直接貼到 Mac 的完整 PAC 網址。新增 WireGuard 出口時可匯入或貼上設定檔；Tailscale 可使用瀏覽器登入或填入選用的授權金鑰。需要重啟的 Server 設定與完整 JSON 檢視皆為唯讀。修改 Server 設定後，可在「設定 → 重新啟動服務」載入；既有 Proxy 連線會中斷。這會在目前的背景程序內重啟監聽與出口，不需 sudo，也不會更新執行檔或重開主機。
+
 ## 單一執行檔與引導安裝
 
 每個發布平台只需要 **一個獨立執行檔**，內建 Proxy、HTTPS Web UI、TUI、tsnet、WireGuard userspace 引擎、圖片、離線中文字體／Emoji 字體與第三方授權。伺服器不需要 Go、Node、mise 或外部介面素材。**WARP／WARP+ 仍需另外安裝 Cloudflare 官方 client。**
@@ -119,6 +121,8 @@ mise run dev
 | `mise run changelog` | 更新 changelog |
 
 測試保留 CGO 以使用 race detector；發布採 `CGO_ENABLED=0`。PAC 執行測試只在測試時使用 Node，缺少時明確 skip。Git／Agent hooks 直接呼叫 mise 工具。快取與本機秘密資料由 Git ignore 排除。修改套件或字體授權後需更新 notices，release 會在編譯前自動執行。
+
+另外提供只向自己測試機傳送有限流量的 HTTP／CONNECT／SOCKS5 產生器；操作、低 CPU／記憶體配額及 VM 結果限制見[壓力測試說明](docs/stress-testing.zh-Hant.md)。
 
 ## 安全與公開發布
 
