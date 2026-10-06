@@ -2,6 +2,20 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## Unreleased
+
+### Documentation
+
+- **release:** prepare v0.4.0 changelog
+## 0.4.0 - 2026-10-06
+
+### Features
+
+- **service:** add safe memory controls and self-traffic protection
+
+### Fixes
+
+- **ci:** focus dependency digest on direct updates
 ## 0.3.1 - 2026-10-05
 
 ### Fixes
