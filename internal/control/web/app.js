@@ -32,6 +32,7 @@ const pacPresetNotes = {
   'cidr.ula-v6':'Private IPv6 unique local addresses.',
   'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
 };
+let memoryStatus = null, memoryDraftRevision = "", memoryDirty = false, memorySaving = false, memoryLoading = false, memoryInputMode = "MiB";
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
 let outboundGeneration = 0;
 const pendingOutboundActions = new Set();
@@ -87,7 +88,7 @@ async function load() {
   cfg = await api('/config');
   serverInfo = await loadInfo();
   active = true; $('login').hidden = true; $('app').hidden = false;
-  renderConfig(); await poll(); pollStatuses(); loadDocker();
+  renderConfig(); await poll(); pollStatuses(); loadDocker(); loadMemory();
 }
 async function save(next) {
   cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
@@ -324,6 +325,7 @@ function renderDeleteOutbound() {
   select.value = selected;
 }
 function navigate(page) {
+  if(page === 'settings' && active) loadMemory();
   const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.'],glossary:['Glossary','We explain the words used in Rillway.']};
   if(!names[page]) page = 'overview'; currentPage = page;
   for(const el of document.querySelectorAll('.page')) el.hidden = el.id !== `page-${page}`;
@@ -350,7 +352,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { clearOutboundSecrets(); $('outbound-dialog').close(); active = false; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; clearOutboundSecrets(); $('outbound-dialog').close(); active = false; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -452,9 +454,47 @@ function renderConfigText() {
   const security = cfg.security || {};
   $('server-security').innerHTML = `<dt>${et('Allowed client networks')}</dt><dd>${esc((security.allowed_clients || []).join(', ') || t('Not configured'))}</dd><dt>${et('Proxy username')}</dt><dd>${esc(security.proxy_username || t('Not configured'))}</dd><dt>${et('Management token and TLS credentials')}</dt><dd>${et('Managed on Server; secret contents are never shown.')}</dd>`;
 }
+async function loadMemory(explicit = false) {
+  if(!active || memoryLoading || memorySaving) return;
+  memoryLoading = true; $('memory-refresh').disabled = true;
+  try {
+    const status = await api('/service/memory');
+    memoryStatus = status;
+    // Only an explicit refresh may advance an edited form's revision.
+    if(explicit || !memoryDirty) memoryDraftRevision = status.revision || '';
+    renderMemory(!memoryDirty);
+    if(explicit) clearError($('memory-form'));
+  } catch(error) { errorIn($('memory-form'),error); $('memory-fields').disabled = true; }
+  finally { memoryLoading = false; $('memory-refresh').disabled = false; }
+}
+function renderMemory(fill = false) {
+  const s = memoryStatus;
+  $('memory-fields').disabled = memorySaving || !s?.supported;
+  if(!s) { $('memory-reason').textContent = t('Refresh limits to detect host capacity and the service safety minimum.'); return; }
+  $('memory-reason').textContent = s.supported ? t(s.minimum_reason) : t(s.reason);
+  $('memory-status').innerHTML = [
+    [t('Detected host memory'),bytes(s.host_bytes)],
+    [t('Current service usage'),bytes(s.current_bytes)],
+    [t('Current memory limit'),s.limit_bytes ? bytes(s.limit_bytes) : t('Unlimited')],
+    [t('Allowed memory range'),`${bytes(s.minimum_bytes)} – ${bytes(s.maximum_bytes)}`]
+  ].map(([label,value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('');
+  if(fill) { $('memory-mode').value = s.mode || 'MiB'; memoryInputMode = $('memory-mode').value; $('memory-value').value = s.value || '512'; }
+  memoryPreview();
+}
+function memoryPreview() {
+  const s = memoryStatus;
+  if(!s?.supported) { $('memory-preview').textContent = ''; return; }
+  const mode = $('memory-mode').value, input = $('memory-value'), scale = mode === 'percent' ? s.host_bytes/100 : mode === 'GiB' ? 1073741824 : 1048576;
+  input.min = String(Math.ceil(s.minimum_bytes/scale*1000)/1000);
+  input.max = mode === 'percent' ? '90' : String(Math.floor(s.maximum_bytes/scale*1000)/1000);
+  let budget = Number(input.value)*scale;
+  if(mode === 'percent') budget = Math.floor(budget/1048576)*1048576;
+  $('memory-preview').textContent = t('Selected limit: {limit}. Allowed: {minimum}–{maximum} {unit}.',{limit:bytes(budget),minimum:input.min,maximum:input.max,unit:mode === 'percent' ? '%' : mode});
+}
 function switchLocale(locale) {
   i18n.setLocale(locale);
   filterGlossary();
+  renderMemory(false);
   renderDeleteOutbound();
   renderDockerExport();
   if($('outbound-dialog').open) outboundFields();
@@ -475,6 +515,28 @@ function switchLocale(locale) {
 }
 document.querySelectorAll('[data-locale]').forEach(select => select.addEventListener('change',() => switchLocale(select.value)));
 
+$('memory-mode').addEventListener('change',() => {
+  const s = memoryStatus, mode = $('memory-mode').value;
+  if(s?.supported) {
+    const scale = unit => unit === 'percent' ? s.host_bytes/100 : unit === 'GiB' ? 1073741824 : 1048576;
+    const value = Number($('memory-value').value)*scale(memoryInputMode)/scale(mode);
+    if(Number.isFinite(value) && value > 0) $('memory-value').value = (Math.ceil(value*1000)/1000).toFixed(3);
+  }
+  memoryInputMode = mode; memoryDirty = true; memoryPreview();
+});
+$('memory-value').addEventListener('input',() => { memoryDirty = true; memoryPreview(); });
+$('memory-refresh').addEventListener('click',() => loadMemory(true));
+$('memory-form').addEventListener('submit',async e => {
+  e.preventDefault(); if(memorySaving || !memoryStatus?.supported) return;
+  const body = {mode:$('memory-mode').value,value:$('memory-value').value.trim(),revision:memoryDraftRevision};
+  memorySaving = true; renderMemory(false); clearError(e.target);
+  try {
+    memoryStatus = await api('/service/memory',{method:'PUT',body:JSON.stringify(body)});
+    memoryDraftRevision = memoryStatus.revision; memoryDirty = false;
+    renderMemory(true); notice('Memory limit saved. Applied without restarting the service.');
+  } catch(error) { errorIn(e.target,error); }
+  finally { memorySaving = false; renderMemory(false); }
+});
 $('login-form').addEventListener('submit',async e => { e.preventDefault(); token = $('token').value.trim(); $('login-error').textContent = ''; delete $('login-error').dataset.errorSource; try { await load(); sessionStorage.setItem('rillway-token',token); $('token').value = ''; } catch(error) { displayError($('login-error'),error); } });
 $('logout').addEventListener('click',logout);
 $('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));

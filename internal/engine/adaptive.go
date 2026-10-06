@@ -72,6 +72,12 @@ func (e *Engine) destinationLocked(key, address, network string, r route) *adapt
 		}
 		delete(e.destinations, oldestKey)
 	}
+	d := newAdaptiveState(address, network, r, e.now())
+	e.destinations[key] = d
+	return d
+}
+
+func newAdaptiveState(address, network string, r route, now time.Time) *adaptiveState {
 	current := r.outbound
 	found := false
 	for _, id := range r.candidates {
@@ -82,9 +88,7 @@ func (e *Engine) destinationLocked(key, address, network string, r route) *adapt
 	if !found {
 		current = r.candidates[0]
 	}
-	d := &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: e.now(), switched: e.now()}
-	e.destinations[key] = d
-	return d
+	return &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now}
 }
 
 func (e *Engine) chooseLocked(d *adaptiveState) string { return d.current }
@@ -280,20 +284,36 @@ func (e *Engine) probeLoop() {
 					defer cancel()
 					started := e.now()
 					conn, err := job.provider.DialContext(ctx, job.network, job.address)
-					family := "unknown"
-					if conn != nil {
-						host, _, _ := net.SplitHostPort(job.address)
-						family = addressFamily(destinationIP(conn, host))
-						_ = conn.Close()
-					}
-					e.mu.Lock()
-					e.probes--
-					if e.destinations[job.key] == job.state {
-						e.recordFamilyLocked(job.state, job.id, e.now().Sub(started), err, family)
-					}
-					e.mu.Unlock()
+					e.completeProbe(job, started, conn, err)
 				}()
 			}
+		}
+	}
+}
+
+func (e *Engine) completeProbe(job probeJob, started time.Time, conn net.Conn, err error) {
+	family := "unknown"
+	internal := false
+	if conn != nil {
+		e.mu.Lock()
+		policy := e.destinationPolicy
+		e.mu.Unlock()
+		if policy != nil {
+			blocked, ignored := policy(conn.RemoteAddr().String())
+			internal = blocked || ignored
+		}
+		host, _, _ := net.SplitHostPort(job.address)
+		family = addressFamily(destinationIP(conn, host))
+		_ = conn.Close()
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.probes--
+	if e.destinations[job.key] == job.state {
+		if internal {
+			delete(e.destinations, job.key)
+		} else {
+			e.recordFamilyLocked(job.state, job.id, e.now().Sub(started), err, family)
 		}
 	}
 }

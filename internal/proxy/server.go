@@ -36,6 +36,10 @@ type Server struct {
 	listeners          map[net.Listener]struct{}
 	closed             bool
 	authFailures       *authguard.Limiter
+	guard              *ConnectionGuard
+	endpoints          []netip.AddrPort
+	internalEndpoints  []netip.AddrPort
+	localIPs           map[netip.Addr]bool
 }
 
 func New(dialer Dialer, security config.Security, password string) (*Server, error) {
@@ -49,6 +53,17 @@ func New(dialer Dialer, security config.Security, password string) (*Server, err
 		return nil, errors.New("SOCKS credentials must fit in 255 bytes")
 	}
 	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New()}
+	s.guard = NewConnectionGuard(256, 64, s.allowedClient)
+	s.localIPs = map[netip.Addr]bool{netip.MustParseAddr("127.0.0.1"): true, netip.MustParseAddr("::1"): true}
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, fmt.Errorf("local interface addresses: %w", err)
+	}
+	for _, address := range addresses {
+		if prefix, err := netip.ParsePrefix(address.String()); err == nil {
+			s.localIPs[prefix.Addr().Unmap()] = true
+		}
+	}
 	allowed := security.AllowedClients
 	if len(allowed) == 0 {
 		allowed = []string{"127.0.0.0/8", "::1/128"}
@@ -60,7 +75,7 @@ func New(dialer Dialer, security config.Security, password string) (*Server, err
 		}
 		s.allowed = append(s.allowed, p)
 	}
-	s.transport = &http.Transport{Proxy: nil, DialContext: dialer.DialContext, DisableKeepAlives: true, ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: time.Second}
+	s.transport = &http.Transport{Proxy: nil, DialContext: s.dialContext, DisableKeepAlives: true, ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: time.Second}
 	return s, nil
 }
 
@@ -240,7 +255,10 @@ func (s *Server) upgrade(w http.ResponseWriter, r *http.Request, response *http.
 	if err = buffer.Flush(); err != nil {
 		return
 	}
-	relay(r.Context(), &bufferedConn{Conn: client, reader: buffer.Reader}, upstream)
+	// After hijacking, net/http can cancel the request context on a client
+	// write-half-close. Keep receiving the upstream reply; Server.Close owns
+	// shutdown of both tracked sockets.
+	relay(context.WithoutCancel(r.Context()), &bufferedConn{Conn: client, reader: buffer.Reader}, upstream)
 }
 
 func removeHopHeaders(h http.Header) {
@@ -269,7 +287,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	upstream, err := s.dialer.DialContext(ctx, "tcp", r.Host)
+	upstream, err := s.dialContext(ctx, "tcp", r.Host)
 	cancel()
 	if err != nil {
 		http.Error(w, "outbound connection failed", http.StatusBadGateway)
@@ -300,7 +318,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	if err = buffer.Flush(); err != nil {
 		return
 	}
-	relay(r.Context(), &bufferedConn{Conn: client, reader: buffer.Reader}, upstream)
+	relay(context.WithoutCancel(r.Context()), &bufferedConn{Conn: client, reader: buffer.Reader}, upstream)
 }
 
 type bufferedConn struct {

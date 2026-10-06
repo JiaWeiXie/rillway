@@ -114,3 +114,16 @@ sudo env RILLWAY_RUNTIME_ACCEPTANCE=1 python3 /tmp/acceptance-runtime.py
 相依工具只有 Python 標準函式庫、curl 與 systemctl。憑證保留在私有檔案，不印出或放入命令列參數。測試會還原臨時 listener 修改，留下單一測試用 PAC bypass 條目供檢查；同一測試機可重跑。
 
 OrbStack 的機器共用 Linux 核心。必須檢查 systemd 實際生效的防護屬性，OrbStack 可能覆寫 unit 裡的設定。機器內的 BuildKit 也可能因巢狀 overlay 掛載限制，需要改用 `native` snapshotter。這些結果不能取代完整 hypervisor VM 的核心、網卡及安全隔離驗收。
+
+## 服務記憶體介面
+
+新版首次安裝會包含同一 binary 的 `rillway-memory.socket`／`rillway-memory.service`，以及 root 擁有的記憶體設定 drop-in。
+更新舊服務時，替換 binary 後執行 `sudo rillway service memory-install`，自訂
+unit 則加上實際 `--config FILE`；不需要重新執行 setup，不更動既有上限或開機
+啟動政策。Web「設定 → 服務記憶體限制」與 TUI「服務設定 → m」可即時修改百分比、
+MiB／GiB。詳見[中文 CLI 說明](cli.zh-Hant.md#服務記憶體限制)。
+
+回退到不支援此功能的舊 binary 前，停用並停止 `rillway-memory.socket` 及
+`rillway-memory.service`，保留 root 擁有的 `/var/lib/rillway-resource-control` 備份。
+systemd 的記憶體屬性會保留；若也要回退限制，請另還原先前的 MemoryMax／MemoryHigh。
+解除安裝會移除控制程序的 unit，但保留數值設定供還原使用。

@@ -76,6 +76,49 @@ the operator supplies the token privately; do not read it into chat/logs. A priv
 image needs registry permission as well as a working transport. Check token expiry
 before modifying a healthy proxy. Never send Docker's credential store to support.
 
+## Memory growth or LAN disruption after broadening the source ACL
+
+`security.allowed_clients` authorizes socket peers; it does not scan the subnet,
+create connections or change routes. Broadening it can admit previously blocked
+traffic. Do not label memory growth as a confirmed proxy loop without evidence.
+
+If stopping the VM restores the LAN, keep it stopped until isolated recovery is
+available. Disconnect its virtual NIC using the hypervisor and use the VM console
+to boot, stop Rillway and disable its automatic startup before reconnecting the
+NIC. Preserve configuration, VPN state and previous-boot logs privately. If the
+console or NIC controls are unavailable, request that access rather than booting
+the same configuration directly onto the LAN.
+
+Inspect which process consumed memory, kernel OOM records, accepted source IPs,
+connection count/destinations, and whether an outbound points back to Rillway.
+Distinguish the NAS/hypervisor VM graph from guest process RSS, service cgroup
+accounting and Linux `MemAvailable`. VM RSS can include guest file caches; it is
+not the Rillway heap. Historical service memory peaks are useful evidence, but
+absence of OOM does not rule out network saturation or host memory pressure.
+List recorded boots first: after a recovery boot, `-1` may no longer refer to the
+incident. Preserve the incident's actual boot/time range rather than assuming it.
+Verify the official WARP mode and VM bridge/IP ownership without changing unrelated
+VPNs. Missing persistent journals after a forced power-off mean missing evidence.
+Narrow the ACL to individually approved clients; do not replace it with an empty
+list or disable authentication. Proxying the host's own outbound traffic back to
+Rillway must be corrected before restarting.
+
+Current source bounds HTTP/SOCKS sockets at 256 total/64 per source, with a separate
+management/PAC budget of 64 total/16 per source. It also rejects its own proxy
+endpoints. Check the installed version before assuming those protections exist.
+They do not limit network bandwidth, detect every multi-proxy loop, or provide an
+OS memory ceiling. Apply VM/service resource limits appropriate to the machine
+before controlled recovery; replacing only the binary does not update a unit.
+Resume with one approved client and observe memory and connection counts before
+adding more. Do not run bulk traffic tests on the affected LAN.
+
+On a headless server, a failing `warp-taskbar` user unit is the graphical tray,
+not `warp-svc`. Inspect its display/session environment and restart count. Do not
+stop the official tunnel daemon or change registration to repair a tray failure.
+When multiple configuration files exist, inspect the unit's effective `--config`
+and use that file's certificate/token references; another config's certificate
+can produce repeated `tls: unknown certificate` failures.
+
 ## End-to-end and performance evidence
 
 Process active, listening port, VPN connected and real traffic are distinct.

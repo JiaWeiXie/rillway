@@ -12,6 +12,7 @@ import (
 	"rillway/internal/control"
 	"rillway/internal/engine"
 	"rillway/internal/i18n"
+	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
 	"strings"
 	"time"
@@ -80,12 +81,21 @@ type resultMsg struct {
 }
 type tickMsg time.Time
 
+type memoryMsg struct {
+	generation uint64
+	status     memorylimit.Status
+	open       bool
+	err        error
+}
+
 type model struct {
 	connection      ConnectionSettings
 	managementToken string
 	tokenVisible    bool
 	advancedVisible bool
 	serverInfo      control.Info
+	memoryStatus    memorylimit.Status
+	memoryLoading   bool
 	localBaseURL    string
 	remember        func(ConnectionSettings) error
 	rememberPending bool
@@ -176,6 +186,27 @@ func (m model) action(id, action, value string) tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case memoryMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.memoryLoading = false
+		if m.form == "memory" {
+			return m, nil
+		}
+		m.memoryStatus = msg.status
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		if msg.open {
+			if !msg.status.Supported {
+				m.err = errors.New(msg.status.Reason)
+				return m, nil
+			}
+			m.form, m.field, m.err = "memory", 0, nil
+			m.fields = []string{msg.status.Mode, msg.status.Value}
+		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case loadedMsg:
@@ -250,6 +281,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fields = nil
 			}
 			m.message = msg.message
+			if msg.form == "memory" {
+				m.memoryLoading = true
+				return m, m.loadMemory(false)
+			}
 			m.loading = true
 			if !m.statusLoading {
 				m.statusLoading = true
@@ -311,6 +346,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.client != nil && !m.loading {
 				m.loading = true
+				if m.page == 2 && !m.memoryLoading {
+					m.memoryLoading = true
+					return m, tea.Batch(m.load(), m.loadMemory(false))
+				}
 				return m, m.load()
 			}
 		case "a":
@@ -328,6 +367,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "x":
 			if m.ready && m.page == 2 {
 				m.advancedVisible = !m.advancedVisible
+			}
+		case "m":
+			if m.ready && m.page == 2 && !m.memoryLoading {
+				m.memoryLoading = true
+				return m, m.loadMemory(true)
 			}
 		case "?":
 			m.form = "help"
@@ -371,6 +415,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.form = "install"
 			}
 		}
+		if m.ready && m.page == 2 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") && !m.memoryLoading {
+			m.memoryLoading = true
+			return m, m.loadMemory(false)
+		}
 	}
 	return m, nil
 }
@@ -384,7 +432,7 @@ func (m model) updateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch m.form {
-	case "connection", "outbound":
+	case "connection", "outbound", "memory":
 		return m.updateFields(key)
 	case "help":
 		if key.String() == "enter" {
@@ -566,6 +614,7 @@ func (m model) View() string {
 		case 2:
 			fmt.Fprintf(&b, m.text("\n  HTTP proxy    %s\n  SOCKS5        %s\n  Management UI %s\n  PAC           %s\n\n  Use PAC bypass for company services on Mac to keep using local Tailscale.\n  Edit PAC and all routing rules in the Web UI.\n"), m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
 			b.WriteString(m.managementTokenView())
+			b.WriteString(m.memoryView())
 			if m.advancedVisible {
 				fmt.Fprintf(&b, m.text("\n  Advanced information\n  Configuration revision: %d\n  Tracks settings changes and prevents conflicting edits. Separate from the program version.\n"), m.cfg.Revision)
 			}
@@ -592,6 +641,7 @@ func (m model) View() string {
 		b.WriteString(m.text("  c Connect   d Disconnect   v Verify   n Register   l WARP+ license key\n"))
 	}
 	if m.ready && m.page == 2 {
+		b.WriteString(m.text("  m Edit service memory limit (percent / MiB / GiB)\n"))
 		b.WriteString(m.text("  t Show / hide Web UI token\n"))
 		b.WriteString(m.text("  x Show / hide advanced information\n"))
 	}
@@ -696,7 +746,7 @@ func (m model) visible(count int) (int, int) {
 }
 
 func (m model) formView() string {
-	if m.form == "connection" || m.form == "outbound" {
+	if m.form == "connection" || m.form == "outbound" || m.form == "memory" {
 		return m.fieldsView()
 	}
 	if m.form == "start" {

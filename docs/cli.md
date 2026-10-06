@@ -228,7 +228,9 @@ sudo rillway client restore --backup "$HOME/rillway-proxy-backup.json"
 
 `pac --config FILE` exports the configured PAC to stdout without changing system
 settings. The daemon also serves it at `/proxy.pac`. Company domains/CIDRs bypass
-on the Mac; public traffic uses Ubuntu. PAC has no automatic public DIRECT fallback.
+on the Mac; public traffic uses Ubuntu. PAC always bypasses the configured proxy
+host itself, including confirmed IP aliases, to keep Rillway access local. This
+does not add a general DIRECT fallback for public traffic.
 On macOS, open Network, choose the service, open Details and Proxies, then enable
 Automatic Proxy Configuration and enter the PAC URL. See [Apple's Mac proxy
 settings guide](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac) for
@@ -307,3 +309,47 @@ no config or companion files. `version`/`--version` prints the build version;
 development builds currently identify as `0.1.0-dev`. No version command implies
 release publication. `help`/`--help`/`-h` shows commands, and command-local help lists
 flags without installing services or generating credentials.
+
+### Service memory limit
+
+In Web UI **Settings → Service memory limit**, choose percent of detected host
+memory, MiB or GiB. TUI **Service settings → m** edits the same limit. Values are
+prefilled; changes apply to the running Linux service without a restart and
+persist through systemd. Refresh reads current usage, bounds and edit revision.
+An explicit refresh keeps typed values; a concurrent edit requires a refresh
+before saving. Switching units converts the current value.
+
+The detected host ceiling is physical RAM constrained by ancestor cgroups,
+excluding Rillway's own cap. At most 90% is allowed. The conservative lower bound
+is 256 MiB for direct/official WARP, 1 GiB with enabled embedded VPNs, or current
+service cgroup usage plus 25% headroom, whichever is larger. These policy floors
+are not promises about exact minimum memory or indefinite workload stability.
+Lowering a hard cap can still cause an OOM if demand later exceeds it.
+
+`MemoryMax` is the OS hard limit; `MemoryHigh` is 75% of it. Go's smaller soft
+budget leaves another 64 MiB below `MemoryHigh` for non-Go memory; it alone does
+not cap RSS. Limits cover Rillway, not the external WARP daemon or the entire VM.
+A percent value is converted and persisted when saved; reapply after changing
+host RAM. macOS and foreground daemons show this control as unavailable.
+
+New Linux installs include the private socket-activated controller. When
+upgrading an older installed binary, enable the controller once as an operator:
+
+```sh
+sudo rillway service memory-install
+# For a custom service config, supply its actual path:
+sudo rillway service memory-install --config /etc/rillway/config.json
+```
+
+This creates `rillway-memory.socket` and `rillway-memory.service`, using the same
+root-owned binary. It does not reinstall Rillway, change its config, VPN identity,
+network settings, main service startup policy or existing memory cap. The Web
+daemon retains its unprivileged account and `NoNewPrivileges`; the controller
+only changes `rillway.service` memory properties. A privileged operator can still
+inspect or change the cap using systemd. Do not start the internal helper by hand.
+
+Authenticated `GET /api/v1/service/memory` returns support, detected capacity,
+usage, current cap, minimum/maximum and an opaque edit revision. `PUT` accepts
+only `mode`, decimal-string `value` (up to three decimals) and that `revision`.
+Units are `percent`, `MiB`, `GiB`; stale writes return HTTP 409. Listener/config
+revisions are separate. Read current state after a timeout before retrying.

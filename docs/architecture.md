@@ -44,6 +44,8 @@ CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 
 
 每條已建立連線最多保存 hostname、port、已知目的 IP、family、流量、五秒窗口速率、建連時間、規則及出口。最多 2,048 條 flow 與 2,048 個自適應目的地；超過容量移除最舊資料，24 小時過期。統計不落盤，不記錄 payload、HTTPS path、cookie 或授權 header；畫面總計僅涵蓋保留的 flows。
 
+自身管理介面／PAC 的連線不建立 flow 或自適應樣本，HTTP／SOCKS5 的自身代理目的地則拒絕連線。判斷使用實際綁定的 IP／連接埠，wildcard 僅涵蓋已知本機位址；同一主機上其他經 Proxy 連線的服務仍會被記錄。已知的管理／PAC IP 直接在本機建連；別名只依所選出口連線結果判斷，不額外查詢主機 DNS。新自適應目的地在解析確認後才公開給探測排程，已排程的探測若連到自身也丟棄樣本。PAC 在用戶端自動 bypass 已設定的 Proxy 主機。
+
 WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用本機 `127.0.0.1:40000` 假冒目的 IP。DNS、傳輸失敗與實際速度不能單靠 IP 城市推論；診斷只列出可實測的資料與回應提供的 CDN header。
 
 ## 管理 API
@@ -70,3 +72,21 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 - 上傳的設定檔不會執行 Shell hooks，也不能指定檔案寫入位置。狀態目錄仍在使用中的既有 Tailscale，其節點身分與 DNS 欄位顯示唯讀及重啟說明，避免開啟第二個 state owner；啟停和登入操作仍透過既有 API。
 
 - `POST /api/v1/service/restart` 使用相同的 Bearer、來源及同源保護。先驗證儲存設定、憑證及新的監聽位址，HTTP `202` 回應 flush 後才觸發重啟。所有 Proxy 連線關閉，Runtime／listeners 完成清理並重新開啟，Tailscale state owner 先釋放後建立。重啟在原本的低權限 daemon 程序內完成，不執行 shell／sudo／service-manager 指令，也不載入新 binary。Web UI 需要確認操作，最多等待 30 秒並顯示恢復／新位址登入提示。
+
+## Service memory control
+
+`GET/PUT /api/v1/service/memory` is authenticated and uses a separate opaque edit
+revision. A Linux socket-activated helper in the same binary serializes bounded
+local JSON requests and invokes only fixed `systemctl show/set-property` commands
+for `rillway.service` MemoryMax/MemoryHigh. The Unix socket is root:rillway 0660;
+SO_PEERCRED requires root or the service UID inside the exact active service
+cgroup. The network-facing daemon remains unprivileged. Root-owned metadata
+contains numeric budgets and requested units only; no management/VPN credentials.
+Settings persist without service restart. The numeric settings and unit drop-in are stored in one atomic, root-owned
+`memory-limit.conf`, referenced by the final `zzzz-rillway-memory.conf` drop-in.
+A valid empty initial file changes no existing limits. Persistence failure
+prevents a live mutation; reload/property failures restore the previous file and
+properties and return sanitized errors.
+An ambiguous result must be read back before retrying. The helper itself has a
+64 MiB cap, CPU/task limits, no network address families and exits after idle.
+Policy and platform limits are documented in the bilingual CLI references.

@@ -16,3 +16,5 @@
 @media(max-width:900px){.flow-metric.flow-total{display:flex!important;grid-column:2 / -1;justify-content:space-between;align-items:center;gap:12px;text-align:left}.flow-total small{margin:0}.flow-total strong{font-size:.85rem}}
 
 input[readonly],textarea[readonly]{background:#f3f6f6;color:var(--muted);border-style:dashed}#pac-url{flex:1;min-width:0}#out-profile{font-family:ui-monospace,"Rillway Noto Sans TC",monospace;font-size:.85rem}
+
+#memory-fields{border:0;margin:0 0 1rem;padding:0;min-width:0}.memory-inputs{display:grid;grid-template-columns:1fr 1fr;gap:1rem}#memory-fields:disabled{opacity:.65}@media(max-width:640px){.memory-inputs{grid-template-columns:1fr}}

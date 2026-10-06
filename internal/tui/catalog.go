@@ -8,6 +8,15 @@ import (
 
 // English messages are stable keys; dynamic names and IDs are never translated.
 var catalog = map[string]string{
+	"Unit (Left/Right to choose)": "單位（左右鍵選擇）",
+	"Memory value":                "記憶體數值",
+	"\n  Service memory limit · applies without restarting\n  Left/Right chooses percent, MiB or GiB. Enter saves.\n": "\n  服務記憶體限制 · 儲存後生效，無須重啟\n  左右鍵選擇 percent（百分比）、MiB 或 GiB；按 Enter 儲存。\n",
+	"\n  Reading service memory limits…\n":         "\n  正在讀取服務記憶體限制…\n",
+	"\n  Press m to read service memory limits.\n": "\n  按 m 讀取服務記憶體限制。\n",
+	"\n  Memory limit: %s · current use %.1f MiB\n  Detected host: %.2f GiB · allowed %.1f–%.1f MiB\n  Minimum reason: %s\n": "\n  記憶體上限：%s · 目前用量 %.1f MiB\n  偵測主機容量：%.2f GiB · 可設定 %.1f–%.1f MiB\n  下限依據：%s\n",
+	"  m Edit service memory limit (percent / MiB / GiB)\n":                                                                  "  m 修改服務記憶體限制（百分比／MiB／GiB）\n",
+	"Memory limit saved. Applied without restarting the service.":                                                            "記憶體限制已儲存並生效，無須重啟服務。",
+
 	"\n  Service: %s\n": "\n  服務：%s\n",
 	"  Press i to install the background service.\n":              "  按 i 安裝背景服務。\n",
 	"  Start or install the service on the machine running it.\n": "  請在執行服務的主機上啟動或安裝服務。\n",

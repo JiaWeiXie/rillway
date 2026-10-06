@@ -12,6 +12,7 @@ import (
 )
 
 func (s *Server) ServeSOCKS(ctx context.Context, listener net.Listener) error {
+	listener = s.GuardListener(listener)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -104,7 +105,7 @@ func (s *Server) socksConnection(ctx context.Context, client net.Conn) {
 		return
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	upstream, err := s.dialer.DialContext(dialCtx, "tcp", address)
+	upstream, err := s.dialContext(dialCtx, "tcp", address)
 	cancel()
 	if err != nil {
 		socksReply(client, 5)

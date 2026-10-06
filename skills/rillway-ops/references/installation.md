@@ -83,3 +83,17 @@ deployment receipt private and disclose only a sanitized summary publicly.
 Repository acceptance scripts are for disposable first-install VMs, not live
 production upgrades. They may uninstall the service on exit. Do not run live VPN
 tests against a state directory already owned by the running daemon.
+
+### Memory-controller upgrade
+
+New Linux installs register the same-binary, socket-activated resource helper.
+After replacing an older installed binary, `sudo rillway service memory-install`
+adds it without reinstalling the daemon or changing its config/startup policy.
+Custom units require their real `--config FILE`. Keep the installed binary and
+its parent directories root-owned and not group/world-writable. Web Settings and
+TUI Service settings (`m`) expose percent/MiB/GiB, detected host ceiling and
+conservative service floor; changes apply immediately and persist. Foreground
+and macOS processes cannot claim the same OS hard cap. After an ambiguous write,
+read current limits before retrying. Before rolling back to an older binary,
+stop/disable both `rillway-memory.socket` and `rillway-memory.service`; preserve
+private backups and intentionally restore previous OS properties if needed.

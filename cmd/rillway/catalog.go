@@ -110,6 +110,7 @@ var catalog = map[string]string{
   rillway tui [--config FILE]               終端管理介面；按 i 安裝服務
   rillway tui --url URL --token-file FILE --ca PEM
   rillway service install|start|stop|restart|status|uninstall [--config FILE]
+  rillway service memory-install [--config FILE]
   rillway client list                      列出 macOS 網路服務
   rillway client apply --service Wi-Fi --pac-url URL --backup FILE
   rillway client restore --backup FILE

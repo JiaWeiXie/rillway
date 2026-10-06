@@ -17,7 +17,7 @@ to an Ubuntu VM, where Rillway routes it through direct, WARP, or WireGuard.
 
 The Web UI shows a complete PAC URL to paste into your Mac settings. Import or paste WireGuard profiles in the outbound form; Tailscale supports browser sign-in or an optional auth key. Restart-only Server settings and the complete JSON view are read-only. Use **Settings → Restart service** to reload saved configuration; active Proxy connections close. This restarts listeners and providers within the current daemon process, without sudo; it does not replace the binary or reboot the host.
 
-The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered. On Service settings, press `t` to reveal the Web UI token; leaving the page hides it again.
+The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered. On installed Linux services, **Settings → Service memory limit** (TUI: Service settings, `m`) accepts percent, MiB or GiB, detects host/safety bounds and applies without restarting. [Memory control and older-service upgrade](docs/cli.md#service-memory-limit). On Service settings, press `t` to reveal the Web UI token; leaving the page hides it again.
 
 ## One executable, guided installation
 

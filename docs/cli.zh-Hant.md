@@ -163,6 +163,8 @@ sudo rillway client restore --backup "$HOME/rillway-proxy-backup.json"
 
 `pac --config FILE` 將 PAC 輸出至 stdout，不修改系統；daemon 也提供 `/proxy.pac`。公司網域／CIDR 在 Mac bypass，公開流量送往 Ubuntu；不提供公開流量的自動 DIRECT fallback。macOS 可在「網路 → 詳細資訊 → 代理伺服器」開啟「自動代理伺服器設定」並填入 PAC URL；完整畫面步驟見 [Apple：在 Mac 上輸入代理伺服器設定](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac)。
 
+PAC 自動讓已設定的 Proxy 主機直連，包含已確認指向該 IP 的別名；即使停用其他 bypass 項目也保留。若明確經 Proxy 連到 Rillway 自己的管理介面／PAC，這些流量不列入統計或自適應判斷，管理介面的登入驗證仍有效；連回代理埠則會被拒絕，防止迴圈。
+
 `client` 只支援 macOS。list 列出 **network service 名稱**，例如 Wi-Fi、USB Ethernet，不是 en0。apply 接受 `--service`（預設 Wi-Fi）、必填 `--pac-url`、`--backup`（預設目前目錄的 `rillway-proxy-backup.json`）。先備份 PAC URL／狀態及手動 Proxy 啟用狀態，再設定 PAC、停用手動 Proxy；保留原 server／port／憑證。拒絕覆寫既有備份，套用失敗會嘗試還原。`restore --backup FILE` 還原後才刪除快照。只有此明確指令會修改選定的 Mac 網路服務。
 
 ## `docker export`：Engine、Build、容器
@@ -207,3 +209,40 @@ rillway setup --help
 ```
 
 licenses 輸出完整內建的套件、Go、字體授權，不需要設定或附屬檔案。version／`--version` 顯示建置版本，目前開發版為 `0.1.0-dev`；版本指令不代表已公開發布。help／`--help`／`-h` 顯示指令清單，各指令的 help 顯示選項，沒有安裝服務或生成憑證的副作用。
+
+### 服務記憶體限制
+
+Web UI「設定 → 服務記憶體限制」可用主機記憶體百分比、MiB 或 GiB 設定；TUI
+切到「服務設定」後按 `m`。常用值會先填好，切換單位會換算目前數值。儲存後
+立即生效，無須重啟 Linux 服務，systemd 也會保留設定。按「重新偵測限制」會
+更新用量、範圍與編輯版本，保留尚未儲存的數值；若其他人已修改，須重新偵測
+後才能儲存，避免覆蓋他人的設定。
+
+主機容量取實體 RAM 與上層 cgroup 限制中較小者，不把 Rillway 自己的既有上限
+當成主機容量。最多可用 90%。保守安全下限為直連／官方 WARP 的 256 MiB、啟用
+內建 VPN 時的 1 GiB，或目前服務 cgroup 用量加 25% 餘裕，取較大者。這是安全
+政策，並非精確最低需求或長時間穩定的保證；後續需求超過硬上限仍可能發生 OOM。
+
+`MemoryMax` 是 OS 硬上限，`MemoryHigh` 設為其 75%；Go 的軟性預算再保留 64 MiB
+供其他記憶體使用，單靠 Go 預算不能限制 RSS。這只限制 Rillway，不包含官方
+WARP daemon，也不等於 NAS 顯示的整台 VM 用量。百分比在儲存時換算並保留；
+調整主機 RAM 後請重新套用。macOS 與前景執行模式會顯示此控制不適用。
+
+新版 Linux 首次安裝會一併註冊控制程序。舊服務更新 binary 後，由管理者執行一次：
+
+```sh
+sudo rillway service memory-install
+# 自訂 unit 請明確指定它使用的設定檔：
+sudo rillway service memory-install --config /etc/rillway/config.json
+```
+
+這會註冊 `rillway-memory.socket` 與 `rillway-memory.service`，共用同一個 root
+擁有的 binary。它不重裝主服務、不修改設定／VPN／網路、主服務的開機啟動政策
+或既有記憶體上限。Web daemon 維持低權限與 `NoNewPrivileges`；控制程序只可
+修改 `rillway.service` 的記憶體屬性。管理者仍可透過 systemd 查閱／修改上限。
+不要手動啟動內部 helper。
+
+需要登入的 `GET /api/v1/service/memory` 回傳支援狀態、主機容量、用量、上限、
+可設定範圍與編輯版本；`PUT` 只接受 `mode`、最多三位小數的字串 `value` 及該
+`revision`。單位為 `percent`、`MiB`、`GiB`，版本衝突回傳 HTTP 409。這與主設定
+修訂號分開；若請求逾時，先讀取目前限制再重試。

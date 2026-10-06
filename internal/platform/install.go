@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"rillway/internal/config"
+	"rillway/internal/memorylimit"
 	"runtime"
 )
 
@@ -31,7 +32,8 @@ func refuseExisting(paths ...string) error {
 }
 
 func (p linuxPaths) check() error {
-	return refuseExisting(p.unit, p.binary, p.link, p.configDir, p.state)
+	return refuseExisting(p.unit, p.binary, p.link, p.configDir, p.state,
+		filepath.Join(filepath.Dir(p.unit), "rillway-memory.socket"), filepath.Join(filepath.Dir(p.unit), "rillway-memory.service"))
 }
 
 // CheckNewInstallation is a read-only preflight. The privileged installer checks
@@ -188,12 +190,69 @@ func installLinux(ctx context.Context, source string, paths linuxPaths, run Runn
 	if err = config.WritePrivate(paths.unit, []byte(unit)); err != nil {
 		return "", err
 	}
+	if err = writeMemoryUnits(paths, installedConfig); err != nil {
+		return "", err
+	}
 	if _, err = run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return "", err
 	}
 	if _, err = run(ctx, "systemctl", "enable", "rillway.service"); err != nil {
 		return "", err
 	}
+	if _, err = run(ctx, "systemctl", "enable", "--now", "rillway-memory.socket"); err != nil {
+		return "", err
+	}
 	out, err := run(ctx, "systemctl", "start", "rillway.service")
 	return string(out), err
+}
+
+func writeMemoryUnits(paths linuxPaths, configPath string) error {
+	socket, service, err := memorylimit.Units(paths.binary, configPath)
+	if err != nil {
+		return err
+	}
+	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
+	if err = os.MkdirAll(resourceDir, 0o755); err != nil {
+		return err
+	}
+	info, err := os.Lstat(resourceDir)
+	if err != nil || !info.IsDir() || !ownedByCurrentUser(info) || info.Mode().Perm()&0o022 != 0 {
+		return errors.New("unsafe memory control state directory")
+	}
+	target := filepath.Join(resourceDir, "memory-limit.conf")
+	info, err = os.Lstat(target)
+	if os.IsNotExist(err) {
+		// An empty valid drop-in changes no limits and prevents dangling links
+		// from making first-install enable/start report a bad unit file.
+		if err = config.WritePrivate(target, []byte("# Rillway memory limits are unchanged until saved.\n[Service]\n")); err != nil {
+			return err
+		}
+		if err = os.Chmod(target, 0o644); err != nil {
+			return err
+		}
+	} else if err != nil || !info.Mode().IsRegular() || !ownedByCurrentUser(info) || info.Mode().Perm()&0o022 != 0 {
+		return errors.New("unsafe memory control state file")
+	}
+	dir := filepath.Join(filepath.Dir(paths.unit), "rillway.service.d")
+	if err = os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	link := filepath.Join(dir, "zzzz-rillway-memory.conf")
+	if current, readErr := os.Readlink(link); readErr == nil {
+		if current != target {
+			return errors.New("memory control drop-in already exists with another target")
+		}
+	} else if os.IsNotExist(readErr) {
+		if err = os.Symlink(target, link); err != nil {
+			return err
+		}
+	} else {
+		return errors.New("memory control drop-in already exists with another target")
+	}
+	for name, contents := range map[string]string{"rillway-memory.socket": socket, "rillway-memory.service": service} {
+		if err = config.WritePrivate(filepath.Join(filepath.Dir(paths.unit), name), []byte(contents)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

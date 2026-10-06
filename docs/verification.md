@@ -2,6 +2,16 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-06：連線容量限制與受控部署
+
+- `mise run check` 通過：Lint 0 issues、race／shuffle／coverage 及 Python 測試。新增來源與總連線容量、並行關閉後釋放、HTTP／CONNECT／SOCKS5 自身目的地拒絕、DNS 別名、IPv4 mapped 位址、TCP 半關閉後延遲回覆，以及代理額滿時仍能操作管理 API 的測試。
+- 將 Linux amd64 開發 binary `0.3.1-incident-guard` 部署至 Ubuntu 26，先完成 loopback-only 驗證，再於明確授權後啟動限定來源的區網驗證。保存回復備份、既有憑證與 VPN 設定；服務維持開機不自動啟動，受控觀察期間不自動重新啟動。這不是公開 Release。
+- 有效 systemd 限額為 `MemoryHigh=384M`、`MemoryMax=512M`、`MemorySwapMax=0`、`CPUQuota=100%`、`TasksMax=256`，另設定 `GOMEMLIMIT=256MiB`。這些限額只涵蓋 Rillway 服務，不涵蓋外部 WARP daemon 或整台 VM。
+- 真實客戶端驗證受信任 TLS 管理 API、HTTP、CONNECT、SOCKS5 TCP、PAC、自身代理目的地拒絕，以及 GitHub CDN 的 HTTPS 請求命中既有 WARP 規則。官方 Local Proxy 的獨立 HTTPS trace 回傳 `warp=plus`。未變更 WARP 註冊、授權或模式。
+- 66 個停留的 HTTP sockets 觸發每來源容量拒絕；同時 SOCKS5 共用代理額度，管理 API 仍成功，釋放後能建立新代理連線。未列入允許清單的來源對四個 listener 均被關閉。這是短時、受控的容量驗證，不是公開網路 DDoS 測試。
+- 完成代理請求後，以三次間隔取樣觀察：程序 RSS 約 24 MiB，服務 cgroup 峰值約 6.1 MiB，沒有服務重新啟動，VM 可用記憶體維持約 4.7 GiB、swap 使用量為零。路由器連通測試 15／15 回覆；另一個區網來源連到 VM 的測試 5／5 回覆。NIC 收發錯誤為零；RX dropped 累計值在這三次取樣間沒有增加，不能據此宣稱整個開機期間都沒有丟包。
+- 原先區網不穩的原因仍未確認；歷史 journal 沒有找到 OOM，且 NAS 的整台 VM 記憶體圖表不能代替 Rillway 程序記憶體。上述短時驗證沒有重現故障，也不等於數小時／數日穩定性驗收。臨時 listener、測試程序及上傳目錄已清除，私有操作紀錄與備份不進入 Git。
+
 ## 2026-10-05：Agent CLI 與公開 Skill
 
 - `mise run check` 通過：Lint 0 issues、完整 race／shuffle／coverage 及 Python 測試通過。新增 JSON 成功／失敗格式、結束狀態、中英文錯誤、輸入上限、明確變更意圖、設定版本衝突、無變更不寫入、TLS 拒絕、秘密安全錯誤及遺失回覆不重試的測試。
@@ -229,3 +239,46 @@ Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/Ji
 - `mise run check` 通過，涵蓋 Lint、race／shuffle／coverage、雙語文字、API 權限、遠端版本及舊服務相容性；發布腳本測試確認四平台都注入共用版本欄位。使用實際 linker 注入的開發版 binary 啟動隔離的本機 daemon，CLI 與 Web UI 顯示相同版本。
 - Browser plugin 未提供，改用既有 Playwright／Chromium。桌面 1440×960、手機 390×844 的英文及繁體中文畫面皆正常載入、沒有水平溢出或非預期 JavaScript／console 錯誤；實際展開／收合進階資訊，確認修訂號只在展開時可見。另模擬舊服務的 404，確認仍可登入且顯示版本未提供。
 - 瀏覽器僅對隔離的本機自簽憑證測試環境放寬憑證檢查，產品 TLS 驗證未變更。本輪未發布新版本或變更正式 VM、VPN、網路設定；測試程序與臨時憑證已清除。
+
+## 2026-10-06：自有流量排除與服務記憶體介面
+
+- Rillway 的管理／PAC listener 流量不進入觀察或自適應樣本；指向自身
+  HTTP／SOCKS listener 的迴圈仍遭拒絕。測試涵蓋 literal IP、可確認的 DNS
+  別名、雙棧 listener、探測預算釋放與更新中的設定世代。管理權杖與 ACL
+  仍有效，其他同主機服務仍可正常觀察。Ubuntu VM 實際經 CONNECT 重複讀取
+  自身 API，確認沒有增加該次測試的 flow 或流量總計。
+- Web「設定 → 服務記憶體限制」及 TUI「服務設定 → m」共用需要權杖的管理
+  API；支援百分比／MiB／GiB、現有值、單位換算、主機容量、即時用量及可設定
+  上下限。編輯中的數值與版本不被背景更新／語言切換覆蓋，明確刷新才接受新
+  版本。百分比使用主機／上層 cgroup 容量，不把服務既有上限當作主機容量。
+- 安全下限採直連／官方 WARP 256 MiB、內建 VPN 1 GiB，並納入當下 cgroup
+  用量加 25% 餘裕；保留仍有既有連線的退役 Tailscale 節點下限。設定低於
+  下限、超過 90% 主機容量、過期版本、額外 JSON 欄位均有回歸測試；新啟用
+  內建 VPN 前也檢查現有服務上限。這是保守政策，並非實測的精確最低需求。
+- Linux 使用同一 binary 的獨立 socket-activated 控制程序，Web daemon
+  維持低權限。實際驗證同 service UID 但不同 cgroup 的程序遭拒絕，未登入
+  API 回傳 401、過期版本 409、無效範圍 422。Linux 專用的九項測試在 Ubuntu
+  26.04 x86_64 執行通過，包括有界協定、即時屬性、原子保存、失敗還原、VPN
+  下限與 peer 身分。
+- 實際 VM 測試 MiB、GiB、百分比設定，逐次讀回 MemoryMax／MemoryHigh，
+  確認修改期間 PID 不變，沒有新增自動重啟或 OOM kill。測試後還原先前
+  上限，並在 OS 服務重啟後確認保留；設定檔位元組與部署前備份一致。控制程序
+  的保存方式修正既有較晚 drop-in 蓋回舊限制的情況，數值與 drop-in 保存於
+  同一原子檔案；保存失敗不套用，屬性／reload 失敗則還原。首次安裝另以檔案
+  fixture 確認空白 drop-in 有效且不改既有上限，不留下 dangling symlink。
+- Browser plugin 未提供，使用已有 Playwright 與隔離 Chrome；實際 VM 經
+  loopback SSH 轉送，先以已取得的 CA／憑證指紋核對端點，再只在測試 browser
+  context 放寬自簽憑證檢查，產品 TLS 驗證未變更。英文／繁中、1440 與 390 px
+  的記憶體表單皆完成檢查；GiB 儲存後以 API 確認有效值，切換單位與語言保留
+  輸入，沒有橫向溢出或 JavaScript／console 錯誤。另以實際 TUI 完成中英切換、
+  讀取、換算與儲存；權杖維持隱藏。
+- `mise run check` 通過：Lint、race／shuffle／coverage 與八項 Python 測試。
+  Linux 專用 source 另做 cross lint；systemd unit 驗證通過，僅出現 Ubuntu
+  既有 XFS 相依 unit 的 CPUAccounting 棄用提示。追蹤來源／可達歷史的
+  public-source 檢查，以及本次已修改與新增檔案的私人模式及 Gitleaks 目錄
+  掃描通過；沒有新增外部依賴、MCP 或發布產物。
+- 本輪更新到未發布的 `0.3.1-incident-guard.5`；原 ACL、主服務開機啟動政策、
+  VPN 身分與網路設定保留。測試憑證／權杖複本、轉送、暫存測試 executable
+  與 browser profile 清除；部署備份及原始驗證收據只保留於私有位置。未新增
+  VPN 註冊、付費 license 套用、全新 VM 首次引導驗收或長時間負載測試；不以
+  此次檢查宣稱先前 NAS 記憶體／區網事件的根因已確認。

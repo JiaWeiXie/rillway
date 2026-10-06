@@ -68,6 +68,15 @@ func TestLinuxInstallationPreservesSourceAndRegistersService(t *testing.T) {
 	if err != nil || link != paths.binary {
 		t.Fatal("PATH symlink", link, err)
 	}
+	memoryLink := filepath.Join(filepath.Dir(paths.unit), "rillway.service.d", "zzzz-rillway-memory.conf")
+	target, err := os.Readlink(memoryLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := os.ReadFile(target)
+	if err != nil || !strings.Contains(string(initial), "[Service]") || strings.Contains(string(initial), "MemoryMax=") {
+		t.Fatal("memory installation changes limits or leaves a dangling drop-in", err)
+	}
 	for _, p := range []string{paths.state, paths.configDir} {
 		info, err := os.Stat(p)
 		if err != nil || info.Mode().Perm() != 0o700 {
@@ -88,7 +97,7 @@ func TestLinuxInstallationPreservesSourceAndRegistersService(t *testing.T) {
 		}
 	}
 	joined := strings.Join(calls, "\n")
-	for _, want := range []string{"useradd --system --user-group", "chown -R rillway:rillway " + paths.state + " " + paths.configDir, "systemctl daemon-reload\nsystemctl enable rillway.service\nsystemctl start rillway.service"} {
+	for _, want := range []string{"useradd --system --user-group", "chown -R rillway:rillway " + paths.state + " " + paths.configDir, "systemctl daemon-reload\nsystemctl enable rillway.service\nsystemctl enable --now rillway-memory.socket\nsystemctl start rillway.service"} {
 		if !strings.Contains(joined, want) {
 			t.Error("missing installer command", want)
 		}

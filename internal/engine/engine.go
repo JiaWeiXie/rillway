@@ -85,18 +85,30 @@ type Measurement struct {
 }
 
 type Engine struct {
-	mu           sync.Mutex
-	cfg          config.Config
-	providers    map[string]outbound.Provider
-	flows        map[uint64]*flowState
-	destinations map[string]*adaptiveState
-	sequence     atomic.Uint64
-	now          func() time.Time
-	ctx          context.Context
-	cancel       context.CancelFunc
-	done         chan struct{}
-	probeTimes   []time.Time
-	probes       int
+	mu                sync.Mutex
+	cfg               config.Config
+	providers         map[string]outbound.Provider
+	flows             map[uint64]*flowState
+	destinations      map[string]*adaptiveState
+	sequence          atomic.Uint64
+	now               func() time.Time
+	ctx               context.Context
+	cancel            context.CancelFunc
+	done              chan struct{}
+	probeTimes        []time.Time
+	probes            int
+	generation        uint64
+	destinationPolicy func(string) (blocked, internal bool)
+}
+
+// SetDestinationPolicy excludes this daemon's own endpoints from observations
+// and adaptive measurements. Literal internal services are dialed locally;
+// proxy endpoints are refused. DNS aliases are checked only after the selected
+// provider resolves them, never through an additional host DNS lookup.
+func (e *Engine) SetDestinationPolicy(policy func(string) (blocked, internal bool)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.destinationPolicy = policy
 }
 
 func New(cfg config.Config, providers map[string]outbound.Provider) *Engine {
@@ -113,6 +125,7 @@ func (e *Engine) Update(cfg config.Config, providers map[string]outbound.Provide
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cfg = cloneConfig(cfg)
+	e.generation++
 	e.providers = make(map[string]outbound.Provider, len(providers))
 	for id, p := range providers {
 		e.providers[id] = p
@@ -292,6 +305,18 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	host = normalize(host)
 	address = net.JoinHostPort(host, port)
 	e.mu.Lock()
+	policy := e.destinationPolicy
+	e.mu.Unlock()
+	if policy != nil {
+		blocked, internal := policy(address)
+		if blocked {
+			return nil, errors.New("proxy destination is a local proxy listener")
+		}
+		if internal {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		}
+	}
+	e.mu.Lock()
 	r, err := e.selectRoute(host)
 	if err != nil {
 		e.mu.Unlock()
@@ -305,8 +330,14 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	}
 	key := address + "|" + network
 	var state *adaptiveState
+	generation := e.generation
 	if len(r.candidates) > 0 {
-		state = e.destinationLocked(key, address, network, r)
+		state = e.destinations[key]
+		if state == nil {
+			// Do not publish a new adaptive destination until provider resolution
+			// confirms it is not this daemon. Otherwise probes can race the dial.
+			state = newAdaptiveState(address, network, r, e.now())
+		}
 		r.outbound = e.chooseLocked(state)
 		state.lastUsed = e.now()
 	}
@@ -315,6 +346,21 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	e.mu.Unlock()
 	conn, err := p.DialContext(ctx, network, address)
 	elapsed := e.now().Sub(started)
+	if err == nil && conn != nil && policy != nil {
+		blocked, internal := policy(conn.RemoteAddr().String())
+		if blocked || internal {
+			e.mu.Lock()
+			if state != nil && e.destinations[key] == state {
+				delete(e.destinations, key)
+			}
+			e.mu.Unlock()
+			if blocked {
+				_ = conn.Close()
+				return nil, errors.New("proxy destination resolves to a local proxy listener")
+			}
+			return conn, nil
+		}
+	}
 	ip := ""
 	if conn != nil {
 		ip = destinationIP(conn, host)
@@ -323,7 +369,9 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	if state != nil {
 		e.mu.Lock()
 		// An in-flight dial from a previous config must not populate the new policy.
-		if e.destinations[key] == state {
+		if e.generation == generation {
+			state = e.destinationLocked(key, address, network, r)
+			state.lastUsed = e.now()
 			e.recordFamilyLocked(state, r.outbound, elapsed, err, family)
 		}
 		e.mu.Unlock()

@@ -67,6 +67,7 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		return err
 	}
 	defer func() { _ = p.Close() }()
+	r.Engine.SetDestinationPolicy(p.DestinationPolicy)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var listeners []net.Listener
@@ -89,6 +90,10 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		socks   bool
 	}
 	var jobs []job
+	// Keep management/PAC capacity independent of saturated proxy traffic.
+	controlGuard := proxy.NewConnectionGuard(64, 16, func(peer string) bool {
+		return platform.ClientAllowed(peer, c.Security.AllowedClients)
+	})
 	acl := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if !platform.ClientAllowed(req.RemoteAddr, c.Security.AllowedClients) {
@@ -128,6 +133,12 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		l, e := bind(item.addr)
 		if e != nil {
 			return e
+		}
+		if item.socks || item.addr == c.Listeners.HTTP {
+			l = p.GuardListener(l)
+		} else {
+			p.IgnoreListener(l)
+			l = controlGuard.Wrap(l)
 		}
 		jobs = append(jobs, job{l, item.h, item.tls, item.socks})
 	}

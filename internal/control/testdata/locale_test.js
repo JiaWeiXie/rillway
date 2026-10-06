@@ -223,7 +223,7 @@ async function browser(initialLocale) {
   // Browser QA covers layout and form preservation. Here only stub visual
   // refresh work, keeping the shipped error and locale-switch behavior intact.
   vm.runInContext(`
-    navigate=connection=renderFlows=()=>{};
+    navigate=connection=renderFlows=renderMemory=()=>{};
     pollStatuses=()=>{};
   `,b.context);
   const safeSource='Enter a valid management token to sign in.';

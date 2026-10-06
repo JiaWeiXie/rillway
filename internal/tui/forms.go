@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"rillway/internal/config"
 	"rillway/internal/control"
+	"rillway/internal/memorylimit"
 	"strings"
 	"unicode"
 
@@ -53,6 +54,9 @@ func (m *model) fillOutboundFields() {
 }
 
 func (m model) fieldLabels() []string {
+	if m.form == "memory" {
+		return []string{"Unit (Left/Right to choose)", "Memory value"}
+	}
 	if m.form == "connection" {
 		return []string{"Management HTTPS URL", "Management token file", "Trusted certificate file"}
 	}
@@ -115,6 +119,18 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up":
 		m.field = (m.field + len(m.fields) - 1) % len(m.fields)
 	case "enter":
+		if m.form == "memory" {
+			req := memorylimit.Request{Mode: m.fields[0], Value: strings.TrimSpace(m.fields[1]), Revision: m.memoryStatus.Revision}
+			if _, err := memorylimit.Calculate(req, m.memoryStatus); err != nil {
+				m.err = err
+				return m, nil
+			}
+			m.saving, m.err = true, nil
+			return m, func() tea.Msg {
+				_, err := m.client.ApplyMemory(m.ctx, req)
+				return resultMsg{generation: m.generation, form: "memory", message: "Memory limit saved. Applied without restarting the service.", err: err}
+			}
+		}
 		if m.form == "connection" {
 			settings := ConnectionSettings{BaseURL: strings.TrimSpace(m.fields[0])}
 			var err error
@@ -180,7 +196,9 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, m.applyForm(cfg)
 	case "left", "right", " ":
-		if m.form == "outbound" && m.field == 0 {
+		if m.form == "memory" && m.field == 0 {
+			m.fields[0], m.fields[1] = nextMemoryUnit(m.fields[0], m.fields[1], m.memoryStatus, key.String() == "left")
+		} else if m.form == "outbound" && m.field == 0 {
 			m.drafts[m.outDraft.Type] = append([]string(nil), m.fields...)
 			direction := 1
 			if key.String() == "left" {
@@ -201,7 +219,7 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fields[m.field] = editText(m.fields[m.field], key)
 		}
 	default:
-		if m.form == "connection" || m.field != 0 && m.field != 2 && m.field != 3 {
+		if m.form == "connection" || m.form == "memory" && m.field == 1 || m.field != 0 && m.field != 2 && m.field != 3 {
 			m.fields[m.field] = editText(m.fields[m.field], key)
 		}
 	}
@@ -227,9 +245,13 @@ func (m model) applyForm(cfg config.Config) tea.Cmd {
 
 func (m model) fieldsView() string {
 	var b strings.Builder
-	if m.form == "connection" {
+	switch m.form {
+	case "connection":
 		b.WriteString(m.text("\n  Connect to a running Rillway service\n  This terminal manages the service; it does not start a proxy by itself.\n  For a VM, enter its HTTPS address and local token/certificate file paths.\n\n"))
-	} else {
+	case "memory":
+		b.WriteString(m.text("\n  Service memory limit · applies without restarting\n  Left/Right chooses percent, MiB or GiB. Enter saves.\n"))
+		b.WriteString(m.memoryView())
+	default:
 		b.WriteString(m.text("\n  Add an outbound · common values are already filled in\n  File paths below belong to the Rillway server.\n\n"))
 	}
 	labels := m.fieldLabels()

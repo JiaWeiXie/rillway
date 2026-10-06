@@ -16,6 +16,7 @@ import (
 	"rillway/internal/config"
 	"rillway/internal/diagnostic"
 	"rillway/internal/i18n"
+	"rillway/internal/memorylimit"
 	"rillway/internal/notices"
 	"rillway/internal/platform"
 	"rillway/internal/tui"
@@ -135,6 +136,12 @@ func runLocalized(ctx context.Context, args []string, out io.Writer) error {
 		fs, path := flags(ctx, command, out)
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
+		}
+		if action == "memory-helper" {
+			if fs.NArg() != 0 {
+				return errors.New("memory-helper does not accept positional arguments")
+			}
+			return memorylimit.ServeHelper(ctx, *path)
 		}
 		absolute, err := filepath.Abs(*path)
 		if err != nil {
@@ -302,6 +309,7 @@ const usage = `Rillway — observable split proxy
   rillway tui [--config FILE]               Terminal management; i installs service
   rillway tui --url URL --token-file FILE --ca PEM
   rillway service install|start|stop|restart|status|uninstall [--config FILE]
+  rillway service memory-install [--config FILE]
   rillway client list                      List macOS network services
   rillway client apply --service Wi-Fi --pac-url URL --backup FILE
   rillway client restore --backup FILE

@@ -14,6 +14,7 @@ import (
 	"os"
 	"rillway/internal/config"
 	"rillway/internal/i18n"
+	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
 	"strings"
 	"time"
@@ -28,6 +29,18 @@ type Client struct {
 // Info describes the daemon, which may differ from the management client's binary.
 type Info struct {
 	Version string `json:"version"`
+}
+
+func (c *Client) Memory(ctx context.Context) (memorylimit.Status, error) {
+	var s memorylimit.Status
+	err := c.request(ctx, http.MethodGet, "/api/v1/service/memory", nil, &s)
+	return s, err
+}
+
+func (c *Client) ApplyMemory(ctx context.Context, req memorylimit.Request) (memorylimit.Status, error) {
+	var s memorylimit.Status
+	err := c.request(ctx, http.MethodPut, "/api/v1/service/memory", req, &s)
+	return s, err
 }
 
 func (c *Client) Info(ctx context.Context) (Info, error) {

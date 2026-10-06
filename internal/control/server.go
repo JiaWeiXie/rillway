@@ -59,6 +59,8 @@ func New(backend Backend, adminToken string) http.Handler {
 	}))
 	mux.HandleFunc("PUT /api/v1/config", h.protect(h.putConfig))
 	mux.HandleFunc("POST /api/v1/service/restart", h.protect(h.restartService))
+	mux.HandleFunc("GET /api/v1/service/memory", h.protect(h.getMemory))
+	mux.HandleFunc("PUT /api/v1/service/memory", h.protect(h.putMemory))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
 	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))
 	mux.HandleFunc("PUT /api/v1/outbounds", h.protect(h.saveOutbound))

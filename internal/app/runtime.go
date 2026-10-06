@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"rillway/internal/config"
 	"rillway/internal/engine"
+	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
 	"sync"
 	"time"
@@ -81,6 +82,9 @@ func New(ctx context.Context, path string, c config.Config) (*Runtime, error) {
 		return nil, err
 	}
 	r := &Runtime{cfg: clone(c), path: path, providers: map[string]outbound.Provider{}, tailscaleOwners: map[string]*managed{}, appliedAt: time.Now().UTC()}
+	// Restore a saved Go GC budget, if the installed resource controller exists.
+	// This read never changes OS limits and must not prevent foreground startup.
+	_, _ = memorylimit.Control(ctx, nil)
 	for _, o := range c.Outbounds {
 		if err := r.ensureTailscaleStateAvailable(o); err != nil {
 			_ = r.closeProviders()
@@ -198,6 +202,20 @@ func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 	old := map[string]config.Outbound{}
 	for _, o := range r.cfg.Outbounds {
 		old[o.ID] = o
+	}
+	for _, o := range c.Outbounds {
+		previous := old[o.ID]
+		if o.Enabled && (o.Type == "tailscale" || o.Type == "wireguard") && (!previous.Enabled || previous.Type != o.Type) {
+			s, err := memorylimit.Control(ctx, nil)
+			if err != nil {
+				return memoryPublicError(err)
+			}
+			minimum, _ := memorylimit.SafeMinimum(c, s.CurrentBytes)
+			if s.Supported && s.LimitBytes != 0 && s.LimitBytes < minimum {
+				return config.PublicError{Message: "Increase the service memory limit before enabling an embedded VPN."}
+			}
+			break
+		}
 	}
 	next := map[string]outbound.Provider{}
 	var created []outbound.Provider
