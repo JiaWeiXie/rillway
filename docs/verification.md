@@ -2,6 +2,18 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-08：v0.4.1 發布與既有 Linux 服務升級
+
+- 已推送可靠性修正與 changelog，發布 `v0.4.1`。GitHub CI 的 security、Ubuntu／macOS check、cross-build、service-acceptance 五項通過；Release build 重跑 security／race checks／fuzz 並成功產生資產。`release` 環境取得操作人員的明確人工核准後，產生附 provenance 的 draft，驗證後才公開發布。
+- 四個 Linux／macOS binary 與 operations Skill 的 SHA-256 均通過；五個 provenance 均限定本 repository、Release workflow、`refs/tags/v0.4.1` 與對應來源 commit，並拒絕 self-hosted runner。LICENSE／THIRD_PARTY 與來源一致，Skill 封裝的七個允許檔案 CRC 通過。下載的 macOS arm64 binary 實際回報 `Rillway v0.4.1`。
+- 在既有 Ubuntu 26.04 amd64 服務上，只原子替換已驗證的 binary，沒有重跑 setup／service install／memory-install。新 binary 的 `agent plan` 接受既有設定且 `would_change=false`；執行中的 `/proc/<PID>/exe` SHA-256 與發布資產一致。服務為 `active/running`、維持開機啟動，`NRestarts=0`。停止至可信 TLS 管理 API 回報新版約 1 秒，此值不代表所有出口端到端的恢復時間。
+- 可信 HTTPS 管理 API 回報 `v0.4.1`，未驗證請求回 `401`；嵌入 Web 頁面、agent schema／status／唯讀 plan／未確認 mutation 拒絕、PAC 與 CLI PAC 一致性均通過。實際 HTTP 轉發、HTTPS CONNECT、SOCKS5 remote DNS 與 GitHub CDN 小型內容請求通過，未用請求重試改算成功。
+- GitHub CDN flow 使用既有 WARP 出口且傳輸計數涵蓋回應內容；官方 Local Proxy 的 trace 為 `warp=plus`，帳號狀態為 `Unlimited`。只使用既有帳號與代理，未執行註冊／授權或下載速度測試。記憶體管理 API 只做唯讀驗收，回報值與 systemd 實際限制一致。
+- 設定 revision 與內容、管理 token／TLS 檔案、主服務／記憶體 helper unit 及 drop-in 的 hash、owner 與 mode 不變；服務帳號、開機啟動、Restart、CPU／MemoryHigh／MemoryMax 政策保留。helper socket 維持 active/enabled，helper service 回到原本 inactive/static。
+- 停止服務後備份既有設定／state、unit 與 drop-in，保留 ACL／xattr；備份目錄由 root 擁有且為 `0700`，私有驗證／state 檔案為 `0600`。確認 archive 內設定符合升級前 hash、舊 binary 仍可執行並回報原版本。部署流程設有驗收失敗回復；本次成功，未為測試回復而再次中斷正式服務。遠端暫存上傳檔案已移除，營運收據只保留在限權私有目錄。
+
+限制：這次正式服務驗收沒有 Tailscale／WireGuard 出口，也沒有雙公網出口的自適應切換實測。下方 Tailscale 間歇失敗紀錄仍有效，根因未確認，不能用這次成功的 WARP 小型請求宣稱所有網站連線問題已排除。
+
 ## 2026-10-08：OrbStack Ubuntu 可靠性實測
 
 使用兩台新建的 Ubuntu 24.04／26.04 arm64 測試機，執行目前工作樹交叉編譯的同一份 binary，核對安裝前後 SHA-256 一致。每台機器限制為 2 CPU、4 GiB RAM、32 GiB 磁碟，實際 cgroup 值為 `cpu.max=200000 100000`、`memory.max=4294967296`、`memory.swap.max=0`；關閉 Mac 檔案共享、SSH agent 轉送與通往宿主／其他 VM 的網路整合。Rillway listeners 僅監聽 loopback，未更動既有 VM、Mac Proxy／DNS／VPN 或正式部署。
