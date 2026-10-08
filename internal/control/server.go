@@ -3,7 +3,6 @@ package control
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -139,7 +138,7 @@ func (h *handler) protect(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		provided, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(provided), []byte(h.token)) != 1 {
+		if !ok || !authguard.SecretEqual(provided, h.token) {
 			h.authFailures.Failure(r.RemoteAddr)
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, r, 401, "Enter a valid management token to sign in.")

@@ -221,6 +221,39 @@ func Load(path string) (Config, error) {
 	return Decode(data)
 }
 
+// ListenAddressesOverlap reports whether two host:port values bind or reach the
+// same local TCP socket. Go binds "" and "::" dual-stack; names are treated as
+// overlapping because they may resolve to either address.
+func ListenAddressesOverlap(a, b string) bool {
+	ah, ap, err := net.SplitHostPort(a)
+	if err != nil {
+		return false
+	}
+	bh, bp, err := net.SplitHostPort(b)
+	if err != nil || ap != bp {
+		return false
+	}
+	if ah == "" || bh == "" {
+		return true
+	}
+	ai, ae := netip.ParseAddr(ah)
+	bi, be := netip.ParseAddr(bh)
+	if ae != nil || be != nil {
+		return true
+	}
+	ai, bi = ai.Unmap(), bi.Unmap()
+	if ai == bi || ai == netip.IPv6Unspecified() || bi == netip.IPv6Unspecified() {
+		return true
+	}
+	if ai == netip.IPv4Unspecified() {
+		return bi.Is4()
+	}
+	if bi == netip.IPv4Unspecified() {
+		return ai.Is4()
+	}
+	return false
+}
+
 func Validate(c Config) error {
 	if c.Version != 1 {
 		return fmt.Errorf("unsupported config version %d", c.Version)
@@ -228,18 +261,19 @@ func Validate(c Config) error {
 	if c.Revision == 0 {
 		return errors.New("revision must be positive")
 	}
-	seen := map[string]bool{}
-	for _, addr := range []string{c.Listeners.HTTP, c.Listeners.SOCKS5, c.Listeners.Admin, c.Listeners.PAC} {
+	listeners := []string{c.Listeners.HTTP, c.Listeners.SOCKS5, c.Listeners.Admin, c.Listeners.PAC}
+	for i, addr := range listeners {
 		if addr == "" {
 			continue
 		}
 		if _, _, err := net.SplitHostPort(addr); err != nil {
 			return fmt.Errorf("listener %q: %w", addr, err)
 		}
-		if seen[addr] {
-			return fmt.Errorf("duplicate listener %q", addr)
+		for _, earlier := range listeners[:i] {
+			if earlier != "" && ListenAddressesOverlap(earlier, addr) {
+				return fmt.Errorf("listener %q overlaps listener %q", earlier, addr)
+			}
 		}
-		seen[addr] = true
 	}
 	if c.Listeners.Admin == "" {
 		return errors.New("admin listener is required")
@@ -261,6 +295,7 @@ func Validate(c Config) error {
 		return errors.New("proxy username and password file must be configured together")
 	}
 	outs := map[string]Outbound{}
+	stateDirs := map[string]bool{}
 	for _, o := range c.Outbounds {
 		if !validID.MatchString(o.ID) {
 			return fmt.Errorf("invalid outbound ID %q", o.ID)
@@ -278,6 +313,13 @@ func Validate(c Config) error {
 			if _, _, err := net.SplitHostPort(o.ProxyAddress); err != nil {
 				return err
 			}
+			if o.Enabled {
+				for _, addr := range listeners {
+					if addr != "" && ListenAddressesOverlap(addr, o.ProxyAddress) {
+						return errors.New("WARP proxy_address must not point to a Rillway listener")
+					}
+				}
+			}
 		case "wireguard":
 			if o.ConfigFile == "" {
 				return errors.New("WireGuard config_file is required")
@@ -285,6 +327,13 @@ func Validate(c Config) error {
 		case "tailscale":
 			if o.StateDir == "" {
 				return errors.New("tailscale state_dir is required")
+			}
+			if o.Enabled {
+				key := filepath.Clean(o.StateDir)
+				if stateDirs[key] {
+					return errors.New("enabled Tailscale outbounds must use different state_dir values")
+				}
+				stateDirs[key] = true
 			}
 		default:
 			return fmt.Errorf("unknown outbound type %q", o.Type)

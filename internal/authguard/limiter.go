@@ -1,7 +1,10 @@
 // Package authguard bounds failed authentication attempts using the socket peer.
+// IPv6 peers are grouped by /64.
 package authguard
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"net"
 	"net/netip"
 	"sync"
@@ -19,8 +22,8 @@ type entry struct {
 	until    time.Time
 }
 
-// Limiter allows at most 20 failed attempts per peer in one minute. Successful
-// requests are unlimited unless the peer is already temporarily blocked.
+// Limiter allows at most 20 failed attempts per peer in one minute. IPv6 peers
+// are grouped by /64. Successful requests are unlimited unless temporarily blocked.
 // Forwarded headers are never used; memory is bounded and excess peers fail closed.
 type Limiter struct {
 	mu    sync.Mutex
@@ -29,6 +32,12 @@ type Limiter struct {
 }
 
 func New() *Limiter { return &Limiter{peers: make(map[string]entry), now: time.Now} }
+
+// SecretEqual compares secrets in constant time without revealing their lengths.
+func SecretEqual(a, b string) bool {
+	aa, bb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(aa[:], bb[:]) == 1
+}
 
 func peer(address string) string {
 	host, _, err := net.SplitHostPort(address)
@@ -39,7 +48,11 @@ func peer(address string) string {
 	if err != nil {
 		return "unknown"
 	}
-	return ip.Unmap().String()
+	ip = ip.Unmap()
+	if ip.Is6() {
+		return netip.PrefixFrom(ip, 64).Masked().String()
+	}
+	return ip.String()
 }
 
 // Allow must run before comparing credentials. A valid token does not bypass a

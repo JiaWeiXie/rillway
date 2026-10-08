@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"rillway/internal/authguard"
 	"strconv"
 	"sync"
 	"time"
@@ -164,7 +165,7 @@ func (s *Server) socksAuthenticate(conn net.Conn) bool {
 	if _, err := io.ReadFull(conn, password); err != nil {
 		return false
 	}
-	accepted := s.authFailures.Allow(conn.RemoteAddr().String()) && same(string(user), s.username) && same(string(password), s.password)
+	accepted := s.authFailures.Allow(conn.RemoteAddr().String()) && authguard.SecretEqual(string(user), s.username) && authguard.SecretEqual(string(password), s.password)
 	if !accepted {
 		s.authFailures.Failure(conn.RemoteAddr().String())
 	}

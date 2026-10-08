@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -57,11 +58,29 @@ func (r *Runtime) PrepareRestart(ctx context.Context) (func(), error) {
 		}
 	}
 	currentAddresses := map[string]bool{}
+	heldAddresses := make([]string, 0, 4)
 	for _, address := range []string{r.cfg.Listeners.HTTP, r.cfg.Listeners.SOCKS5, r.cfg.Listeners.Admin, r.cfg.Listeners.PAC} {
-		currentAddresses[address] = true
+		if address != "" {
+			currentAddresses[address] = true
+			heldAddresses = append(heldAddresses, address)
+		}
 	}
 	for _, address := range []string{next.Listeners.HTTP, next.Listeners.SOCKS5, next.Listeners.Admin, next.Listeners.PAC} {
 		if address == "" || currentAddresses[address] {
+			continue
+		}
+		host, _, _ := net.SplitHostPort(address)
+		overlapsHeld := false
+		for _, held := range heldAddresses {
+			if config.ListenAddressesOverlap(held, address) {
+				overlapsHeld = true
+				break
+			}
+		}
+		if overlapsHeld {
+			if !localBindHost(host) {
+				return nil, config.PublicError{Message: "A new listener address is unavailable. Fix the Server configuration before restarting."}
+			}
 			continue
 		}
 		listener, err := net.Listen("tcp", address)
@@ -77,6 +96,30 @@ func (r *Runtime) PrepareRestart(ctx context.Context) (func(), error) {
 		default:
 		}
 	}, nil
+}
+
+func localBindHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	if ip.IsUnspecified() {
+		return true
+	}
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, address := range addresses {
+		if prefix, err := netip.ParsePrefix(address.String()); err == nil && prefix.Addr().Unmap() == ip {
+			return true
+		}
+	}
+	return false
 }
 
 func New(ctx context.Context, path string, c config.Config) (*Runtime, error) {

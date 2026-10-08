@@ -25,12 +25,52 @@ func TestRoundTripAndPermissions(t *testing.T) {
 }
 
 func TestInvalidConfig(t *testing.T) {
-	for _, modify := range []func(*Config){func(c *Config) { c.Rules[0].Domains = []string{"github.com/evil"} }, func(c *Config) { c.Outbounds = append(c.Outbounds, c.Outbounds[0]) }, func(c *Config) { c.Adaptive.ProbesPerMinute = 13 }, func(c *Config) { c.Rules[0].Outbound = "missing" }, func(c *Config) { c.Listeners.Admin = c.Listeners.HTTP }} {
+	for _, modify := range []func(*Config){
+		func(c *Config) { c.Rules[0].Domains = []string{"github.com/evil"} },
+		func(c *Config) { c.Outbounds = append(c.Outbounds, c.Outbounds[0]) },
+		func(c *Config) { c.Adaptive.ProbesPerMinute = 13 },
+		func(c *Config) { c.Rules[0].Outbound = "missing" },
+		func(c *Config) { c.Listeners.Admin = c.Listeners.HTTP },
+		func(c *Config) { c.Listeners.PAC = "0.0.0.0:17890" },
+		func(c *Config) { c.Outbounds[1].Enabled = true; c.Outbounds[1].ProxyAddress = c.Listeners.SOCKS5 },
+		func(c *Config) {
+			c.Outbounds = append(c.Outbounds,
+				Outbound{ID: "ts-a", Type: "tailscale", Enabled: true, StateDir: "/x/ts"},
+				Outbound{ID: "ts-b", Type: "tailscale", Enabled: true, StateDir: "/x/ts/"})
+		},
+	} {
 		c := Default(t.TempDir())
 		modify(&c)
 		if Validate(c) == nil {
 			t.Fatal("accepted invalid config")
 		}
+	}
+}
+
+func TestListenAddressesOverlap(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{
+		{"127.0.0.1:1", "127.0.0.1:1", true},
+		{"0.0.0.0:1", "127.0.0.1:1", true},
+		{"[::]:1", "127.0.0.1:1", true},
+		{":1", "[::1]:1", true},
+		{"localhost:1", "127.0.0.1:1", true},
+		{"[::ffff:127.0.0.1]:1", "127.0.0.1:1", true},
+		{"0.0.0.0:1", "[::1]:1", false},
+		{"127.0.0.1:1", "127.0.0.1:2", false},
+		{"127.0.0.1:1", "192.168.1.2:1", false},
+		{"invalid", "127.0.0.1:1", false},
+	} {
+		t.Run(tt.a+"/"+tt.b, func(t *testing.T) {
+			if got := ListenAddressesOverlap(tt.a, tt.b); got != tt.want {
+				t.Fatalf("overlap = %v, want %v", got, tt.want)
+			}
+			if got := ListenAddressesOverlap(tt.b, tt.a); got != tt.want {
+				t.Fatalf("reverse overlap = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

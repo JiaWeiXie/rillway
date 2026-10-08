@@ -103,7 +103,7 @@ PersistentKeepalive = 25
 
 `PostUp`、`PostDown`、`PreUp`、`PreDown`、`SaveConfig`、`Table` 與未知欄位都拒絕。地址使用 CIDR；DNS 僅接受 IP，不接受 search domain，且必須位於某個 peer 的 AllowedIPs 內。MTU 範圍為 1280–65535。
 
-只有 tunnel endpoint 的初始解析使用宿主 DNS。目的網站的 DNS 透過 userspace tunnel 內的 resolver；未設 DNS 時只接受 literal IP，不回退到宿主 DNS。Outbound 的 `dns` 可覆寫設定檔 DNS，仍受相同路由限制。
+`Endpoint` 若使用 hostname，初始解析和定期 endpoint 維護才使用宿主 DNS。尚未解析的 endpoint 會重試；有新連線嘗試且 peer 交握已過期時，Rillway 會每 30 秒重新解析並在多個位址間輪替。成功取得可用位址後，現有 userspace device 會更新 peer，不需重新啟動。目的網站的 DNS 透過 userspace tunnel 內的 resolver；未設 DNS 時只接受 literal IP，不回退到宿主 DNS。Outbound 的 `dns` 可覆寫設定檔 DNS，仍受相同路由限制。
 
 `public_internet` 是使用者對此 profile 的用途宣告，不代表公網連線已驗證。要用於自適應，先確認 peer 的 AllowedIPs、伺服器轉送／NAT 與 DNS 能連到公網。私網 profile 保持 `false` 並使用固定規則。
 

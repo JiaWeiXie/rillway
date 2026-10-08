@@ -28,7 +28,7 @@ func TestWindowPeerIdentityAndCapacity(t *testing.T) {
 		t.Fatal("expired block retained")
 	}
 	for i := range clientLimit {
-		l.Failure(fmt.Sprintf("[2001:db8::%x]:1234", i+1))
+		l.Failure(fmt.Sprintf("[2001:db8:%x::1]:1234", i+1))
 	}
 	if l.Allow("192.0.2.3:1234") {
 		t.Fatal("overflow must fail closed")
@@ -40,6 +40,19 @@ func TestWindowPeerIdentityAndCapacity(t *testing.T) {
 	now = now.Add(window)
 	if !l.Allow("192.0.2.3:1234") || len(l.peers) != 0 {
 		t.Fatal("expired peers not reclaimed")
+	}
+}
+
+func TestIPv6PeersShareSlash64Budget(t *testing.T) {
+	l := New()
+	for i := range failureLimit {
+		l.Failure(fmt.Sprintf("[2001:db8:1:1::%x]:1", i+1))
+	}
+	if l.Allow("[2001:db8:1:1::ffff]:1") {
+		t.Fatal("IPv6 address rotation bypassed the /64 budget")
+	}
+	if !l.Allow("[2001:db8:1:2::1]:1") {
+		t.Fatal("unrelated /64 blocked")
 	}
 }
 

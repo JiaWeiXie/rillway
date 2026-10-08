@@ -20,27 +20,68 @@ import (
 
 var errRestart = errors.New("service restart requested")
 
+type restartRequest struct{ active config.Config }
+
+func (r restartRequest) Error() string { return errRestart.Error() }
+func (r restartRequest) Unwrap() error { return errRestart }
+
+type serverTimeouts struct {
+	adminRead, adminWrite time.Duration
+	pacRead, pacWrite     time.Duration
+}
+
+var defaultServerTimeouts = serverTimeouts{30 * time.Second, 2 * time.Minute, 10 * time.Second, 30 * time.Second}
+
 // Serve restarts its listeners and runtime in the same low-privilege process.
 // It needs no shell commands, sudo policy, or service-manager privileges.
 func Serve(ctx context.Context, path string, c config.Config, ready func(string)) error {
+	return serveWithTimeouts(ctx, path, c, ready, defaultServerTimeouts)
+}
+
+type serveAttempt func(context.Context, string, config.Config, func(string), serverTimeouts) error
+
+func serveWithTimeouts(ctx context.Context, path string, c config.Config, ready func(string), timeouts serverTimeouts) error {
+	return serveLoop(ctx, path, c, ready, timeouts, serveOnce)
+}
+
+func serveLoop(ctx context.Context, path string, c config.Config, ready func(string), timeouts serverTimeouts, attempt serveAttempt) error {
+	current := c
+	var fallback *config.Config
 	for {
-		err := serveOnce(ctx, path, c, ready)
+		attemptReady := func(message string) {
+			fallback = nil
+			if ready != nil {
+				ready(message)
+			}
+		}
+		err := attempt(ctx, path, current, attemptReady, timeouts)
 		if ctx.Err() != nil {
 			return nil
 		}
-		if !errors.Is(err, errRestart) {
-			return err
+		if errors.Is(err, errRestart) {
+			next, loadErr := config.Load(path)
+			if loadErr != nil {
+				return loadErr
+			}
+			previous := current
+			var request restartRequest
+			if errors.As(err, &request) {
+				previous = request.active
+			}
+			fallback, current = &previous, next
+			continue
 		}
-		c, err = config.Load(path)
-		if err != nil {
-			return err
+		if fallback != nil {
+			current, fallback = *fallback, nil
+			continue
 		}
+		return err
 	}
 }
 
 // serveOnce opens every listener before publishing readiness, and tears down
 // all listeners if any requested address cannot be bound.
-func serveOnce(ctx context.Context, path string, c config.Config, ready func(string)) error {
+func serveOnce(ctx context.Context, path string, c config.Config, ready func(string), timeouts serverTimeouts) error {
 	token, fp, err := platform.EnsureCredentials(c)
 	if err != nil {
 		return err
@@ -86,10 +127,11 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		return l, e
 	}
 	type job struct {
-		l       net.Listener
-		handler http.Handler
-		tls     bool
-		socks   bool
+		l                         net.Listener
+		handler                   http.Handler
+		tls                       bool
+		socks                     bool
+		readTimeout, writeTimeout time.Duration
 	}
 	var jobs []job
 	// Keep management/PAC capacity independent of saturated proxy traffic.
@@ -106,28 +148,16 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		})
 	}
 	for _, item := range []struct {
-		addr  string
-		h     http.Handler
-		tls   bool
-		socks bool
+		addr                      string
+		h                         http.Handler
+		tls                       bool
+		socks                     bool
+		readTimeout, writeTimeout time.Duration
 	}{
-		{c.Listeners.HTTP, p.HTTPHandler(), false, false},
-		{c.Listeners.SOCKS5, nil, false, true},
-		{c.Listeners.Admin, acl(control.New(r, token)), true, false},
-		{c.Listeners.PAC, acl(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.Method != "GET" || req.URL.Path != "/proxy.pac" {
-				http.NotFound(w, req)
-				return
-			}
-			body, e := platform.PAC(r.Config().PAC)
-			if e != nil {
-				http.Error(w, "invalid PAC", 500)
-				return
-			}
-			w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
-			w.Header().Set("Cache-Control", "no-store")
-			_, _ = w.Write([]byte(body))
-		})), false, false},
+		{c.Listeners.HTTP, p.HTTPHandler(), false, false, 0, 0},
+		{c.Listeners.SOCKS5, nil, false, true, 0, 0},
+		{c.Listeners.Admin, acl(control.New(r, token)), true, false, timeouts.adminRead, timeouts.adminWrite},
+		{c.Listeners.PAC, acl(pacHandler(r)), false, false, timeouts.pacRead, timeouts.pacWrite},
 	} {
 		if item.addr == "" {
 			continue
@@ -142,7 +172,7 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 			p.IgnoreListener(l)
 			l = controlGuard.Wrap(l)
 		}
-		jobs = append(jobs, job{l, item.h, item.tls, item.socks})
+		jobs = append(jobs, job{l, item.h, item.tls, item.socks, item.readTimeout, item.writeTimeout})
 	}
 	cert, err := tls.LoadX509KeyPair(c.Security.TLSCertFile, c.Security.TLSKeyFile)
 	if err != nil {
@@ -157,7 +187,7 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 			go func() { defer wg.Done(); failures <- p.ServeSOCKS(ctx, j.l) }()
 			continue
 		}
-		server := &http.Server{Handler: j.handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+		server := &http.Server{Handler: j.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: j.readTimeout, WriteTimeout: j.writeTimeout, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
 		servers = append(servers, server)
 		l := j.l
 		if j.tls {
@@ -173,7 +203,7 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 	select {
 	case <-ctx.Done():
 	case <-r.restart:
-		serveErr = errRestart
+		serveErr = restartRequest{active: r.Config()}
 	case serveErr = <-failures:
 	}
 	cancel()
@@ -193,4 +223,27 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		return nil
 	}
 	return serveErr
+}
+
+func pacHandler(r *Runtime) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet || req.URL.Path != "/proxy.pac" {
+			http.NotFound(w, req)
+			return
+		}
+		if site := req.Header.Get("Sec-Fetch-Site"); site != "" && site != "none" &&
+			(req.Header.Get("Sec-Fetch-Mode") != "navigate" || req.Header.Get("Sec-Fetch-Dest") != "document") {
+			http.Error(w, "PAC cannot be loaded by web pages", http.StatusForbidden)
+			return
+		}
+		body, err := platform.PAC(r.Config().PAC)
+		if err != nil {
+			http.Error(w, "invalid PAC", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write([]byte(body))
+	})
 }

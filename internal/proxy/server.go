@@ -5,8 +5,6 @@ package proxy
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -98,11 +96,6 @@ func (s *Server) allowedClient(address string) bool {
 	return false
 }
 
-func same(a, b string) bool {
-	aa, bb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
-	return subtle.ConstantTimeCompare(aa[:], bb[:]) == 1
-}
-
 func (s *Server) authenticated(r *http.Request) bool {
 	if s.username == "" {
 		return true
@@ -116,7 +109,7 @@ func (s *Server) authenticated(r *http.Request) bool {
 		return false
 	}
 	u, p, ok := strings.Cut(string(decoded), ":")
-	return ok && same(u, s.username) && same(p, s.password)
+	return ok && authguard.SecretEqual(u, s.username) && authguard.SecretEqual(p, s.password)
 }
 
 func (s *Server) HTTPHandler() http.Handler { return http.HandlerFunc(s.serveHTTP) }
@@ -364,8 +357,9 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// relay waits for both stream directions and preserves TCP half-close. Context
-// cancellation and Server.Close release blocked reads and writes.
+// relay waits for both stream directions. A clean EOF is forwarded as a TCP
+// half-close; any read or write error closes both sides so dead peers do not
+// hold admission slots or retired providers.
 func relay(ctx context.Context, a, b io.ReadWriteCloser) {
 	done := make(chan struct{})
 	go func() {
@@ -379,7 +373,12 @@ func relay(ctx context.Context, a, b io.ReadWriteCloser) {
 	var wg sync.WaitGroup
 	copyStream := func(dst, src io.ReadWriteCloser) {
 		defer wg.Done()
-		_, _ = io.Copy(dst, src)
+		_, err := io.Copy(dst, src)
+		if err != nil {
+			_ = a.Close()
+			_ = b.Close()
+			return
+		}
 		if c, ok := dst.(interface{ CloseWrite() error }); ok {
 			_ = c.CloseWrite()
 		} else {
