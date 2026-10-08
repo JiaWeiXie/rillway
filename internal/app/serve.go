@@ -68,6 +68,8 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 	}
 	defer func() { _ = p.Close() }()
 	r.Engine.SetDestinationPolicy(p.DestinationPolicy)
+	// Set before any listener starts, so management requests never race it.
+	r.admission = p.AdmissionRejections
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var listeners []net.Listener

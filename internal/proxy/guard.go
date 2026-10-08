@@ -12,16 +12,30 @@ import (
 // TLS handshakes or SOCKS workers allocate resources. A guard can be shared by
 // multiple listeners, so changing protocols cannot evade its budget.
 type ConnectionGuard struct {
-	mu      sync.Mutex
-	clients map[netip.Addr]int
-	active  int
-	total   int
-	perIP   int
-	allowed func(string) bool
+	mu       sync.Mutex
+	clients  map[netip.Addr]int
+	active   int
+	total    int
+	perIP    int
+	allowed  func(string) bool
+	rejected AdmissionRejections
+}
+
+// AdmissionRejections counts allowed-source sockets closed for capacity since
+// the listeners started. Clients see a reset, not an HTTP or SOCKS5 error.
+type AdmissionRejections struct {
+	SourceLimit uint64 `json:"source_limit"`
+	TotalLimit  uint64 `json:"total_limit"`
 }
 
 func NewConnectionGuard(total, perIP int, allowed func(string) bool) *ConnectionGuard {
 	return &ConnectionGuard{clients: make(map[netip.Addr]int), total: total, perIP: perIP, allowed: allowed}
+}
+
+func (g *ConnectionGuard) Rejections() AdmissionRejections {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.rejected
 }
 
 func (g *ConnectionGuard) Wrap(l net.Listener) net.Listener {
@@ -48,9 +62,14 @@ func (l *guardedListener) Accept() (net.Conn, error) {
 		g := l.guard
 		g.mu.Lock()
 		accepted := g.active < g.total && g.clients[ip] < g.perIP
-		if accepted {
+		switch {
+		case accepted:
 			g.active++
 			g.clients[ip]++
+		case g.active >= g.total:
+			g.rejected.TotalLimit++
+		default:
+			g.rejected.SourceLimit++
 		}
 		g.mu.Unlock()
 		if !accepted {
@@ -87,6 +106,9 @@ func (c *guardedConn) CloseWrite() error {
 	}
 	return c.Close()
 }
+
+// AdmissionRejections reports capacity rejections on the shared HTTP/SOCKS5 budget.
+func (s *Server) AdmissionRejections() AdmissionRejections { return s.guard.Rejections() }
 
 // GuardListener registers a proxy endpoint for loop prevention and shares the
 // HTTP/SOCKS admission budget: 256 sockets total, 64 per source IP.
@@ -151,10 +173,14 @@ func (s *Server) matchesEndpoint(endpoint, target netip.AddrPort, ip netip.Addr)
 	return endpoint.Addr().IsUnspecified() && (!endpoint.Addr().Is4() || ip.Is4()) && (s.localIPs[ip] || ip.IsLoopback())
 }
 
+// dialContext gives HTTP forwarding, CONNECT and SOCKS5 the same outbound
+// budget. Tunnel providers rely on this context because they have no own timeout.
 func (s *Server) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if s.ownEndpoint(address) {
 		return nil, errors.New("proxy destination is a local proxy listener")
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.dialTimeout)
+	defer cancel()
 	c, err := s.dialer.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err

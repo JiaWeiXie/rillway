@@ -15,6 +15,7 @@ import (
 	"rillway/internal/engine"
 	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
+	"rillway/internal/proxy"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type Runtime struct {
 	Engine          *engine.Engine
 	appliedAt       time.Time
 	restart         chan struct{}
+	admission       func() proxy.AdmissionRejections
 }
 
 // PrepareRestart validates the saved configuration before the HTTP handler
@@ -180,11 +182,16 @@ func (r *Runtime) RestartRequiredOutbounds() []string {
 func (r *Runtime) Snapshot() any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var rejections proxy.AdmissionRejections
+	if r.admission != nil {
+		rejections = r.admission()
+	}
 	return struct {
 		engine.Snapshot
-		Revision  uint64    `json:"config_revision"`
-		AppliedAt time.Time `json:"applied_at"`
-	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt}
+		Revision   uint64                    `json:"config_revision"`
+		AppliedAt  time.Time                 `json:"applied_at"`
+		Rejections proxy.AdmissionRejections `json:"proxy_admission_rejections"`
+	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, rejections}
 }
 
 func (r *Runtime) Apply(ctx context.Context, c config.Config) error {

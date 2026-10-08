@@ -14,6 +14,7 @@ func TestHTTPAndSOCKSShareAuthenticationLimit(t *testing.T) {
 	for range 20 {
 		r := httptest.NewRequest("GET", "http://example.invalid/", nil)
 		r.RemoteAddr = "127.0.0.1:1234"
+		r.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:wrong")))
 		w := httptest.NewRecorder()
 		s.HTTPHandler().ServeHTTP(w, r)
 		if w.Code != 407 {
@@ -44,6 +45,32 @@ func TestHTTPAndSOCKSShareAuthenticationLimit(t *testing.T) {
 	}
 	if reply[1] != 1 || <-done {
 		t.Fatal("SOCKS bypassed HTTP failure block")
+	}
+}
+
+// Clients normally send a first request without credentials to receive the
+// 407 challenge. Those challenges are not password guesses and must not lock
+// out the same source's correct credentials.
+func TestProxyChallengesDoNotCountAsAuthenticationFailures(t *testing.T) {
+	s := testServer(t, true)
+	for range 25 {
+		r := httptest.NewRequest("GET", "http://example.invalid/", nil)
+		r.RemoteAddr = "127.0.0.1:1234"
+		w := httptest.NewRecorder()
+		s.HTTPHandler().ServeHTTP(w, r)
+		if w.Code != 407 {
+			t.Fatal(w.Code)
+		}
+	}
+	s.dialer = blockingDialer{}
+	s.dialTimeout = 10 * time.Millisecond
+	r := httptest.NewRequest("GET", "http://example.invalid/", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	r.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:password")))
+	w := httptest.NewRecorder()
+	s.HTTPHandler().ServeHTTP(w, r)
+	if w.Code != 502 {
+		t.Fatalf("valid credentials after challenges: status=%d want=502 from outbound", w.Code)
 	}
 }
 

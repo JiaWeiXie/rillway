@@ -12,8 +12,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"rillway/internal/config"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -142,6 +146,37 @@ func TestHTTPProxyAbortsTruncatedUpstreamResponse(t *testing.T) {
 	data, err := io.ReadAll(response.Body)
 	if err == nil {
 		t.Fatalf("truncated upstream accepted as complete response: %q", data)
+	}
+}
+
+type blockingDialer struct{}
+
+func (blockingDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Tunnel providers honor only the context, so plain HTTP forwarding needs the
+// same bounded dial as CONNECT and SOCKS5 instead of hanging the client.
+func TestHTTPProxyBoundsOutboundDial(t *testing.T) {
+	s, err := New(blockingDialer{}, config.Security{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	s.dialTimeout = 50 * time.Millisecond
+	request := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { defer close(done); s.HTTPHandler().ServeHTTP(recorder, request) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("plain HTTP outbound dial was not bounded")
+	}
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d want=%d", recorder.Code, http.StatusBadGateway)
 	}
 }
 
@@ -306,6 +341,106 @@ func TestSOCKSRejectsUDPAndAuthDowngrade(t *testing.T) {
 	})
 }
 
+type flakyListener struct {
+	net.Listener
+	failed atomic.Bool
+}
+
+func emfile() error {
+	return &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)}
+}
+
+func (l *flakyListener) Accept() (net.Conn, error) {
+	if l.failed.CompareAndSwap(false, true) {
+		return nil, emfile()
+	}
+	return l.Listener.Accept()
+}
+
+// Descriptor exhaustion is transient. Stopping the SOCKS5 listener would end
+// the service and drop every proxied stream until the supervisor restarts it.
+func TestSOCKSAcceptSurvivesTemporaryError(t *testing.T) {
+	s := testServer(t, false)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- s.ServeSOCKS(ctx, &flakyListener{Listener: l}) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("SOCKS did not shut down")
+		}
+	})
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	_, _ = c.Write([]byte{5, 1, 0})
+	var choice [2]byte
+	if _, err := io.ReadFull(c, choice[:]); err != nil || choice != [2]byte{5, 0} {
+		select {
+		case serveErr := <-done:
+			done <- serveErr
+			t.Fatalf("SOCKS listener stopped after temporary accept error: %v", serveErr)
+		default:
+		}
+		t.Fatalf("method choice %v %v", choice, err)
+	}
+}
+
+// exhaustedListener fails every Accept and reports when the loop has entered a
+// long backoff (5 ms doubling: the eighth failure waits 640 ms).
+type exhaustedListener struct {
+	net.Listener
+	accepts    atomic.Int32
+	backingOff chan struct{}
+}
+
+func (l *exhaustedListener) Accept() (net.Conn, error) {
+	if l.accepts.Add(1) == 8 {
+		close(l.backingOff)
+	}
+	return nil, emfile()
+}
+
+func TestSOCKSShutdownInterruptsAcceptBackoff(t *testing.T) {
+	s := testServer(t, false)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	exhausted := &exhaustedListener{Listener: l, backingOff: make(chan struct{})}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.ServeSOCKS(ctx, exhausted) }()
+	select {
+	case <-exhausted.backingOff:
+	case err := <-done:
+		t.Fatalf("SOCKS stopped during temporary errors: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("accept loop did not retry")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("shutdown waited for the accept backoff")
+	}
+}
+
 func TestSOCKSContextCancelsIncompleteHandshake(t *testing.T) {
 	s := testServer(t, false)
 	c := startSOCKS(t, s)
@@ -315,6 +450,136 @@ func TestSOCKSContextCancelsIncompleteHandshake(t *testing.T) {
 	var b [1]byte
 	if _, err := c.Read(b[:]); err == nil {
 		t.Fatal("connection remained open")
+	}
+}
+
+type slowDialer struct{ delay time.Duration }
+
+func (d slowDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	select {
+	case <-time.After(d.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, address)
+}
+
+// A slow but successful outbound dial must not inherit the client handshake
+// deadline; otherwise the success reply is never written and the client sees EOF.
+func TestSOCKSSlowDialOutlivesHandshakeDeadline(t *testing.T) {
+	s, err := New(slowDialer{delay: 300 * time.Millisecond}, config.Security{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.handshakeTimeout = 100 * time.Millisecond
+	c := startSOCKS(t, s)
+	origin := echoListener(t)
+	_, _ = c.Write([]byte{5, 1, 0})
+	var choice [2]byte
+	if _, err := io.ReadFull(c, choice[:]); err != nil || choice != [2]byte{5, 0} {
+		t.Fatalf("method choice %v %v", choice, err)
+	}
+	request := []byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 0}
+	binary.BigEndian.PutUint16(request[8:], uint16(origin.Addr().(*net.TCPAddr).Port))
+	_, _ = c.Write(request)
+	var reply [10]byte
+	if _, err := io.ReadFull(c, reply[:]); err != nil || reply[1] != 0 {
+		t.Fatalf("SOCKS reply %v %v", reply, err)
+	}
+	_, _ = c.Write([]byte("slow"))
+	buffer := make([]byte, 4)
+	if _, err := io.ReadFull(c, buffer); err != nil || string(buffer) != "slow" {
+		t.Fatalf("TCP relay %q %v", buffer, err)
+	}
+}
+
+// deadlineLog records client deadline changes and outbound dials in call order.
+type deadlineLog struct {
+	mu     sync.Mutex
+	events []string
+	dialed time.Time
+	reply  time.Time // first nonzero deadline set after the dial returned
+}
+
+type deadlineSpyConn struct {
+	*net.TCPConn
+	log *deadlineLog
+}
+
+func (c deadlineSpyConn) SetDeadline(t time.Time) error {
+	c.log.mu.Lock()
+	if t.IsZero() {
+		c.log.events = append(c.log.events, "clear")
+	} else {
+		c.log.events = append(c.log.events, "set")
+		if !c.log.dialed.IsZero() && c.log.reply.IsZero() {
+			c.log.reply = t
+		}
+	}
+	c.log.mu.Unlock()
+	return c.TCPConn.SetDeadline(t)
+}
+
+type loggingDialer struct{ log *deadlineLog }
+
+func (d loggingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	d.log.mu.Lock()
+	d.log.events = append(d.log.events, "dial")
+	d.log.dialed = time.Now()
+	d.log.mu.Unlock()
+	return conn, err
+}
+
+// A client that stops reading after the dial must not hold the handshake
+// goroutine forever: the reply gets a fresh deadline, cleared only for relay.
+func TestSOCKSReplyWriteHasFreshDeadlineAfterDial(t *testing.T) {
+	log := &deadlineLog{}
+	s, err := New(loggingDialer{log: log}, config.Security{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		s.socksConnection(ctx, deadlineSpyConn{TCPConn: conn.(*net.TCPConn), log: log})
+	}()
+	defer func() { cancel(); <-done }()
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	origin := echoListener(t)
+	request := []byte{5, 1, 0, 5, 1, 0, 1, 127, 0, 0, 1, 0, 0}
+	binary.BigEndian.PutUint16(request[11:], uint16(origin.Addr().(*net.TCPAddr).Port))
+	_, _ = c.Write(request)
+	var reply [12]byte
+	if _, err := io.ReadFull(c, reply[:]); err != nil || reply[3] != 0 {
+		t.Fatalf("SOCKS reply %v %v", reply, err)
+	}
+	_, _ = c.Write([]byte("ping"))
+	if _, err := io.ReadFull(c, reply[:4]); err != nil || string(reply[:4]) != "ping" {
+		t.Fatalf("TCP relay %q %v", reply[:4], err)
+	}
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	if got, want := strings.Join(log.events, ","), "set,clear,dial,set,clear"; got != want {
+		t.Fatalf("deadline sequence = %s, want %s", got, want)
+	}
+	if earliest := log.dialed.Add(s.handshakeTimeout); log.reply.Before(earliest) {
+		t.Fatalf("reply deadline %v predates dial completion plus handshake timeout %v", log.reply, earliest)
 	}
 }
 

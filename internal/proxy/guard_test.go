@@ -84,6 +84,7 @@ func TestInternalPolicyMatchesOnlyOwnBoundServices(t *testing.T) {
 
 func TestGuardRejectsBeforeProtocolAndRecoversOnClose(t *testing.T) {
 	for _, limits := range [][2]int{{1, 10}, {10, 1}} {
+		totalLimited := limits[0] < limits[1]
 		t.Run(fmt.Sprint(limits), func(t *testing.T) {
 			l, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
@@ -127,6 +128,13 @@ func TestGuardRejectsBeforeProtocolAndRecoversOnClose(t *testing.T) {
 				t.Fatal("excess connection was not closed")
 			} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 				t.Fatal("excess connection was left waiting")
+			}
+			want := AdmissionRejections{SourceLimit: 1}
+			if totalLimited {
+				want = AdmissionRejections{TotalLimit: 1}
+			}
+			if got := g.Rejections(); got != want {
+				t.Fatalf("rejections = %+v, want %+v", got, want)
 			}
 			var wg sync.WaitGroup
 			for range 8 {

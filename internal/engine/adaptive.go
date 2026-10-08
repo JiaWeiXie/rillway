@@ -22,6 +22,7 @@ type sample struct {
 }
 type adaptiveState struct {
 	address, network, current, reason string
+	rule, family, initial             string
 	candidates                        []string
 	samples                           map[string][]sample
 	lastUsed, switched, lastProbe     time.Time
@@ -77,18 +78,19 @@ func (e *Engine) destinationLocked(key, address, network string, r route) *adapt
 	return d
 }
 
-func newAdaptiveState(address, network string, r route, now time.Time) *adaptiveState {
-	current := r.outbound
-	found := false
+// initialOutbound is the configured starting point before any learning.
+func initialOutbound(r route) string {
 	for _, id := range r.candidates {
-		if id == current {
-			found = true
+		if id == r.outbound {
+			return id
 		}
 	}
-	if !found {
-		current = r.candidates[0]
-	}
-	return &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now}
+	return r.candidates[0]
+}
+
+func newAdaptiveState(address, network string, r route, now time.Time) *adaptiveState {
+	current := initialOutbound(r)
+	return &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", rule: r.rule, family: r.family, initial: current, candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now}
 }
 
 func (e *Engine) chooseLocked(d *adaptiveState) string { return d.current }

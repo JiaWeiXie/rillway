@@ -90,7 +90,9 @@ console or NIC controls are unavailable, request that access rather than booting
 the same configuration directly onto the LAN.
 
 Inspect which process consumed memory, kernel OOM records, accepted source IPs,
-connection count/destinations, and whether an outbound points back to Rillway.
+connection count/destinations, `proxy_admission_rejections` in `agent stats`
+(capacity closures appear to clients as resets), and whether an outbound points
+back to Rillway.
 Distinguish the NAS/hypervisor VM graph from guest process RSS, service cgroup
 accounting and Linux `MemAvailable`. VM RSS can include guest file caches; it is
 not the Rillway heap. Historical service memory peaks are useful evidence, but

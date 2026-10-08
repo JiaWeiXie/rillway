@@ -2,6 +2,49 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-08：OrbStack Ubuntu 可靠性實測
+
+使用兩台新建的 Ubuntu 24.04／26.04 arm64 測試機，執行目前工作樹交叉編譯的同一份 binary，核對安裝前後 SHA-256 一致。每台機器限制為 2 CPU、4 GiB RAM、32 GiB 磁碟，實際 cgroup 值為 `cpu.max=200000 100000`、`memory.max=4294967296`、`memory.swap.max=0`；關閉 Mac 檔案共享、SSH agent 轉送與通往宿主／其他 VM 的網路整合。Rillway listeners 僅監聽 loopback，未更動既有 VM、Mac Proxy／DNS／VPN 或正式部署。
+
+| 項目 | Ubuntu 24.04 | Ubuntu 26.04 |
+| --- | --- | --- |
+| `scripts/acceptance-runtime.py` | 七項通過 | 七項通過 |
+| 低權限 systemd、設定／state 權限 | `rillway` 帳號；目錄 `0700`、設定 `0600` | 同左 |
+| 單一來源容量 | 64 條 HTTP CONNECT；額外 SOCKS5 被關閉，`source_limit` 增加 1 | 同左 |
+| 共用總容量 | 四個來源各 64 條 CONNECT；第 257 條 SOCKS5 被關閉，只有 `total_limit` 增加 1 | 同左 |
+| 滿載下管理與既有連線 | API 可用、PID 不變；既有 tunnel 收到正確內容，釋放後 SOCKS5 恢復 | 同左 |
+| 自身 Proxy 迴圈 | 經 HTTP 轉發到自身 HTTP／SOCKS5 endpoints 均回 `502` | 同左 |
+| 真實 `EMFILE` | 獨立測試程序 `RLIMIT_NOFILE=64`，實際 FD 數 64；同一 PID 存活，釋放後排隊 SOCKS5 傳輸成功 | 同左 |
+| 超過握手期限的真實 TCP 建連 | listen backlog 滿載後延遲放行，約 11.23 秒建連成功，SOCKS5 回覆與內容正確 | 約 11.23 秒，同左 |
+| 無法完成的真實 TCP 建連 | SOCKS5 約 15.01 秒失敗，符合建連上限 | 約 15.02 秒，同左 |
+| Proxy 驗證 | 32 次未帶憑證均回 `407`，正確帳密仍成功；20 次錯誤帳密後 HTTP 回 `429`，SOCKS5 也拒絕正確帳密 | 同左 |
+| Tailscale 端到端目的地矩陣 | IPv4／IPv6 literal、MagicDNS 完整／短名稱，經 HTTP、驗證測試 CA 的 HTTPS CONNECT、SOCKS5 remote DNS 均取得正確內容 | 同左 |
+| 固定 Tailscale 路由與 DNS 隔離 | 可由 direct 存取的公網目的地仍被固定 Tailscale 路由拒絕；未知私有名稱失敗，不改選 direct | 同左 |
+| Tailscale 停止／恢復與 state 所有權 | disconnect 後新連線失敗，connect 後恢復；停用時既有 1 MiB 串流雜湊正確，新連線拒絕；舊串流未結束時重新啟用回 `422`，結束後回 `200` | 同左 |
+| 真實 systemd 重啟後的 Tailscale 傳輸 | HTTP 端到端探測恢復後，第一個 HTTPS CONNECT 仍曾回 curl `56`，不判為完整通過 | PID 改變、保留登入，驗證 CA 的 HTTPS CONNECT 恢復 |
+| 不重試的穩態短連線取樣 | 第一批 HTTP 29／30、CONNECT 29／30、SOCKS5 30／30；另一批三種協定各 30／30 | HTTP 29／30、CONNECT 30／30、SOCKS5 30／30 |
+| 加入匿名 origin trace、無逐筆 stats 查詢的短連線取樣 | 未執行此批 trace | HTTP 30／30、CONNECT 27／30、SOCKS5 30／30 |
+
+七項既有驗收涵蓋 HTTP／CONNECT／SOCKS5、PAC、管理驗證／同源／revision conflict、無效設定與占用 listener 拒絕、daemon 內重啟 listener、systemd 停止／啟動／重啟及傳輸統計。Ubuntu 26.04 的 Python 3.14 另外印出既有驗收 helper 未顯式關閉 `HTTPError` 的 `ResourceWarning`；七項測試仍通過，此處保留警告，不算成 daemon 缺陷。
+
+Tailscale 取樣仍重現間歇失敗，不能宣稱原先「偶爾連不到」已排除。Ubuntu 26.04 的失敗 HTTP 請求約 10.00 秒後由 curl 逾時；新建 flow 的出口為 Tailscale，建連約 7.09 秒、送出 144 bytes、收到 0 bytes。Ubuntu 24.04 的第一批 HTTP／CONNECT 各有一次 curl `28`。所有失敗均保留，沒有用請求重試改算成功。另停用 Proxy daemon，由相同 embedded outbound 直接建立新連線的 HTTP／HTTPS 對照各 30／30 成功；短時對照不足以排除間歇性底層傳輸問題，也不足以確認 Proxy 為根因。
+
+另外一批保留 10 秒總預算、fresh connection、無請求重試，移除逐筆 stats 查詢，只在失敗後取統計，並在專用 origin 以匿名連線／sample ID 記錄接收時間。三個失敗 CONNECT 中，一個尚未收到 CONNECT `200`，另外兩個已收到 `200` 但沒有完成 TLS；origin 對後兩個連線記錄接受 TCP 後約 5 秒的 TLS handshake `i/o timeout`，沒有進入對應 HTTP handler。該時段 origin 對指定測試 peer 的 `CurAddr` 非空，沒有 peer relay；這只證明單邊狀態保留 direct endpoint，不能證明每個封包的實際路徑或把故障歸因於 DERP。`connect_ms` 包含 provider 的狀態／DNS／TCP 建連，`upload_bytes` 只計本地 Write 接受的 bytes，不能證明 origin 已收到。唯讀 review 未找到可證明由本次可靠性 patch 引入的根因；底層停滯原因仍未確認，未放寬 timeout 或加入產品重試。
+
+`Running` 不當作端到端健康證據：重新啟用及重啟後，以專用 Tailnet HTTP 目的地的實際回應確認可用；此探測只供驗收等待就緒，未加入產品重試。IPv4／IPv6 literal 的已選 IP family 與傳輸統計相符；強制 IPv6 的 MagicDNS 名稱在實際 DNS 回覆沒有 AAAA 時明確失敗，不改走 IPv4 或宿主 DNS。
+
+限制：OrbStack 共用 Linux 核心，且實際 `NoNewPrivileges`、`ProtectSystem`、`ProtectHome`、`PrivateTmp` 都被環境覆寫為關閉，因此未驗證獨立 VM 的核心／網卡隔離或 unit 的全部安全防護。此輪未操作 WARP／WireGuard，也未實測雙公網出口的自適應切換。兩個專用 embedded Tailscale 節點已由使用者登入；只使用本次建立的測試節點，未變更 Mac 或既有機器的 VPN 設定。
+
+收尾：兩台測試機均還原原路由，移除專用驗收規則；systemd 服務為 `active`，管理 API 回 `200`，保留登入的 Tailscale 為 `Running`，還原後的實際 HTTP Proxy 請求均回 `200`。自建 origin／診斷程序及暫存驗收程式已移除；測試機與登入 state 保留，未刪除 Tailnet 裝置、未 commit／push、未部署正式主機。原始診斷紀錄只保留在限權的私有暫存目錄，不進入公開文件。
+
+## 2026-10-08：連線可靠性與自適應路由保留
+
+- 每項修正都先寫回歸測試並確認失敗，修正後才通過：SOCKS5 慢速但成功的出口建連不再因 10 秒握手期限而收不到回覆；一般 HTTP 轉發的出口建連與 CONNECT、SOCKS5 共用 15 秒上限；SOCKS5 accept 遇到 `EMFILE` 等暫時錯誤會退避重試，不再讓 daemon 結束；沒有附帶帳密的 Proxy `407` 不計入驗證失敗；套用無關設定不再清除自適應已學到的出口。
+- `mise run check` 通過：Lint 0 issues、全部套件 race／shuffle／coverage 及 Python 測試。
+- 以隔離的本機設定與實際 binary 在 loopback 驗證 HTTP 轉發、CONNECT、SOCKS5、自身 HTTP／SOCKS5 目的地拒絕。透過 `rillway agent apply` 啟用自適應後，`example.com:80` 的已學出口在新增無關規則後保留，為該網域新增固定規則後清除。未啟用 VPN、未修改系統 Proxy、未操作正式部署；臨時檔案已刪除。
+- Code review 後追加修正並補回歸測試：初始出口（預設出口或自適應規則指定的出口）改變時清除已學到的出口；SOCKS5 出口建連完成後，回覆用戶端重新套用握手期限，進入 relay 前清除；SOCKS5 accept 退避期間取消會立即返回；`/api/v1/stats` 新增 `proxy_admission_rejections`，並以實際 daemon 塞滿同一來源的 Proxy 配額後，經管理 API 確認 `source_limit` 為 1。以暫時移除修正的方式確認：初始出口比較、建連後的期限重設、`serveOnce` 的計數接線，各自移除後對應測試都會失敗，還原後通過。修正後再次執行 `mise run check`，結果通過。另以實際 binary 在 loopback 驗證 HTTP、CONNECT、SOCKS5 均回應 200；同一來源持有 64 條連線時，第 65 條被直接關閉，`agent stats` 的 `source_limit` 從 0 增為 1，釋放連線後 SOCKS5 恢復回應 200。初始出口變更只由單元測試驗證，未在 binary 上重跑。
+- 這些驗證不能證明正式環境「偶爾連不到」的原因已排除；正式部署仍需在授權後觀察。
+
 ## 2026-10-06：連線容量限制與受控部署
 
 - `mise run check` 通過：Lint 0 issues、race／shuffle／coverage 及 Python 測試。新增來源與總連線容量、並行關閉後釋放、HTTP／CONNECT／SOCKS5 自身目的地拒絕、DNS 別名、IPv4 mapped 位址、TCP 半關閉後延遲回覆，以及代理額滿時仍能操作管理 API 的測試。

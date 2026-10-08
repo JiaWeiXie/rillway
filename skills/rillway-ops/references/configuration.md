@@ -63,5 +63,8 @@ Passive transfer rates are display data, not an automatic switching input.
 Background probes are bounded TCP connections for recently used public HTTP(S)
 destinations, not downloads: default 12/minute, concurrency 2, timeout 4 seconds.
 Changes affect new connections; existing downloads retain their route. Learned
-history is in memory and resets when restarting or applying configuration.
+history is in memory and resets on restart. Applying configuration keeps a
+destination's learned route only when its rule, family, initial outbound (the
+default or rule outbound, or the first candidate when that is not a candidate),
+candidate order and candidate outbounds are unchanged.
 Inspect configured thresholds rather than assuming these defaults still apply.

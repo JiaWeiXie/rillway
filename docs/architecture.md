@@ -40,6 +40,8 @@ CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 
 
 探測只對近期使用的公開 80／443 目的地做 TCP connect，最多每分鐘十二次、同時兩次、單次四秒；不下載測速檔、不重播 HTTP 請求。被手動停用／停止的出口不會因探測重新連線。新決策只影響新連線，既有下載持續使用原出口。
 
+學到的出口只存在記憶體，重新啟動後清除。套用設定時，目的地的規則、family、初始出口（預設出口或自適應規則指定的出口；不在候選中時為第一個候選）、候選順序及候選出口的 provider 都沒有改變，才保留原本學到的出口；任何一項改變都從設定的初始出口重新開始。這避免無關的設定修改讓網站的新連線換到另一個出口 IP。
+
 ## 可觀察資料
 
 每條已建立連線最多保存 hostname、port、已知目的 IP、family、流量、五秒窗口速率、建連時間、規則及出口。最多 2,048 條 flow 與 2,048 個自適應目的地；超過容量移除最舊資料，24 小時過期。統計不落盤，不記錄 payload、HTTPS path、cookie 或授權 header；畫面總計僅涵蓋保留的 flows。
@@ -57,7 +59,7 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 | GET `/api/v1/info` | 已驗證身分後取得 daemon 的程式版本；與設定 revision 各自獨立 |
 | GET `/api/v1/config` | 目前生效設定與 revision，秘密為檔案參照 |
 | PUT `/api/v1/config` | 完整設定，revision 必須與目前一致，成功後遞增 |
-| GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at |
+| GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at；`proxy_admission_rejections` 的 `source_limit`／`total_limit` 是 listener 啟動後 HTTP／SOCKS5 因容量上限直接關閉的連線數 |
 | GET `/api/v1/outbounds` | profile 狀態與可驗證的健康資訊 |
 | DELETE `/api/v1/outbounds/{id}` | `{"revision":CURRENT,"replacement":"OUTBOUND_ID"}`，刪除 profile 並原子替換所有引用；保護 direct、檢查 revision，成功後遞增 |
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |

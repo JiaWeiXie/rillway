@@ -37,6 +37,8 @@ type Server struct {
 	closed             bool
 	authFailures       *authguard.Limiter
 	guard              *ConnectionGuard
+	handshakeTimeout   time.Duration
+	dialTimeout        time.Duration
 	endpoints          []netip.AddrPort
 	internalEndpoints  []netip.AddrPort
 	localIPs           map[netip.Addr]bool
@@ -52,7 +54,7 @@ func New(dialer Dialer, security config.Security, password string) (*Server, err
 	if len(security.ProxyUsername) > 255 || len(password) > 255 {
 		return nil, errors.New("SOCKS credentials must fit in 255 bytes")
 	}
-	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New()}
+	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
 	s.guard = NewConnectionGuard(256, 64, s.allowedClient)
 	s.localIPs = map[netip.Addr]bool{netip.MustParseAddr("127.0.0.1"): true, netip.MustParseAddr("::1"): true}
 	addresses, err := net.InterfaceAddrs()
@@ -137,7 +139,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.authenticated(r) {
-		s.authFailures.Failure(r.RemoteAddr)
+		// A request without credentials is the normal 407 challenge, not a guess.
+		if r.Header.Get("Proxy-Authorization") != "" {
+			s.authFailures.Failure(r.RemoteAddr)
+		}
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Rillway"`)
 		http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
 		return
@@ -286,9 +291,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "CONNECT requires host:port", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	upstream, err := s.dialContext(ctx, "tcp", r.Host)
-	cancel()
+	upstream, err := s.dialContext(r.Context(), "tcp", r.Host)
 	if err != nil {
 		http.Error(w, "outbound connection failed", http.StatusBadGateway)
 		return

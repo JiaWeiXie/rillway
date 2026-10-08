@@ -282,6 +282,88 @@ func TestConcurrentStatsAndPolicyUpdates(t *testing.T) {
 	}
 }
 
+// Applying an unrelated configuration change must not move a destination's
+// new connections back to the default outbound and change its egress address.
+func TestUpdateKeepsLearnedRouteOnlyForUnchangedAdaptivePolicy(t *testing.T) {
+	const host = "public.example:443"
+	used := make(chan string, 1)
+	provider := func(id string) outbound.Provider {
+		return &testProvider{id: id, dial: func(context.Context, string, string) (net.Conn, error) {
+			used <- id
+			a, b := net.Pipe()
+			_ = b.Close()
+			return a, nil
+		}}
+	}
+	route := func(e *Engine) string {
+		t.Helper()
+		conn, err := e.DialContext(t.Context(), "tcp", host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.Close()
+		return <-used
+	}
+	learn := func(e *Engine, id string) {
+		t.Helper()
+		if got := route(e); got != "direct" {
+			t.Fatalf("initial route %q", got)
+		}
+		e.mu.Lock()
+		e.destinations[host+"|tcp"].current = id
+		e.mu.Unlock()
+		if got := route(e); got != id {
+			t.Fatalf("learned route %q", got)
+		}
+	}
+	adaptiveRule := func(c *config.Config) {
+		c.Rules = []config.Rule{{ID: "auto", Domains: []string{"public.example"}, Outbound: "direct", Adaptive: true, Candidates: []string{"direct", "warp"}}}
+	}
+	for _, tt := range []struct {
+		name    string
+		learned string
+		change  func(*config.Config, map[string]outbound.Provider)
+		want    string
+		base    func(*config.Config)
+	}{
+		{"unrelated rule", "warp", func(c *config.Config, _ map[string]outbound.Provider) {
+			c.Rules = append(c.Rules, config.Rule{ID: "other", Domains: []string{"other.example"}, Outbound: "warp"})
+		}, "warp", nil},
+		{"fixed rule for destination", "warp", func(c *config.Config, _ map[string]outbound.Provider) {
+			c.Rules = append(c.Rules, config.Rule{ID: "pin", Domains: []string{"public.example"}, Outbound: "direct"})
+		}, "direct", nil},
+		{"candidate removed", "warp", func(c *config.Config, _ map[string]outbound.Provider) {
+			c.Adaptive.Candidates = []string{"direct"}
+		}, "direct", nil},
+		{"candidate provider rebuilt", "warp", func(_ *config.Config, p map[string]outbound.Provider) {
+			p["warp"] = provider("warp")
+		}, "direct", nil},
+		{"default initial outbound changed", "direct", func(c *config.Config, _ map[string]outbound.Provider) {
+			c.DefaultOutbound = "warp"
+		}, "warp", nil},
+		{"adaptive rule initial outbound changed", "direct", func(c *config.Config, _ map[string]outbound.Provider) {
+			c.Rules[0].Outbound = "warp"
+		}, "warp", adaptiveRule},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e, _ := testEngine()
+			providers := map[string]outbound.Provider{"direct": provider("direct"), "warp": provider("warp"), "private": provider("private")}
+			base := cloneConfig(e.cfg)
+			if tt.base != nil {
+				tt.base(&base)
+			}
+			e.Update(base, providers)
+			learn(e, tt.learned)
+			next := cloneConfig(e.cfg)
+			tt.change(&next, providers)
+			e.Update(next, providers)
+			if got := route(e); got != tt.want {
+				t.Fatalf("route after update = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDisabledAdaptiveKeepsRuleAndAddressFamily(t *testing.T) {
 	e, _ := testEngine()
 	e.cfg.Adaptive.Enabled = false

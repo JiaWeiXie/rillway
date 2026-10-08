@@ -33,14 +33,29 @@ func (s *Server) ServeSOCKS(ctx context.Context, listener net.Listener) error {
 	}()
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	var retryDelay time.Duration
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
+			// Like net/http, back off on temporary errors such as EMFILE. Returning
+			// would end the process and drop every proxied stream until the
+			// supervisor restarts it.
+			var temporary interface{ Temporary() bool }
+			if errors.As(err, &temporary) && temporary.Temporary() {
+				retryDelay = min(max(2*retryDelay, 5*time.Millisecond), time.Second)
+				select {
+				case <-time.After(retryDelay):
+					continue
+				case <-ctx.Done():
+					return nil
+				}
+			}
 			return err
 		}
+		retryDelay = 0
 		if !s.allowedClient(conn.RemoteAddr().String()) || !s.track(conn) {
 			_ = conn.Close()
 			continue
@@ -56,7 +71,7 @@ func (s *Server) ServeSOCKS(ctx context.Context, listener net.Listener) error {
 }
 
 func (s *Server) socksConnection(ctx context.Context, client net.Conn) {
-	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+	_ = client.SetDeadline(time.Now().Add(s.handshakeTimeout))
 	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
 	defer stop()
 	var header [2]byte
@@ -104,9 +119,18 @@ func (s *Server) socksConnection(ctx context.Context, client net.Conn) {
 		socksReply(client, 8)
 		return
 	}
-	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	upstream, err := s.dialContext(dialCtx, "tcp", address)
-	cancel()
+	// The client handshake and outbound dial have independent budgets.
+	if err := client.SetDeadline(time.Time{}); err != nil {
+		return
+	}
+	upstream, err := s.dialContext(ctx, "tcp", address)
+	// Bound the reply write separately; the relay clears it afterwards.
+	if deadlineErr := client.SetDeadline(time.Now().Add(s.handshakeTimeout)); deadlineErr != nil {
+		if upstream != nil {
+			_ = upstream.Close()
+		}
+		return
+	}
 	if err != nil {
 		socksReply(client, 5)
 		return

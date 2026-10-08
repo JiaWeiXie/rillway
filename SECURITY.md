@@ -29,6 +29,9 @@ an upgrade; there is no long-term support branch yet.
   16 per source IP. ACL and capacity checks run before parsing or TLS handshakes;
   excess sockets are closed without waiting. Half-closed tunnels retain their
   slot until fully closed. These limits do not cap bandwidth or total process RSS.
+  `GET /api/v1/stats` reports `proxy_admission_rejections`: counts since the
+  listeners started of allowed-source HTTP/SOCKS5 sockets closed by the per-source
+  or total limit. Clients see those as connection resets.
 - The proxy rejects destinations matching its own bound HTTP/SOCKS5 endpoints,
   including known local addresses for wildcard binds and DNS aliases confirmed
   by the selected outbound's connected peer. No extra host-DNS query is made.
@@ -43,8 +46,11 @@ an upgrade; there is no long-term support branch yet.
   checks on changes, CSP, no-store responses, and secret-safe error messages.
   Trust the verified certificate; do not disable TLS verification.
 - After 20 failed authentications from a socket peer in one minute, authentication
-  is blocked until that window expires, including correct credentials. HTTP and
-  SOCKS5 proxy credentials share a limiter; management has its own limiter.
+  is blocked until that window expires, including correct credentials. While a
+  peer is not blocked, an HTTP proxy request without credentials receives the
+  normal `407` challenge and does not count as a failure; a blocked peer or a full
+  limiter receives `429`. HTTP and SOCKS5 proxy credentials share a limiter;
+  management has its own limiter.
   Source ports, IPv4-mapped IPv6 and forwarded headers cannot change peer identity.
   Each limiter keeps at most 256 peers and rejects new peers when full until entries
   expire. Restarting the daemon clears this in-memory protection. This is not DDoS

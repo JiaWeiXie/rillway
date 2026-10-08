@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/platform"
+	"rillway/internal/proxy"
 	"testing"
 	"time"
 )
@@ -85,6 +87,16 @@ func TestProxySaturationPreservesManagementAndShutdown(t *testing.T) {
 		t.Fatal("SOCKS bypassed the HTTP source budget")
 	} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 		t.Fatal("excess SOCKS connection remained open")
+	}
+	raw, err := client.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stats struct {
+		Rejections *proxy.AdmissionRejections `json:"proxy_admission_rejections"`
+	}
+	if err := json.Unmarshal(raw, &stats); err != nil || stats.Rejections == nil || *stats.Rejections != (proxy.AdmissionRejections{SourceLimit: 1}) {
+		t.Fatalf("stats proxy_admission_rejections = %+v, %v", stats.Rejections, err)
 	}
 	if _, err := client.Config(ctx); err != nil {
 		t.Fatal("proxy saturation blocked management", err)

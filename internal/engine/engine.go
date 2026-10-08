@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"reflect"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -121,16 +123,54 @@ func New(cfg config.Config, providers map[string]outbound.Provider) *Engine {
 
 // Update atomically replaces routing for new connections. Providers remain
 // owned by the caller; an established connection is never interrupted here.
+// Learned adaptive routes survive only when the destination keeps the same
+// rule, family, initial outbound, candidate order and provider instances;
+// otherwise new connections restart from the configured initial outbound.
 func (e *Engine) Update(cfg config.Config, providers map[string]outbound.Provider) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	previous := e.providers
 	e.cfg = cloneConfig(cfg)
 	e.generation++
 	e.providers = make(map[string]outbound.Provider, len(providers))
 	for id, p := range providers {
 		e.providers[id] = p
 	}
-	e.destinations = make(map[string]*adaptiveState)
+	kept := make(map[string]*adaptiveState, len(e.destinations))
+	for key, d := range e.destinations {
+		if e.unchangedPolicyLocked(d, previous) {
+			kept[key] = d
+		}
+	}
+	e.destinations = kept
+}
+
+func (e *Engine) unchangedPolicyLocked(d *adaptiveState, previous map[string]outbound.Provider) bool {
+	host, _, err := net.SplitHostPort(d.address)
+	if err != nil {
+		return false
+	}
+	r, err := e.selectRoute(host)
+	// d.candidates is never empty, so the equal check guards initialOutbound.
+	if err != nil || r.rule != d.rule || r.family != d.family || !slices.Equal(r.candidates, d.candidates) || initialOutbound(r) != d.initial {
+		return false
+	}
+	for _, id := range d.candidates {
+		if !sameProvider(previous[id], e.providers[id]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameProvider compares provider identity without panicking on value types
+// whose fields are not comparable.
+func sameProvider(a, b outbound.Provider) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	return va.Type() == vb.Type() && va.Comparable() && va.Equal(vb)
 }
 
 func cloneConfig(c config.Config) config.Config {
