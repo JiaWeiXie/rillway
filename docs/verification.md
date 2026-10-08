@@ -2,6 +2,19 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-08：v0.5.0 發布與既有 Linux 服務升級
+
+- 已提交來源存取控制功能、可靠性修正與 changelog，發布 `v0.5.0`。對應來源的 GitHub CI 五項工作全部通過；Release build 完成 security、race checks、fuzz 與四平台封裝。四個目標的 govulncheck 未發現可達漏洞，但仍回報一項未被目前程式呼叫的相依模組漏洞，不能解讀成所有相依套件皆無漏洞。
+- 首次草稿的環境審核紀錄是 `skipped`，未將其視為核准或公開發布。取得操作人員同意後刪除未公開草稿、保留 tag，再重跑 publish；第二次在 required-reviewer 閘門取得明確互動核准，API 紀錄為 `approved`。未更改環境保護規則。
+- 四個 binary 與 operations Skill 的 checksum、來源 commit／tag／Release workflow provenance 均通過，拒絕 self-hosted runner；五個資產均確認具有已核准第二次 publish 的 provenance。重建後九個資產的 digest 與已驗證本機檔案一致。授權文件與來源一致，Skill 七個允許檔案的 CRC 通過；macOS arm64 binary 實際回報 `v0.5.0`。
+- 在既有 Ubuntu 26.04 amd64 服務上，只原子替換已驗證 binary，未重跑 setup／service install／memory-install。v1 設定的部署前唯讀 plan 精確回報 `version`、`source_access` 兩項預期遷移；部署後 API 為 v2，對原設定的 plan 為 `would_change=false`。磁碟上的 v1 設定內容與 revision 保留，沒有因啟動或驗收而寫入遷移結果。
+- 執行中 binary 的 SHA-256 與發布資產一致；服務為 `active/running`、維持 enabled 與低權限帳號，`NRestarts=0`。既有設定、管理 token／TLS、服務 unit／drop-in 的 hash、owner、mode 與 CPU／記憶體限制保持不變。
+- 可信 CA 驗證的 HTTPS 管理 API 回報新版；未驗證的 config 與 source-clients 請求均回 `401`。agent schema／status／未確認 mutation 拒絕、PAC 與 CLI PAC 一致性、記憶體管理唯讀介面與既有 helper socket 通過。HTTP 轉發、HTTPS CONNECT、SOCKS5 remote DNS、GitHub CDN 小型請求均單次通過；来源遙測記錄實際 Proxy 請求、allow 判定、匹配規則與計數。
+- 已在正式服務登入並視覺確認 Source access 頁、版本、既有規則與 client activity，來源 API 回 `200`，沒有服務錯誤橫幅。自簽憑證使用限於驗收瀏覽器的暫時例外；此視覺檢查不代替前述 CA 驗證。驗收後登出、移除例外並關閉瀏覽器，未提交正式畫面或營運資料。
+- 停止服務後建立一致 state archive，確認其中設定符合升級前 hash；root 擁有的備份目錄為 `0700`、archive 為 `0600`，舊 binary 可執行並回報 `v0.4.1`。流程具備失敗回復；首次 preflight 停止於未中斷舊服務的階段，修正私有驗收工具的遷移預期後成功升級，沒有測試性中斷正式服務來演練回滾。遠端上傳暫存已移除，私有收據與備份不進 Git。
+
+限制：正式服務未測試實際封鎖／修改來源規則，以免中斷使用者連線；相關 mutation 的本機驗收見下節。本次未驗收 Tailscale／WireGuard、自適應出口切換或下載速度，既有 Tailscale 間歇失敗紀錄仍有效。
+
 ## 2026-10-08：來源存取控制（Source Access Control）與雙軌 ACL
 
 - **設定版本與雙軌 ACL 隔離**：配置版本升級為 `version: 2`；`security.allowed_clients` 專門守衛 HTTPS 管理介面與 HTTP PAC 端點（唯讀），`source_access.rules` 專門守衛 HTTP／CONNECT／SOCKS5 Proxy 連入。空 rules 意為明確全域拒絕（deny-all），不回退至管理 ACL。`setup` 指令一律同步初始化此兩項 ACL。
