@@ -58,22 +58,3 @@ function FindProxyForURL(url,host){
 }
 `, domains, cidrs, selfHost, selfRange, proxy), nil
 }
-
-func ClientAllowed(remote string, cidrs []string) bool {
-	host, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		return false
-	}
-	ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
-	if err != nil {
-		return false
-	}
-	ip = ip.Unmap()
-	for _, s := range cidrs {
-		p, err := netip.ParsePrefix(s)
-		if err == nil && p.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}

@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,11 +14,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/engine"
 	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
 	"rillway/internal/proxy"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,6 +35,7 @@ type Runtime struct {
 	appliedAt       time.Time
 	restart         chan struct{}
 	admission       func() proxy.AdmissionRejections
+	proxy           *proxy.Server
 }
 
 // PrepareRestart validates the saved configuration before the HTTP handler
@@ -237,14 +242,106 @@ func (r *Runtime) Snapshot() any {
 	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, rejections}
 }
 
+func (r *Runtime) attachProxy(p *proxy.Server) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.proxy = p
+}
+
+func (r *Runtime) SourceClients() access.SourceSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.proxy == nil {
+		return access.SourceSnapshot{GeneratedAt: time.Now().UTC()}
+	}
+	return r.proxy.SourceClients()
+}
+
+func (r *Runtime) BlockSource(ctx context.Context, revision uint64, address string) (config.Config, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if revision != r.cfg.Revision {
+		return config.Config{}, 0, config.ErrConflict
+	}
+	if strings.Contains(address, "/") {
+		return config.Config{}, 0, config.PublicError{Message: "Specify one IP address to block, not a CIDR network range."}
+	}
+	ip, err := netip.ParseAddr(strings.TrimSpace(address))
+	if err != nil {
+		return config.Config{}, 0, config.PublicError{Message: "Invalid client IP address to block.", Err: err}
+	}
+	ip = ip.WithZone("").Unmap()
+	canonical := ip.String()
+	hostCIDR := netip.PrefixFrom(ip, ip.BitLen()).String()
+	if r.proxy == nil {
+		return config.Config{}, 0, config.PublicError{Message: "Proxy source control is unavailable."}
+	}
+	currentPolicy, err := config.CompileSourceAccess(r.cfg.SourceAccess)
+	if err != nil {
+		return config.Config{}, 0, config.PublicError{Message: "Current source access configuration is invalid.", Err: err}
+	}
+	if !currentPolicy.Decide(ip).Allowed {
+		disconnected := r.proxy.DisconnectSource(ip)
+		return clone(r.cfg), disconnected, nil
+	}
+	candidate := clone(r.cfg)
+	ruleID := blockRuleID(canonical, candidate.SourceAccess.Rules)
+	denyRule := config.SourceAccessRule{
+		ID: ruleID, Name: canonical, Action: "deny", CIDRs: []string{hostCIDR}, Enabled: true,
+	}
+	candidate.SourceAccess.Rules = append(candidate.SourceAccess.Rules, denyRule)
+	nextPolicy, err := config.ValidateAndCompileSourceAccess(candidate)
+	if err != nil {
+		return config.Config{}, 0, config.PublicError{Message: "Could not block source address.", Err: err}
+	}
+	if err := r.applyLocked(ctx, candidate, nextPolicy); err != nil {
+		return config.Config{}, 0, err
+	}
+	disconnected := r.proxy.DisconnectSource(ip)
+	return clone(r.cfg), disconnected, nil
+}
+
+func blockRuleID(canonical string, rules []config.SourceAccessRule) string {
+	sum := sha256.Sum256([]byte(canonical))
+	prefix := "block-" + hex.EncodeToString(sum[:])[:12]
+	base := prefix
+	count := 2
+	for {
+		conflict := false
+		for _, r := range rules {
+			if r.ID == base {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
+			return base
+		}
+		base = fmt.Sprintf("%s-%d", prefix, count)
+		count++
+	}
+}
+
 func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if c.Revision != r.cfg.Revision {
 		return config.ErrConflict
 	}
-	if err := config.Validate(c); err != nil {
-		return config.PublicError{Message: "Configuration validation failed: " + err.Error(), Err: err}
+	policy, err := config.ValidateAndCompileSourceAccess(c)
+	if err != nil {
+		var public config.PublicError
+		if errors.As(err, &public) {
+			return err
+		}
+		return config.PublicError{Message: "Configuration validation failed. Check outbounds, routing rules and source access rules.", Err: err}
+	}
+	return r.applyLocked(ctx, c, policy)
+}
+
+func (r *Runtime) applyLocked(ctx context.Context, c config.Config, policy *access.Policy) error {
+	if c.Revision != r.cfg.Revision {
+		return config.ErrConflict
 	}
 	if !reflect.DeepEqual(c.Listeners, r.cfg.Listeners) || !reflect.DeepEqual(c.Security, r.cfg.Security) {
 		return config.PublicError{Message: "To change listener addresses or security settings, edit the configuration file on the host and restart the daemon."}
@@ -308,6 +405,9 @@ func (r *Runtime) Apply(ctx context.Context, c config.Config) error {
 		}
 	}
 	r.pruneTailscaleOwners()
+	if r.proxy != nil {
+		r.proxy.SetSourcePolicy(policy)
+	}
 	r.cfg = clone(c)
 	r.providers = next
 	r.appliedAt = time.Now().UTC()

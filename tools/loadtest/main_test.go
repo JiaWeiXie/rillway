@@ -34,7 +34,11 @@ func TestProtocolsAgainstLocalRillway(t *testing.T) {
 	t.Setenv("NO_PROXY", "")
 	origin := httptest.NewServer(origin())
 	defer origin.Close()
-	s, err := proxy.New(&net.Dialer{Timeout: time.Second}, config.Security{}, "")
+	policy, err := config.CompileSourceAccess(config.Default(t.TempDir()).SourceAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := proxy.New(&net.Dialer{Timeout: time.Second}, config.Security{}, policy, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,7 +33,7 @@ Linux 優先採用 Rillway 安裝程式產生的 `/etc/systemd/system/rillway.se
 | --- | --- | --- |
 | `--config FILE` | 使用者設定路徑 | 新的暫存設定檔，安裝後仍保留 |
 | `--listen IP` | `127.0.0.1` | 四個 listener 的指定本機 IPv4／IPv6 |
-| `--allow-client CSV` | 選定的監聽 IP | 允許的來源 IP／CIDR，以逗號分隔 |
+| `--allow-client CSV` | 選定的監聽 IP | 允許的來源 IP／CIDR，以逗號分隔（同時初始化管理端 ACL 與來源存取規則） |
 | `--http-port PORT` | `17890` | HTTP forwarding／HTTPS CONNECT |
 | `--socks-port PORT` | `17891` | SOCKS5 TCP |
 | `--admin-port PORT` | `17892` | HTTPS 管理介面 |

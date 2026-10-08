@@ -3,9 +3,17 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
-	"Could not read saved memory settings. Your current limit is unchanged.": "無法讀取已儲存的記憶體設定；目前限制維持不變。",
-	"Could not save memory settings. Your current limit is unchanged.":       "無法儲存記憶體設定；目前限制維持不變。",
-	"Could not apply memory settings. The previous settings were restored.":  "無法套用記憶體設定；已還原先前的設定。",
+	"Invalid client IP address to block.":                                                      "請輸入要封鎖的有效 IP 位址。",
+	"Specify one IP address to block, not a CIDR network range.":                               "請指定單一 IP 位址，不要輸入 CIDR 網段。",
+	"Proxy source control is unavailable.":                                                     "Proxy 來源控制目前無法使用。",
+	"Current source access configuration is invalid.":                                          "目前的來源存取設定無效。",
+	"Could not block source address.":                                                          "無法封鎖來源位址。",
+	"Configuration validation failed. Check outbounds, routing rules and source access rules.": "設定驗證失敗；請檢查出口、路由規則與來源存取規則。",
+	"Source access configuration is invalid. Check rule IDs, names, actions and CIDR ranges.":  "來源存取設定無效；請檢查規則 ID、名稱、動作與 CIDR 網段。",
+	"Source access rule no longer exists. Refresh before editing.":                             "來源存取規則已不存在；請重新整理後再編輯。",
+	"Could not read saved memory settings. Your current limit is unchanged.":                   "無法讀取已儲存的記憶體設定；目前限制維持不變。",
+	"Could not save memory settings. Your current limit is unchanged.":                         "無法儲存記憶體設定；目前限制維持不變。",
+	"Could not apply memory settings. The previous settings were restored.":                    "無法套用記憶體設定；已還原先前的設定。",
 
 	"Increase the service memory limit before enabling an embedded VPN.": "請先提高服務記憶體上限，再啟用內建 VPN。",
 	"Service memory limit": "服務記憶體限制",

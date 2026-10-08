@@ -12,11 +12,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"rillway/internal/access"
 	"rillway/internal/authguard"
 	"rillway/internal/config"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,7 +28,7 @@ type Dialer interface {
 
 type Server struct {
 	dialer             Dialer
-	allowed            []netip.Prefix
+	sourcePolicy       atomic.Pointer[access.Policy]
 	username, password string
 	transport          *http.Transport
 	mu                 sync.Mutex
@@ -42,7 +44,7 @@ type Server struct {
 	localIPs           map[netip.Addr]bool
 }
 
-func New(dialer Dialer, security config.Security, password string) (*Server, error) {
+func New(dialer Dialer, security config.Security, policy *access.Policy, password string) (*Server, error) {
 	if dialer == nil {
 		return nil, errors.New("proxy dialer is required")
 	}
@@ -53,7 +55,8 @@ func New(dialer Dialer, security config.Security, password string) (*Server, err
 		return nil, errors.New("SOCKS credentials must fit in 255 bytes")
 	}
 	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
-	s.guard = NewConnectionGuard(256, 64, s.allowedClient)
+	s.sourcePolicy.Store(policy)
+	s.guard = NewConnectionGuard(256, 64, func(ip netip.Addr) access.Decision { return s.sourcePolicy.Load().Decide(ip) })
 	s.localIPs = map[netip.Addr]bool{netip.MustParseAddr("127.0.0.1"): true, netip.MustParseAddr("::1"): true}
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {
@@ -64,36 +67,8 @@ func New(dialer Dialer, security config.Security, password string) (*Server, err
 			s.localIPs[prefix.Addr().Unmap()] = true
 		}
 	}
-	allowed := security.AllowedClients
-	if len(allowed) == 0 {
-		allowed = []string{"127.0.0.0/8", "::1/128"}
-	}
-	for _, cidr := range allowed {
-		p, err := netip.ParsePrefix(cidr)
-		if err != nil {
-			return nil, fmt.Errorf("allowed client %q: %w", cidr, err)
-		}
-		s.allowed = append(s.allowed, p)
-	}
 	s.transport = &http.Transport{Proxy: nil, DialContext: s.dialContext, DisableKeepAlives: true, ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: time.Second}
 	return s, nil
-}
-
-func (s *Server) allowedClient(address string) bool {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return false
-	}
-	ip, err := netip.ParseAddr(host)
-	if err != nil {
-		return false
-	}
-	for _, p := range s.allowed {
-		if p.Contains(ip.Unmap()) {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
@@ -120,10 +95,6 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if closed {
 		http.Error(w, "proxy is shutting down", http.StatusServiceUnavailable)
-		return
-	}
-	if !s.allowedClient(r.RemoteAddr) {
-		http.Error(w, "proxy source is not allowed", http.StatusForbidden)
 		return
 	}
 	if s.username != "" && !s.authFailures.Allow(r.RemoteAddr) {

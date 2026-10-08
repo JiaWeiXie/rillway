@@ -13,12 +13,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"rillway/internal/access"
 	"rillway/internal/buildinfo"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -67,6 +69,28 @@ func (b *fakeBackend) Action(_ context.Context, id, action, value string) error 
 	return b.errorAction
 }
 
+func (b *fakeBackend) SourceClients() access.SourceSnapshot {
+	return access.SourceSnapshot{
+		GeneratedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Clients: []access.SourceClient{
+			{Address: "192.0.2.1", Decision: "allow", RuleID: "rule-1", ActiveConnections: 2},
+		},
+	}
+}
+
+func (b *fakeBackend) BlockSource(_ context.Context, rev uint64, addr string) (config.Config, int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if rev != b.cfg.Revision {
+		return config.Config{}, 0, config.ErrConflict
+	}
+	if addr == "invalid" {
+		return config.Config{}, 0, config.PublicError{Message: "Invalid client IP address to block: invalid"}
+	}
+	b.cfg.Revision++
+	return b.cfg, 1, nil
+}
+
 func request(h http.Handler, method, path, body, token, origin string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "http://rillway.test"+path, strings.NewReader(body))
 	if token != "" {
@@ -85,7 +109,7 @@ func request(h http.Handler, method, path, body, token, origin string) *httptest
 
 func TestSensitiveEndpointsRequireBearer(t *testing.T) {
 	h := New(newBackend(), "correct")
-	for _, path := range []string{"/api/v1/info", "/api/v1/config", "/api/v1/stats", "/api/v1/outbounds"} {
+	for _, path := range []string{"/api/v1/info", "/api/v1/config", "/api/v1/stats", "/api/v1/outbounds", "/api/v1/source-clients"} {
 		for _, token := range []string{"", "wrong"} {
 			w := request(h, "GET", path, "", token, "")
 			if w.Code != 401 {

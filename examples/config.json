@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "revision": 1,
   "listeners": {
     "http": "127.0.0.1:17890",
@@ -12,6 +12,20 @@
     "admin_token_file": "./.local/state/admin.token",
     "tls_cert_file": "./.local/state/admin.crt",
     "tls_key_file": "./.local/state/admin.key"
+  },
+  "source_access": {
+    "rules": [
+      {
+        "id": "local-clients",
+        "name": "Local clients",
+        "action": "allow",
+        "cidrs": [
+          "127.0.0.0/8",
+          "::1/128"
+        ],
+        "enabled": true
+      }
+    ]
   },
   "outbounds": [
     {"id": "direct", "type": "direct", "enabled": true, "public_internet": true},

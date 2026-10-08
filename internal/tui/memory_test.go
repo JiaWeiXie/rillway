@@ -33,7 +33,7 @@ func TestMemoryEditorUsesAPIAndPreservesRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := model{ctx: context.Background(), client: client, ready: true, page: 2, width: 100, height: 40}
+	m := model{ctx: context.Background(), client: client, ready: true, page: 3, width: 100, height: 40}
 	modelAfter, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	m = modelAfter.(model)
 	if cmd == nil || !m.memoryLoading {

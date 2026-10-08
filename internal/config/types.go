@@ -2,15 +2,16 @@ package config
 
 // Config is the versioned, portable configuration. Secrets are file references.
 type Config struct {
-	Version         int        `json:"version"`
-	Revision        uint64     `json:"revision"`
-	Listeners       Listeners  `json:"listeners"`
-	Security        Security   `json:"security"`
-	Outbounds       []Outbound `json:"outbounds"`
-	Rules           []Rule     `json:"rules"`
-	DefaultOutbound string     `json:"default_outbound"`
-	Adaptive        Adaptive   `json:"adaptive"`
-	PAC             PAC        `json:"pac"`
+	Version         int          `json:"version"`
+	Revision        uint64       `json:"revision"`
+	Listeners       Listeners    `json:"listeners"`
+	Security        Security     `json:"security"`
+	SourceAccess    SourceAccess `json:"source_access"`
+	Outbounds       []Outbound   `json:"outbounds"`
+	Rules           []Rule       `json:"rules"`
+	DefaultOutbound string       `json:"default_outbound"`
+	Adaptive        Adaptive     `json:"adaptive"`
+	PAC             PAC          `json:"pac"`
 }
 
 type Listeners struct {
@@ -27,6 +28,19 @@ type Security struct {
 	TLSKeyFile        string   `json:"tls_key_file"`
 	ProxyUsername     string   `json:"proxy_username,omitempty"`
 	ProxyPasswordFile string   `json:"proxy_password_file,omitempty"`
+}
+
+type SourceAccess struct {
+	Rules []SourceAccessRule `json:"rules"`
+}
+
+type SourceAccessRule struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Action  string   `json:"action"`
+	CIDRs   []string `json:"cidrs"`
+	Enabled bool     `json:"enabled"`
+	Note    string   `json:"note,omitempty"`
 }
 
 type Outbound struct {

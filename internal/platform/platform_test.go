@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestPACAndACL(t *testing.T) {
+func TestPAC(t *testing.T) {
 	c := config.Default(t.TempDir())
 	p, err := PAC(c.PAC)
 	if err != nil || !strings.Contains(p, "PROXY 127.0.0.1:17890") {
@@ -14,14 +14,6 @@ func TestPACAndACL(t *testing.T) {
 	}
 	if strings.Contains(p, "17890; DIRECT") {
 		t.Fatal("unsafe fallback")
-	}
-	for _, tc := range []struct {
-		addr string
-		ok   bool
-	}{{"127.0.0.1:22", true}, {"[::1]:22", true}, {"192.168.1.2:22", false}, {"bad", false}} {
-		if ClientAllowed(tc.addr, c.Security.AllowedClients) != tc.ok {
-			t.Fatal(tc)
-		}
 	}
 	c.PAC.BypassCIDRs = []config.PACBypass{{Value: "garbage", Enabled: true}}
 	if _, err := PAC(c.PAC); err == nil {

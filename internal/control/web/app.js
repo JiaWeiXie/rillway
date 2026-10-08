@@ -39,6 +39,8 @@ const pendingOutboundActions = new Set();
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, serverInfo = null, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
+let sourceClients = [], sourcePollTimer = null, sourcePolling = false, sourceRuleDraft = null, editingSourceRuleID = '', blockSourceContext = null, selectedSourceAddress = '';
+let sourceSnapshotGeneratedAt = null;
 const refreshChoices = [1,2,5,10,30];
 let flowPollTimer, refreshSeconds = 1, openFlowGroups = new Set();
 try { const saved = Number(localStorage.getItem('rillway-flow-refresh-seconds')); if(refreshChoices.includes(saved)) refreshSeconds = saved; } catch (_) {}
@@ -59,7 +61,7 @@ async function api(path, options = {}) {
   return data;
 }
 function sourceError(source) { const error = new Error(t(source)); error.source = source; return error; }
-function errorText(error) { return error.source ? t(error.source) : error.message; }
+function errorText(error) { return error.source ? t(error.source,error.values) : error.message; }
 function notice(message, failure = false) {
   lastNotice = {message,failure};
   $('notice').textContent = typeof message === 'string' ? t(message) : errorText(message);
@@ -89,6 +91,7 @@ async function load() {
   serverInfo = await loadInfo();
   active = true; $('login').hidden = true; $('app').hidden = false;
   renderConfig(); await poll(); pollStatuses(); loadDocker(); loadMemory();
+  navigate(currentPage);
 }
 async function save(next) {
   cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
@@ -103,7 +106,7 @@ function renderConfig() {
   renderPACList('domains',cfg.pac.bypass_domains || []);
   renderPACList('cidrs',cfg.pac.bypass_cidrs || []);
   $('config-json').value = JSON.stringify(cfg, null, 2);
-  renderRules(); renderOutbounds();
+  renderRules(); renderOutbounds(); renderSourceAccess();
 }
 function normalizePACEntry(entry) {
   return typeof entry === 'string' ? {value:entry,enabled:true,note:'',preset:''} : {value:'',enabled:true,note:'',preset:'',...entry};
@@ -263,6 +266,118 @@ function renderRules() {
     return `<tr><td><strong>${esc(r.id)}</strong><span class="sub">${esc(targets.join(', ') || t('No matching destinations configured'))}</span></td><td><span class="badge">${esc(r.adaptive ? t('Adaptive routing') : r.outbound)}</span>${r.adaptive ? `<span class="sub">${esc((r.candidates || []).join(', '))}</span>` : ''}</td><td>${esc(r.family || t('Dual stack'))}</td><td><button class="table-action" data-edit-rule="${index}">${et('Edit')}</button> <button class="table-action" data-up-rule="${index}"${index === 0 ? ' disabled' : ''} aria-label="${et('Move {name} up',{name:r.id})}">↑</button> <button class="table-action danger" data-delete-rule="${index}">${et('Delete')}</button></td></tr>`;
   }).join('') || `<tr><td colspan="4" class="muted">${et('No rules yet. Add a domain or IP rule to choose its outbound.')}</td></tr>`;
 }
+function renderSourceAccess() {
+  renderSourceClients();
+  renderSourceRules();
+}
+function renderSourceClients() {
+  const tbody = $('source-clients-body');
+  if(!tbody) return;
+  const empty = $('source-clients-empty');
+  const timeSpan = $('source-activity-time');
+  if(timeSpan) {
+    if(sourceSnapshotGeneratedAt) {
+      const d = new Date(sourceSnapshotGeneratedAt);
+      timeSpan.textContent = t('Activity recorded at {time}', {time: d.toLocaleTimeString()});
+    } else {
+      timeSpan.textContent = '';
+    }
+  }
+  if(!sourceClients || sourceClients.length === 0) {
+    tbody.innerHTML = '';
+    if(empty) empty.hidden = false;
+    return;
+  }
+  if(empty) empty.hidden = true;
+  const focused = document.activeElement;
+  const hadSourceFocus = tbody.contains(focused);
+  const focusedAddr = focused?.closest?.('[data-client-addr]')?.dataset.clientAddr || selectedSourceAddress;
+  tbody.innerHTML = sourceClients.map(c => {
+    const isAllow = c.decision === 'allow';
+    const badgeClass = isAllow ? 'good' : 'bad';
+    const decisionText = isAllow ? t('Allowed') : t('Denied');
+    const lastSeenText = c.last_seen ? new Date(c.last_seen).toLocaleTimeString() : t('Never');
+    const canBlock = isAllow || c.active_connections > 0;
+    const blockBtn = canBlock ? `<button class="table-action danger" data-block-source="${esc(c.address)}">${et('Block and disconnect')}</button>` : `<span class="muted">${et('Blocked')}</span>`;
+    return `<tr tabindex="-1" data-client-addr="${esc(c.address)}" class="${selectedSourceAddress === c.address ? 'selected-row' : ''}"><td data-label="${et('Client address')}"><strong>${esc(c.address)}</strong></td><td data-label="${et('Access status')}"><span class="badge ${badgeClass}">${esc(decisionText)}</span></td><td data-label="${et('Matched rule')}">${esc(c.rule_id || t('Default deny'))}</td><td data-label="${et('Connections')}"><strong>${c.active_connections}</strong> ${et('active')}</td><td data-label="${et('Counters')}"><small>${c.accepted_connections} ${et('accepted')} · ${c.denied_connections} ${et('denied')}</small></td><td data-label="${et('Last seen')}">${esc(lastSeenText)}</td><td data-label="${et('Actions')}">${blockBtn}</td></tr>`;
+  }).join('');
+  if(hadSourceFocus && focusedAddr) focusSource(focusedAddr);
+}
+function focusSource(address) {
+  const row = $('source-clients-body').querySelector(`[data-client-addr="${CSS.escape(address)}"]`);
+  (row?.querySelector('[data-block-source]') || row)?.focus({preventScroll:true});
+}
+function renderSourceRules() {
+  const tbody = $('source-rules-body');
+  if(!tbody) return;
+  const empty = $('source-rules-empty');
+  const rules = cfg?.source_access?.rules || [];
+  if(rules.length === 0) {
+    tbody.innerHTML = '';
+    if(empty) empty.hidden = false;
+    return;
+  }
+  if(empty) empty.hidden = true;
+  tbody.innerHTML = rules.map((r, index) => {
+    const isAllow = r.action === 'allow';
+    const actionClass = isAllow ? 'good' : 'bad';
+    const actionText = isAllow ? t('Allow') : t('Deny');
+    const statusText = r.enabled ? t('Enabled') : t('Disabled');
+    const statusClass = r.enabled ? '' : 'muted';
+    const cidrs = (r.cidrs || []).join(', ');
+    return `<tr data-source-rule-id="${esc(r.id)}"><td data-label="${et('Rule')}"><strong>${esc(r.name || r.id)}</strong><br><small class="sub">${esc(r.id)}</small></td><td data-label="${et('Action')}"><span class="badge ${actionClass}">${esc(actionText)}</span></td><td data-label="${et('Network ranges (CIDR)')}"><code>${esc(cidrs)}</code></td><td data-label="${et('Status')}" class="${statusClass}">${esc(statusText)}</td><td data-label="${et('Note')}"><small>${esc(r.note || '')}</small></td><td data-label="${et('Actions')}"><button class="table-action" data-edit-source-rule="${index}">${et('Edit')}</button> <button class="table-action danger" data-delete-source-rule="${index}">${et('Delete')}</button></td></tr>`;
+  }).join('');
+}
+async function loadSourceClients() {
+  if(!active || currentPage !== 'sources' || document.hidden || sourcePolling) return;
+  sourcePolling = true;
+  try {
+    const data = await api('/source-clients');
+    if(!active || currentPage !== 'sources' || document.hidden) return;
+    sourceClients = data.clients || [];
+    sourceSnapshotGeneratedAt = data.generated_at;
+    renderSourceClients();
+  } catch(error) {
+    if(error.status !== 401 && currentPage === 'sources' && !document.hidden) notice(error,true);
+  } finally { sourcePolling = false; }
+}
+function restartSourcePolling() {
+  stopSourcePolling();
+  if(active && currentPage === 'sources' && !document.hidden) sourcePollTimer = setInterval(loadSourceClients,refreshSeconds*1000);
+}
+function stopSourcePolling() {
+  if(sourcePollTimer) { clearInterval(sourcePollTimer); sourcePollTimer = null; }
+}
+function openSourceRule(index = -1) {
+  sourceRuleDraft = cloneConfig();
+  const isEdit = index >= 0;
+  const r = isEdit ? sourceRuleDraft.source_access.rules[index] : null;
+  editingSourceRuleID = r?.id || ''; 
+  $('source-rule-dialog-title').textContent = t(isEdit ? 'Edit source rule' : 'Add source rule');
+  $('src-rule-id').value = r ? r.id : '';
+  $('src-rule-id').disabled = isEdit;
+  $('src-rule-name').value = r ? r.name : '';
+  $('src-rule-action').value = r ? r.action : 'allow';
+  $('src-rule-enabled').checked = r ? r.enabled : true;
+  $('src-rule-cidrs').value = r ? (r.cidrs || []).join('\n') : '';
+  $('src-rule-note').value = r ? r.note || '' : '';
+  clearError($('source-rule-form'));
+  if(!$('source-rule-dialog').open) $('source-rule-dialog').showModal();
+}
+function renderBlockSourceDialog() {
+  if(!blockSourceContext) return;
+  const {address,count} = blockSourceContext;
+  const cidr = address + (address.includes(':') ? '/128' : '/32');
+  $('block-source-description').textContent = t('Are you sure you want to block {address} ({cidr})? This will immediately disconnect {count} active connection(s).',{address,cidr,count});
+}
+function openBlockSourceDialog(address) {
+  const client = sourceClients.find(c => c.address === address);
+  blockSourceContext = {address,count:client?.active_connections || 0,revision:cfg.revision};
+  renderBlockSourceDialog();
+  clearError($('block-source-form'));
+  $('block-source-dialog').showModal();
+  $('cancel-block-source').focus();
+}
 function renderOutbounds() {
   if(!cfg) return;
   const focused = document.activeElement;
@@ -326,8 +441,16 @@ function renderDeleteOutbound() {
 }
 function navigate(page) {
   if(page === 'settings' && active) loadMemory();
-  const names = {overview:['Connections','See your traffic. Choose its path.'],outbounds:['Outbounds','Manage your available connections.'],rules:['Routing rules','Choose how each destination connects.'],settings:['Settings','Connect your browser and network.'],glossary:['Glossary','We explain the words used in Rillway.']};
+  const names = {
+    overview:['Connections','See your traffic. Choose its path.'],
+    outbounds:['Outbounds','Manage your available connections.'],
+    rules:['Routing rules','Choose how each destination connects.'],
+    sources:['Source access','Manage client IP access to the proxy.'],
+    settings:['Settings','Connect your browser and network.'],
+    glossary:['Glossary','We explain the words used in Rillway.']
+  };
   if(!names[page]) page = 'overview'; currentPage = page;
+  if(page === 'sources' && active) { loadSourceClients(); restartSourcePolling(); } else { stopSourcePolling(); }
   for(const el of document.querySelectorAll('.page')) el.hidden = el.id !== `page-${page}`;
   for(const el of document.querySelectorAll('[data-page]')) {
     const selected = el.dataset.page === page;
@@ -352,7 +475,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; clearOutboundSecrets(); $('outbound-dialog').close(); active = false; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -452,7 +575,7 @@ function renderConfigText() {
   $('pac-hint').textContent = t(cfg.listeners.pac ? 'Use a PAC URL your Mac can reach. A loopback address works only on the Server itself. Saving PAC rules does not change the listener or apply settings to your Mac.' : 'PAC is not configured. Enable its listener in the Server configuration and restart the service.');
   $('listeners').innerHTML = Object.entries(cfg.listeners).map(([k,v]) => `<dt>${esc(t({http:'HTTP Proxy',socks5:'SOCKS5',admin:'Management UI',pac:'PAC'}[k] || k))}</dt><dd>${esc(v || t('Not configured'))}</dd>`).join('');
   const security = cfg.security || {};
-  $('server-security').innerHTML = `<dt>${et('Allowed client networks')}</dt><dd>${esc((security.allowed_clients || []).join(', ') || t('Not configured'))}</dd><dt>${et('Proxy username')}</dt><dd>${esc(security.proxy_username || t('Not configured'))}</dd><dt>${et('Management token and TLS credentials')}</dt><dd>${et('Managed on Server; secret contents are never shown.')}</dd>`;
+  $('server-security').innerHTML = `<dt>${et('Management and PAC allowed networks')}</dt><dd>${esc((security.allowed_clients || []).join(', ') || t('Not configured'))}</dd><dt>${et('Proxy username')}</dt><dd>${esc(security.proxy_username || t('Not configured'))}</dd><dt>${et('Management token and TLS credentials')}</dt><dd>${et('Managed on Server; secret contents are never shown.')}</dd>`;
 }
 async function loadMemory(explicit = false) {
   if(!active || memoryLoading || memorySaving) return;
@@ -501,13 +624,15 @@ function switchLocale(locale) {
   navigate(currentPage);
   connection(isOnline);
   if(cfg) {
-    renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds();
+    renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds(); renderSourceAccess();
     for(const id of ['default-outbound','rule-outbound']) {
       const select = $(id), selected = select.value;
       if(select.options.length) { select.innerHTML = options(selected,id === 'rule-outbound'); select.value = selected; }
     }
   }
   $('outbound-form-title').textContent = t(outboundIndex >= 0 ? 'Edit outbound' : 'Add outbound');
+  $('source-rule-dialog-title').textContent = t(editingSourceRuleID ? 'Edit source rule' : 'Add source rule');
+  renderBlockSourceDialog();
   for(const node of document.querySelectorAll('[data-error-source]')) node.textContent = t(node.dataset.errorSource);
   if(lastNotice) notice(lastNotice.message,lastNotice.failure);
   for(const id of ['adaptive-candidates','rule-candidates']) { const hint = $(id).querySelector('.hint'); if(hint) hint.textContent = t('Enable an outbound with Internet access first.'); }
@@ -548,6 +673,7 @@ $('flow-refresh').addEventListener('change',e => {
   refreshSeconds = seconds;
   try { localStorage.setItem('rillway-flow-refresh-seconds',String(seconds)); } catch (_) {}
   restartFlowPolling(true);
+  restartSourcePolling();
 });
 $('flow-groups').addEventListener('toggle',e => {
   if(!e.target.matches('.flow-group')) return;
@@ -633,6 +759,77 @@ $('rules').addEventListener('click',async e => {
   if(del) { if(!confirm(t('Delete rule "{name}"?',{name:next.rules[index].id}))) return; next.rules.splice(index,1); }
   try { await save(next); } catch(error) { notice(error,true); }
 });
+$('refresh-sources').addEventListener('click',() => loadSourceClients().catch(e => notice(e,true)));
+$('add-source-rule').addEventListener('click',() => openSourceRule());
+$('source-rules-body').addEventListener('click',async e => {
+  const edit = e.target.closest('[data-edit-source-rule]');
+  if(edit) { openSourceRule(Number(edit.dataset.editSourceRule)); return; }
+  const del = e.target.closest('[data-delete-source-rule]');
+  if(!del) return;
+  const index = Number(del.dataset.deleteSourceRule);
+  const r = cfg.source_access.rules[index];
+  if(!r) return;
+  if(!confirm(t('Delete source rule "{name}"?',{name:r.name || r.id}))) return;
+  const next = cloneConfig();
+  next.source_access.rules.splice(index,1);
+  try { await save(next); } catch(error) { notice(error,true); }
+});
+$('source-clients-body').addEventListener('click',e => {
+  const row = e.target.closest('[data-client-addr]');
+  if(row) selectedSourceAddress = row.dataset.clientAddr;
+  const block = e.target.closest('[data-block-source]');
+  if(block) { openBlockSourceDialog(block.dataset.blockSource); }
+});
+$('refresh-source-rule').addEventListener('click',async () => {
+  try {
+    const id = editingSourceRuleID;
+    cfg = await api('/config');
+    const index = id ? (cfg.source_access?.rules || []).findIndex(rule => rule.id === id) : -1;
+    renderConfig();
+    if(id && index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
+    openSourceRule(index);
+  } catch(error) { errorIn($('source-rule-form'),error); }
+});
+$('source-rule-dialog').addEventListener('close',() => { sourceRuleDraft = null; editingSourceRuleID = ''; });
+$('source-rule-form').addEventListener('submit',async e => {
+  e.preventDefault();
+  if(!sourceRuleDraft) return;
+  const button = e.target.querySelector('button[type="submit"]');
+  if(button.disabled) return;
+  button.disabled = true;
+  try {
+    const next = structuredClone(sourceRuleDraft);
+    const rule = {id:$('src-rule-id').value.trim(),name:$('src-rule-name').value.trim(),action:$('src-rule-action').value,enabled:$('src-rule-enabled').checked,cidrs:lines($('src-rule-cidrs').value),note:$('src-rule-note').value.trim()};
+    if(editingSourceRuleID) {
+      const index = next.source_access.rules.findIndex(r => r.id === editingSourceRuleID);
+      if(index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
+      next.source_access.rules[index] = rule;
+    } else { next.source_access.rules.push(rule); }
+    await save(next);
+    $('source-rule-dialog').close();
+  } catch(error) { errorIn(e.target,error); }
+  finally { button.disabled = false; }
+});
+$('block-source-form').addEventListener('submit',async e => {
+  e.preventDefault();
+  if(!blockSourceContext) return;
+  const btn = $('confirm-block-source');
+  if(btn.disabled) return;
+  btn.disabled = true;
+  clearError(e.target);
+  const {address,revision} = blockSourceContext;
+  try {
+    const res = await api('/source-clients/block',{method:'POST',body:JSON.stringify({revision,address})});
+    cfg = res.config;
+    selectedSourceAddress = address;
+    $('block-source-dialog').close();
+    notice({source:'Blocked {address}; disconnected {count} connection(s).',values:{address,count:res.disconnected}});
+    renderConfig();
+    await loadSourceClients();
+    focusSource(address);
+  } catch(error) { errorIn(e.target,error); }
+  finally { btn.disabled = false; }
+});
 $('outbound-list').addEventListener('click',async e => {
   const edit = e.target.closest('[data-edit-outbound]'); if(edit) { openOutbound(Number(edit.dataset.editOutbound)); return; }
   const license = e.target.closest('[data-license]'); if(license) { licenseID = license.dataset.license; $('license-value').value = ''; clearError($('license-form')); $('license-dialog').showModal(); return; }
@@ -684,7 +881,12 @@ $('license-form').addEventListener('submit',async e => {
   try { await api(`/outbounds/${encodeURIComponent(licenseID)}/license`,{method:'POST',body:JSON.stringify({value})}); $('license-dialog').close(); notice('WARP+ license key applied.'); await pollStatuses(); } catch(error) { errorIn(e.target,error); }
 });
 navigate(location.hash.slice(1));
+window.addEventListener('hashchange',() => navigate(location.hash.slice(1)));
 i18n.ready.then(() => switchLocale(i18n.locale));
 restartFlowPolling();
 setInterval(pollStatuses,10000);
 if(token) load().catch(e => { displayError($('login-error'),e); logout(); });
+document.addEventListener('visibilitychange',() => {
+  restartSourcePolling();
+  if(!document.hidden && currentPage === 'sources') loadSourceClients();
+});

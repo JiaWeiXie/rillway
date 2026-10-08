@@ -57,7 +57,7 @@ func (s *Server) ServeSOCKS(ctx context.Context, listener net.Listener) error {
 			return err
 		}
 		retryDelay = 0
-		if !s.allowedClient(conn.RemoteAddr().String()) || !s.track(conn) {
+		if !s.track(conn) {
 			_ = conn.Close()
 			continue
 		}

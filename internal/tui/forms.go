@@ -60,6 +60,9 @@ func (m model) fieldLabels() []string {
 	if m.form == "connection" {
 		return []string{"Management HTTPS URL", "Management token file", "Trusted certificate file"}
 	}
+	if m.form == "source_rule" {
+		return []string{"Rule ID", "Rule name", "Action (Left/Right to choose)", "IP / CIDR list (comma separated)", "Enabled (Left/Right to toggle)", "Note (optional)"}
+	}
 	labels := []string{"Type (Left/Right to choose)", "Name / ID", "Enabled (Left/Right to change)", "Public Internet (Left/Right to change)"}
 	switch m.outDraft.Type {
 	case "warp":
@@ -82,6 +85,10 @@ func editText(value string, key tea.KeyMsg) string {
 			last, _ = graphemes.Positions()
 		}
 		return value[:last]
+	case " ":
+		if len(value) < 4096 {
+			return value + " "
+		}
 	default:
 		if key.Type == tea.KeyRunes && len(value) < 4096 {
 			for _, r := range key.Runes {
@@ -168,6 +175,32 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.rememberPending = true
 			return m, tea.Batch(m.load(), m.loadStatuses())
 		}
+		if m.form == "source_rule" {
+			rule := config.SourceAccessRule{ID: strings.TrimSpace(m.fields[0]), Name: strings.TrimSpace(m.fields[1]), Action: m.fields[2], CIDRs: splitValues(m.fields[3]), Enabled: m.fields[4] == "true", Note: strings.TrimSpace(m.fields[5])}
+			cfg := clone(m.cfg)
+			if m.editingSourceRule != "" {
+				found := false
+				for i, current := range cfg.SourceAccess.Rules {
+					if current.ID == m.editingSourceRule {
+						cfg.SourceAccess.Rules[i] = rule
+						found = true
+						break
+					}
+				}
+				if !found {
+					m.err = config.PublicError{Message: "Source access rule no longer exists. Refresh before editing."}
+					return m, nil
+				}
+			} else {
+				cfg.SourceAccess.Rules = append(cfg.SourceAccess.Rules, rule)
+			}
+			if err := config.Validate(cfg); err != nil {
+				m.err = config.PublicError{Message: "Source access configuration is invalid. Check rule IDs, names, actions and CIDR ranges.", Err: err}
+				return m, nil
+			}
+			m.saving, m.err = true, nil
+			return m, m.applyForm(cfg)
+		}
 		o := m.outDraft
 		o.ID = strings.TrimSpace(m.fields[1])
 		o.Enabled = m.fields[2] == "true"
@@ -215,11 +248,19 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.field != 3 || m.outDraft.Type != "tailscale" {
 				m.fields[m.field] = fmt.Sprint(m.fields[m.field] != "true")
 			}
+		} else if m.form == "source_rule" && m.field == 2 {
+			if m.fields[2] == "allow" {
+				m.fields[2] = "deny"
+			} else {
+				m.fields[2] = "allow"
+			}
+		} else if m.form == "source_rule" && m.field == 4 {
+			m.fields[4] = fmt.Sprint(m.fields[4] != "true")
 		} else {
 			m.fields[m.field] = editText(m.fields[m.field], key)
 		}
 	default:
-		if m.form == "connection" || m.form == "memory" && m.field == 1 || m.field != 0 && m.field != 2 && m.field != 3 {
+		if m.form == "connection" || m.form == "memory" && m.field == 1 || (m.form == "source_rule" && (m.field == 0 || m.field == 1 || m.field == 3 || m.field == 5)) || (m.form == "outbound" && m.field != 0 && m.field != 2 && m.field != 3) {
 			m.fields[m.field] = editText(m.fields[m.field], key)
 		}
 	}
@@ -251,6 +292,12 @@ func (m model) fieldsView() string {
 	case "memory":
 		b.WriteString(m.text("\n  Service memory limit · applies without restarting\n  Left/Right chooses percent, MiB or GiB. Enter saves.\n"))
 		b.WriteString(m.memoryView())
+	case "source_rule":
+		if m.editingSourceRule != "" {
+			b.WriteString(m.text("\n  Edit source access rule\n\n"))
+		} else {
+			b.WriteString(m.text("\n  Add source access rule\n\n"))
+		}
 	default:
 		b.WriteString(m.text("\n  Add an outbound · common values are already filled in\n  File paths below belong to the Rillway server.\n\n"))
 	}
@@ -271,12 +318,24 @@ func (m model) fieldsView() string {
 		if value == "false" {
 			value = m.text("Disabled")
 		}
+		if m.form == "source_rule" && i == 2 {
+			switch value {
+			case "allow":
+				value = m.text("Allowed")
+			case "deny":
+				value = m.text("Denied")
+			}
+		}
 		if i == m.field {
 			value += "▏"
 		}
 		fmt.Fprintf(&b, "  %s %s\n    %s\n", marker, m.text(label), cell(value, max(20, m.width-6)))
 	}
-	b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save / Connect   Esc Cancel\n"))
+	if m.form == "source_rule" {
+		b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save   Esc Cancel\n"))
+	} else {
+		b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save / Connect   Esc Cancel\n"))
+	}
 	if m.form == "outbound" {
 		switch m.outDraft.Type {
 		case "warp":

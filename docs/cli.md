@@ -48,7 +48,7 @@ Credentials are read from files; setup/init output only token paths.
 | --- | --- | --- |
 | `--config FILE` | User config path | New staging configuration, retained after installation |
 | `--listen IP` | `127.0.0.1` | Specific local IPv4/IPv6 address for all four listeners |
-| `--allow-client CSV` | Selected listener IP | Allowed source IPs/CIDRs, comma-separated |
+| `--allow-client CSV` | Selected listener IP | Allowed source IPs/CIDRs, comma-separated (initializes both management ACL and source access rules) |
 | `--http-port PORT` | `17890` | HTTP forwarding and HTTPS CONNECT |
 | `--socks-port PORT` | `17891` | SOCKS5 TCP |
 | `--admin-port PORT` | `17892` | HTTPS management |

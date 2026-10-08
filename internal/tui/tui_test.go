@@ -3,15 +3,18 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/engine"
 	"rillway/internal/i18n"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -118,7 +121,8 @@ func TestEnglishNavigationAndForms(t *testing.T) {
 		{"loading", model{}, []string{"Connecting to the management service"}},
 		{"connections", model{ready: true}, []string{"[Connections]", "No connections yet", "Enter Create routing rule"}},
 		{"outbounds", model{ready: true, page: 1}, []string{"[Outbounds & VPNs]", "c Connect", "d Disconnect", "v Verify"}},
-		{"settings", model{ready: true, page: 2}, []string{"[Service settings]", "Management UI", "Web UI token", "t Show / hide Web UI token", "Start or install the service on the machine running it"}},
+		{"sources", model{ready: true, page: 2}, []string{"[Source access]", "Clients", "v Toggle Clients / Rules view", "b Block selected client"}},
+		{"settings", model{ready: true, page: 3}, []string{"[Service settings]", "Management UI", "Web UI token", "t Show / hide Web UI token", "Start or install the service on the machine running it"}},
 		{"rule", model{form: "rule", ruleFlow: flow{Host: "example.com"}}, []string{"Create routing rule for example.com", "Automatic (dual stack)", "Enter Save", "Esc Cancel"}},
 		{"license", model{form: "license"}, []string{"WARP+ license key", "Enter Apply", "Esc Cancel"}},
 		{"install", model{form: "install"}, []string{"Install the Rillway background service", "Enter Install", "Esc Cancel"}},
@@ -140,7 +144,7 @@ func TestEnglishNavigationAndForms(t *testing.T) {
 
 func TestManagementTokenRequiresExplicitReveal(t *testing.T) {
 	const token = "private-management-token"
-	m := model{ready: true, page: 2, managementToken: token}
+	m := model{ready: true, page: 3, managementToken: token}
 	if view := m.View(); strings.Contains(view, token) || !strings.Contains(view, "Hidden (press t to show)") {
 		t.Fatalf("token was exposed before reveal or hint is missing:\n%s", view)
 	}
@@ -394,7 +398,7 @@ func TestServerVersionAndAdvancedRevision(t *testing.T) {
 		if view := m.View(); !strings.Contains(view, "v9.8.7") || strings.Contains(view, "42") {
 			t.Fatalf("unexpected main version display: %s", view)
 		}
-		m.page = 2
+		m.page = 3
 		next, _ := m.Update(key("x"))
 		m = next.(model)
 		if !m.advancedVisible || !strings.Contains(m.View(), "42") {
@@ -450,5 +454,260 @@ func TestLoadUsesRemoteVersionAndOnlyFallsBackForOlderDaemons(t *testing.T) {
 				t.Fatal("old service metadata applied")
 			}
 		})
+	}
+}
+
+func TestSourceAccessTUIWorkflow(t *testing.T) {
+	snap := access.SourceSnapshot{
+		GeneratedAt: time.Now(),
+		Clients: []access.SourceClient{
+			{
+				Address:             "192.168.1.50",
+				Decision:            "allow",
+				ActiveConnections:   3,
+				AcceptedConnections: 10,
+				DeniedConnections:   0,
+				LastSeen:            time.Now(),
+			},
+		},
+	}
+	rule := config.SourceAccessRule{
+		ID:      "rule-1",
+		Name:    "Office LAN",
+		Action:  "allow",
+		CIDRs:   []string{"192.168.1.0/24"},
+		Enabled: true,
+	}
+	cfg := config.Config{
+		Revision: 10,
+		SourceAccess: config.SourceAccess{
+			Rules: []config.SourceAccessRule{rule},
+		},
+	}
+
+	m := model{
+		ready:          true,
+		page:           2,
+		cfg:            cfg,
+		sourceSnapshot: snap,
+		width:          100,
+		height:         30,
+	}
+
+	// 1. 預設在 Clients view
+	view := m.View()
+	if !strings.Contains(view, "192.168.1.50") || !strings.Contains(view, "Clients") {
+		t.Fatalf("Clients view missing client: %s", view)
+	}
+
+	// 2. 按 'b' 開啟 Block client 對話框
+	next, _ := m.Update(key("b"))
+	m = next.(model)
+	if m.form != "block_source" || !strings.Contains(m.View(), "Block source client 192.168.1.50") {
+		t.Fatalf("Block dialog not shown: %s", m.View())
+	}
+	// Esc 取消
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	if m.form != "" {
+		t.Fatalf("Form not closed on Esc: %s", m.form)
+	}
+
+	// 3. 按 'v' 切換到 Rules view
+	next, _ = m.Update(key("v"))
+	m = next.(model)
+	if !m.sourceViewRules {
+		t.Fatal("v did not toggle to rules view")
+	}
+	view = m.View()
+	if !strings.Contains(view, "Office LAN") || !strings.Contains(view, "192.168.1.0/24") {
+		t.Fatalf("Rules view missing rule: %s", view)
+	}
+
+	// 4. 按 '+' 開啟新增來源規則表單
+	next, _ = m.Update(key("+"))
+	m = next.(model)
+	if m.form != "source_rule" || m.editingSourceRule != "" {
+		t.Fatalf("Add source rule form not opened: %s", m.form)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+
+	// 5. 按 'e' 編輯已選取的規則
+	next, _ = m.Update(key("e"))
+	m = next.(model)
+	if m.form != "source_rule" || m.editingSourceRule != "rule-1" {
+		t.Fatalf("Edit source rule form not opened: %s", m.form)
+	}
+	if m.fields[1] != "Office LAN" {
+		t.Fatalf("Edit form did not load rule name: %+v", m.fields)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+
+	// 6. 按 'd' 開啟刪除確認對話框
+	next, _ = m.Update(key("d"))
+	m = next.(model)
+	if m.form != "delete_source_rule" || !strings.Contains(m.View(), "Delete source rule Office LAN") {
+		t.Fatalf("Delete rule dialog not shown: %s", m.View())
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	// 7. 切換為繁體中文，驗證 Rules 與 Clients 檢視表頭完全翻譯
+	next, _ = m.Update(key("L"))
+	m = next.(model)
+	viewZH := m.View()
+	for _, wantZH := range []string{"規則", "動作", "IP／CIDR 列表", "啟用"} {
+		if !strings.Contains(viewZH, wantZH) {
+			t.Fatalf("Traditional Chinese Rules view missing %q: %s", wantZH, viewZH)
+		}
+	}
+	// 切回 Clients 檢視
+	next, _ = m.Update(key("v"))
+	m = next.(model)
+	viewClientsZH := m.View()
+	for _, wantClientsZH := range []string{"用戶端", "位址", "狀態", "連線數", "累計連線", "最近活躍"} {
+		if !strings.Contains(viewClientsZH, wantClientsZH) {
+			t.Fatalf("Traditional Chinese Clients view missing %q: %s", wantClientsZH, viewClientsZH)
+		}
+	}
+
+	// 8. 驗證 Client 列表在重新排序/刷新後選中項正確保留
+	clientA := access.SourceClient{Address: "10.0.0.1", LastSeen: time.Now().Add(-time.Minute)}
+	clientB := access.SourceClient{Address: "10.0.0.2", LastSeen: time.Now().Add(-time.Second)}
+	m.sourceSnapshot = access.SourceSnapshot{
+		Clients: []access.SourceClient{clientA, clientB},
+	}
+	m.selected = 1 // 選中 clientB (10.0.0.2)
+	m.sourceViewRules = false
+
+	// 當 snapshot 重新排序（例如 clientB 的活躍度提升被排到 index 0）
+	reorderedSnapshot := access.SourceSnapshot{
+		Clients: []access.SourceClient{clientB, clientA},
+	}
+	next, _ = m.Update(sourceSnapshotMsg{snapshot: reorderedSnapshot, generation: m.generation})
+	m = next.(model)
+	// 驗證 m.selected 追蹤到新的 index 0（對應 10.0.0.2）
+	if m.selected != 0 || m.sourceSnapshot.Clients[m.selected].Address != "10.0.0.2" {
+		t.Fatalf("selected client address not preserved across reordered snapshot: selected=%d, addr=%s", m.selected, m.sourceSnapshot.Clients[m.selected].Address)
+	}
+
+	// 9. 驗證 Rules 列表在重新排序/刷新後選中項正確保留
+	ruleA := config.SourceAccessRule{ID: "rule-a", Name: "Rule A"}
+	ruleB := config.SourceAccessRule{ID: "rule-b", Name: "Rule B"}
+	m.cfg.SourceAccess.Rules = []config.SourceAccessRule{ruleA, ruleB}
+	m.sourceViewRules = true
+	m.selected = 1 // 選中 rule-b
+
+	// 模擬 config 更新，rule-b 被排到第 0 位
+	reorderedCfg := m.cfg
+	reorderedCfg.SourceAccess.Rules = []config.SourceAccessRule{ruleB, ruleA}
+	next, _ = m.Update(loadedMsg{cfg: reorderedCfg, generation: m.generation})
+	m = next.(model)
+	if m.selected != 0 || m.cfg.SourceAccess.Rules[m.selected].ID != "rule-b" {
+		t.Fatalf("selected rule ID not preserved across reordered config: selected=%d, id=%s", m.selected, m.cfg.SourceAccess.Rules[m.selected].ID)
+	}
+}
+
+func TestBlockIPv6DialogAndConflictPreservesForm(t *testing.T) {
+	// 1. 驗證 IPv6 client 的 block 對話框顯示精確的 /128 CIDR
+	m := model{
+		ready: true,
+		page:  2,
+		sourceSnapshot: access.SourceSnapshot{
+			Clients: []access.SourceClient{
+				{Address: "2001:db8::1", ActiveConnections: 2},
+			},
+		},
+	}
+	next, _ := m.Update(key("b"))
+	m = next.(model)
+	if m.form != "block_source" || !strings.Contains(m.View(), "2001:db8::1/128") {
+		t.Fatalf("IPv6 block dialog should show /128 prefix: %s", m.View())
+	}
+
+	// 2. 模擬 Block 遇到 409 衝突錯誤（例如由伺服器返回衝突）
+	conflictErr := &control.APIError{Status: http.StatusConflict, Message: "configuration revision conflict", Source: "configuration revision conflict"}
+	next, cmd := m.Update(blockSourceMsg{err: conflictErr, generation: m.generation})
+	m = next.(model)
+	// 驗證表單依然保持開啟，沒有被提前關閉，且錯誤被妥善記錄
+	if cmd != nil {
+		t.Fatal("unexpected command on block error")
+	}
+	if m.form != "block_source" {
+		t.Fatalf("expected block_source form to remain open on 409 error, got %q", m.form)
+	}
+	if m.err != conflictErr {
+		t.Fatalf("error was not retained: %+v", m.err)
+	}
+	view := m.View()
+	if !strings.Contains(view, "configuration revision conflict") {
+		t.Fatalf("error text not displayed in dialog view: %s", view)
+	}
+}
+
+func TestBlockSuccessMessageFollowsLanguageSwitch(t *testing.T) {
+	m := model{
+		ready:  true,
+		page:   2,
+		locale: i18n.English,
+	}
+
+	// 模擬成功收到 blockSourceMsg，中斷了 3 條連線
+	result := control.BlockSourceResult{
+		Disconnected: 3,
+		Config:       config.Config{Revision: 10},
+	}
+	next, _ := m.Update(blockSourceMsg{result: result, generation: m.generation})
+	m = next.(model)
+
+	// 1. 英文環境下檢查渲染出完整的已格式化英文提示
+	viewEN := m.View()
+	wantEN := "Source client blocked (3 connection(s) disconnected)."
+	if !strings.Contains(viewEN, wantEN) {
+		t.Fatalf("English view missing formatted success message: %s", viewEN)
+	}
+
+	// 2. 切換語言為繁體中文，驗證動態數字與繁體中文模板正確翻譯
+	next, _ = m.Update(key("L"))
+	m = next.(model)
+	viewZH := m.View()
+	wantZH := "用戶端已封鎖（已中斷 3 條連線）。"
+	if !strings.Contains(viewZH, wantZH) {
+		t.Fatalf("Traditional Chinese view missing formatted success message: %s", viewZH)
+	}
+	if strings.Contains(viewZH, wantEN) {
+		t.Fatalf("Traditional Chinese view retained English formatted text: %s", viewZH)
+	}
+}
+
+func TestSourceSnapshotDoesNotReplaceOpenForms(t *testing.T) {
+	for _, form := range []string{"source_rule", "block_source", "delete_source_rule"} {
+		t.Run(form, func(t *testing.T) {
+			existing := access.SourceSnapshot{Clients: []access.SourceClient{{Address: "192.0.2.1", ActiveConnections: 2}}}
+			retained := errors.New("retained form error")
+			m := model{ready: true, page: 2, form: form, sourceLoading: true, sourceSnapshot: existing, err: retained}
+			next, _ := m.Update(sourceSnapshotMsg{snapshot: access.SourceSnapshot{Clients: []access.SourceClient{{Address: "192.0.2.2"}}}, err: errors.New("background error")})
+			m = next.(model)
+			if len(m.sourceSnapshot.Clients) != 1 || m.sourceSnapshot.Clients[0].Address != "192.0.2.1" || m.sourceSnapshot.Clients[0].ActiveConnections != 2 || m.err != retained || m.sourceLoading {
+				t.Fatalf("background refresh disturbed %s: %+v", form, m)
+			}
+		})
+	}
+}
+
+func TestSourceAccessRowsRespectTerminalWidth(t *testing.T) {
+	for _, width := range []int{40, 52, 90} {
+		for _, locale := range []i18n.Locale{i18n.English, i18n.TraditionalChinese} {
+			m := model{width: width, height: 30, locale: locale, sourceSnapshot: access.SourceSnapshot{Clients: []access.SourceClient{{Address: "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", ActiveConnections: 2}}}, cfg: config.Config{SourceAccess: config.SourceAccess{Rules: []config.SourceAccessRule{{ID: "office", Name: "公司 👨‍👩‍👧‍👦 的來源規則", CIDRs: []string{"2001:db8:ffff:ffff:ffff:ffff:ffff:ffff/128", "192.0.2.0/24"}}}}}}
+			for _, rules := range []bool{false, true} {
+				m.sourceViewRules = rules
+				for _, line := range strings.Split(m.sourcesView(), "\n") {
+					if uniseg.StringWidth(line) > width {
+						t.Fatalf("source row overflow at width %d locale %s: %q", width, locale, line)
+					}
+				}
+			}
+		}
 	}
 }

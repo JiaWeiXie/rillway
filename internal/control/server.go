@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"rillway/internal/access"
 	"rillway/internal/authguard"
 	"rillway/internal/buildinfo"
 	"rillway/internal/config"
@@ -28,6 +29,8 @@ type Backend interface {
 	Snapshot() any
 	Statuses(context.Context) []outbound.Status
 	Action(context.Context, string, string, string) error
+	SourceClients() access.SourceSnapshot
+	BlockSource(context.Context, uint64, string) (config.Config, int, error)
 }
 
 //go:embed web/*
@@ -61,6 +64,8 @@ func New(backend Backend, adminToken string) http.Handler {
 	mux.HandleFunc("GET /api/v1/service/memory", h.protect(h.getMemory))
 	mux.HandleFunc("PUT /api/v1/service/memory", h.protect(h.putMemory))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
+	mux.HandleFunc("GET /api/v1/source-clients", h.protect(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, h.backend.SourceClients()) }))
+	mux.HandleFunc("POST /api/v1/source-clients/block", h.protect(h.blockSource))
 	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))
 	mux.HandleFunc("PUT /api/v1/outbounds", h.protect(h.saveOutbound))
 	mux.HandleFunc("DELETE /api/v1/outbounds/{id}", h.protect(h.deleteOutbound))
@@ -235,6 +240,28 @@ func (h *handler) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, h.backend.Config())
+}
+
+func (h *handler) blockSource(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Revision uint64 `json:"revision"`
+		Address  string `json:"address"`
+	}
+	if !decodeBody(w, r, &body, 8<<10) {
+		return
+	}
+	h.applyMu.Lock()
+	defer h.applyMu.Unlock()
+	cfg, disconnected, err := h.backend.BlockSource(r.Context(), body.Revision, body.Address)
+	if err != nil {
+		if errors.Is(err, config.ErrConflict) {
+			writeError(w, r, 409, "Configuration changed elsewhere. Reload it before saving.")
+		} else {
+			writeError(w, r, 422, publicMessage(err, "Could not block source address."))
+		}
+		return
+	}
+	writeJSON(w, 200, BlockSourceResult{Config: cfg, Disconnected: disconnected})
 }
 
 func (h *handler) action(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"rillway/internal/access"
 	"strings"
 )
 
@@ -184,9 +185,20 @@ func (p PAC) EnabledCIDRs() []string { return enabledPACValues(p.BypassCIDRs) }
 
 func Default(stateDir string) Config {
 	return Config{
-		Version: 1, Revision: 1,
+		Version: 2, Revision: 1,
 		Listeners: Listeners{HTTP: "127.0.0.1:17890", SOCKS5: "127.0.0.1:17891", Admin: "127.0.0.1:17892", PAC: "127.0.0.1:17893"},
 		Security:  Security{AllowedClients: []string{"127.0.0.0/8", "::1/128"}, AdminTokenFile: filepath.Join(stateDir, "admin.token"), TLSCertFile: filepath.Join(stateDir, "admin.crt"), TLSKeyFile: filepath.Join(stateDir, "admin.key")},
+		SourceAccess: SourceAccess{
+			Rules: []SourceAccessRule{
+				{
+					ID:      "local-clients",
+					Name:    "Local clients",
+					Action:  "allow",
+					CIDRs:   []string{"127.0.0.0/8", "::1/128"},
+					Enabled: true,
+				},
+			},
+		},
 		Outbounds: []Outbound{{ID: "direct", Type: "direct", Enabled: true, PublicInternet: true}, {ID: "warp", Type: "warp", Enabled: false, PublicInternet: true, ProxyAddress: "127.0.0.1:40000", WARPBinary: "warp-cli"}},
 		Rules: []Rule{
 			{ID: "github-origin", Domains: []string{"github.com", "api.github.com", "codeload.github.com"}, Outbound: "direct", Family: "auto"},
@@ -197,11 +209,63 @@ func Default(stateDir string) Config {
 	}
 }
 
+type rawConfigV1 struct {
+	Version         int        `json:"version"`
+	Revision        uint64     `json:"revision"`
+	Listeners       Listeners  `json:"listeners"`
+	Security        Security   `json:"security"`
+	Outbounds       []Outbound `json:"outbounds"`
+	Rules           []Rule     `json:"rules"`
+	DefaultOutbound string     `json:"default_outbound"`
+	Adaptive        Adaptive   `json:"adaptive"`
+	PAC             PAC        `json:"pac"`
+}
+
 func Decode(data []byte) (Config, error) {
-	var c Config
 	if len(data) > 1<<20 {
-		return c, errors.New("configuration exceeds 1 MiB")
+		return Config{}, errors.New("configuration exceeds 1 MiB")
 	}
+	var probe struct {
+		Version int `json:"version"`
+	}
+	_ = json.Unmarshal(data, &probe)
+	if probe.Version == 1 {
+		var v1 rawConfigV1
+		d := json.NewDecoder(bytes.NewReader(data))
+		d.DisallowUnknownFields()
+		if err := d.Decode(&v1); err != nil {
+			return Config{}, err
+		}
+		if err := d.Decode(new(any)); err != io.EOF {
+			return Config{}, errors.New("configuration must contain one JSON object")
+		}
+		c := Config{
+			Version:         2,
+			Revision:        v1.Revision,
+			Listeners:       v1.Listeners,
+			Security:        v1.Security,
+			SourceAccess:    SourceAccess{Rules: []SourceAccessRule{}},
+			Outbounds:       v1.Outbounds,
+			Rules:           v1.Rules,
+			DefaultOutbound: v1.DefaultOutbound,
+			Adaptive:        v1.Adaptive,
+			PAC:             v1.PAC,
+		}
+		if len(v1.Security.AllowedClients) > 0 {
+			c.SourceAccess.Rules = []SourceAccessRule{
+				{
+					ID:      "local-clients",
+					Name:    "Local clients",
+					Action:  "allow",
+					CIDRs:   append([]string(nil), v1.Security.AllowedClients...),
+					Enabled: true,
+				},
+			}
+		}
+		return c, Validate(c)
+	}
+
+	var c Config
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&c); err != nil {
@@ -209,6 +273,9 @@ func Decode(data []byte) (Config, error) {
 	}
 	if err := d.Decode(new(any)); err != io.EOF {
 		return c, errors.New("configuration must contain one JSON object")
+	}
+	if c.SourceAccess.Rules == nil {
+		c.SourceAccess.Rules = []SourceAccessRule{}
 	}
 	return c, Validate(c)
 }
@@ -255,7 +322,21 @@ func ListenAddressesOverlap(a, b string) bool {
 }
 
 func Validate(c Config) error {
-	if c.Version != 1 {
+	_, err := ValidateAndCompileSourceAccess(c)
+	return err
+}
+
+// ValidateAndCompileSourceAccess validates the full configuration and returns the
+// immutable source policy for publication without compiling it a second time.
+func ValidateAndCompileSourceAccess(c Config) (*access.Policy, error) {
+	if err := validateNonSourceSettings(c); err != nil {
+		return nil, err
+	}
+	return CompileSourceAccess(c.SourceAccess)
+}
+
+func validateNonSourceSettings(c Config) error {
+	if c.Version != 2 {
 		return fmt.Errorf("unsupported config version %d", c.Version)
 	}
 	if c.Revision == 0 {
@@ -278,13 +359,8 @@ func Validate(c Config) error {
 	if c.Listeners.Admin == "" {
 		return errors.New("admin listener is required")
 	}
-	if len(c.Security.AllowedClients) == 0 {
-		return errors.New("allowed_clients must not be empty")
-	}
-	for _, p := range c.Security.AllowedClients {
-		if _, err := netip.ParsePrefix(p); err != nil {
-			return fmt.Errorf("allowed_clients: %w", err)
-		}
+	if _, err := access.CompileAllowlist(c.Security.AllowedClients); err != nil {
+		return fmt.Errorf("allowed_clients: %w", err)
 	}
 	for _, s := range []string{c.Security.AdminTokenFile, c.Security.TLSCertFile, c.Security.TLSKeyFile} {
 		if s == "" {
@@ -422,6 +498,56 @@ func Validate(c Config) error {
 		}
 	}
 	return nil
+}
+
+func CompileSourceAccess(sa SourceAccess) (*access.Policy, error) {
+	if len(sa.Rules) > 256 {
+		return nil, errors.New("source access exceeds maximum of 256 rules")
+	}
+	var totalCIDRs int
+	seenIDs := make(map[string]bool, len(sa.Rules))
+	specs := make([]access.RuleSpec, 0, len(sa.Rules))
+	for _, r := range sa.Rules {
+		if !validID.MatchString(r.ID) {
+			return nil, fmt.Errorf("invalid source rule ID %q", r.ID)
+		}
+		if seenIDs[r.ID] {
+			return nil, fmt.Errorf("duplicate source rule ID %q", r.ID)
+		}
+		seenIDs[r.ID] = true
+		nameRunes := len([]rune(r.Name))
+		if strings.TrimSpace(r.Name) == "" || nameRunes == 0 {
+			return nil, fmt.Errorf("source rule %q: name must not be blank", r.ID)
+		}
+		if nameRunes > 256 {
+			return nil, fmt.Errorf("source rule %q: name exceeds 256 characters", r.ID)
+		}
+		if r.Action != "allow" && r.Action != "deny" {
+			return nil, fmt.Errorf("source rule %q: action must be allow or deny", r.ID)
+		}
+		if len(r.CIDRs) == 0 {
+			return nil, fmt.Errorf("source rule %q: at least one CIDR is required", r.ID)
+		}
+		totalCIDRs += len(r.CIDRs)
+		if totalCIDRs > 1024 {
+			return nil, errors.New("source access exceeds maximum of 1,024 total CIDRs")
+		}
+		if len([]rune(r.Note)) > 1024 {
+			return nil, fmt.Errorf("source rule %q: note exceeds 1024 characters", r.ID)
+		}
+		for _, cidr := range r.CIDRs {
+			if _, err := access.ParsePrefix(cidr); err != nil {
+				return nil, fmt.Errorf("source rule %q: CIDR %q: %w", r.ID, cidr, err)
+			}
+		}
+		specs = append(specs, access.RuleSpec{
+			ID:      r.ID,
+			Action:  r.Action,
+			CIDRs:   r.CIDRs,
+			Enabled: r.Enabled,
+		})
+	}
+	return access.Compile(specs)
 }
 
 func validatePACBypass(entry PACBypass, seen map[string]bool, key string) error {

@@ -148,6 +148,15 @@ func setupCommand(ctx context.Context, args []string, input io.Reader, out io.Wr
 			c.Security.AllowedClients = append(c.Security.AllowedClients, value)
 		}
 	}
+	c.SourceAccess.Rules = []config.SourceAccessRule{
+		{
+			ID:      "local-clients",
+			Name:    "Local clients",
+			Action:  "allow",
+			CIDRs:   append([]string(nil), c.Security.AllowedClients...),
+			Enabled: true,
+		},
+	}
 	labels := []string{"HTTP Proxy port", "SOCKS5 port", "HTTPS management port", "PAC port"}
 	addresses := make([]string, len(ports))
 	for i, port := range ports {

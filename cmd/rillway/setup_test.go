@@ -64,6 +64,11 @@ func TestSetupInteractive(t *testing.T) {
 			if strings.Join(c.Security.AllowedClients, ",") != "127.0.0.0/8,::1/128,192.0.2.70/32,2001:db8::1/128" {
 				t.Fatal(c.Security.AllowedClients)
 			}
+			if len(c.SourceAccess.Rules) != 1 || c.SourceAccess.Rules[0].ID != "local-clients" ||
+				c.SourceAccess.Rules[0].Action != "allow" || !c.SourceAccess.Rules[0].Enabled ||
+				strings.Join(c.SourceAccess.Rules[0].CIDRs, ",") != strings.Join(c.Security.AllowedClients, ",") {
+				t.Fatalf("bad source access rule in setup: %+v", c.SourceAccess)
+			}
 			certBytes, err := os.ReadFile(c.Security.TLSCertFile)
 			if err != nil {
 				t.Fatal(err)

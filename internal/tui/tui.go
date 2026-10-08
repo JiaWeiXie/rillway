@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os/exec"
+	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/engine"
@@ -81,6 +82,18 @@ type resultMsg struct {
 }
 type tickMsg time.Time
 
+type sourceSnapshotMsg struct {
+	generation uint64
+	snapshot   access.SourceSnapshot
+	err        error
+}
+
+type blockSourceMsg struct {
+	generation uint64
+	result     control.BlockSourceResult
+	address    string
+	err        error
+}
 type memoryMsg struct {
 	generation uint64
 	status     memorylimit.Status
@@ -89,52 +102,60 @@ type memoryMsg struct {
 }
 
 type model struct {
-	connection      ConnectionSettings
-	managementToken string
-	tokenVisible    bool
-	advancedVisible bool
-	serverInfo      control.Info
-	memoryStatus    memorylimit.Status
-	memoryLoading   bool
-	localBaseURL    string
-	remember        func(ConnectionSettings) error
-	rememberPending bool
-	startCommand    func() *exec.Cmd
-	generation      uint64
-	field, outType  int
-	fields          []string
-	drafts          map[string][]string
-	outDraft        config.Outbound
-	saving          bool
-	ctx             context.Context
-	locale          i18n.Locale
-	client          *control.Client
-	install         func(context.Context) error
-	installCommand  func() *exec.Cmd
-	cfg             config.Config
-	statuses        []outbound.Status
-	flows           []flow
-	width, height   int
-	page, selected  int
-	loading         bool
-	statusLoading   bool
-	nextStatus      time.Time
-	ready           bool
-	message         string
-	err             error
-	form            string
-	input           string
-	ruleFlow        flow
-	ruleChoice      int
-	ruleFamily      int
-	licenseID       string
+	connection        ConnectionSettings
+	managementToken   string
+	tokenVisible      bool
+	advancedVisible   bool
+	serverInfo        control.Info
+	memoryStatus      memorylimit.Status
+	memoryLoading     bool
+	localBaseURL      string
+	remember          func(ConnectionSettings) error
+	rememberPending   bool
+	startCommand      func() *exec.Cmd
+	generation        uint64
+	field, outType    int
+	fields            []string
+	drafts            map[string][]string
+	outDraft          config.Outbound
+	editingSourceRule string
+	saving            bool
+	ctx               context.Context
+	locale            i18n.Locale
+	client            *control.Client
+	install           func(context.Context) error
+	installCommand    func() *exec.Cmd
+	cfg               config.Config
+	statuses          []outbound.Status
+	flows             []flow
+	sourceSnapshot    access.SourceSnapshot
+	sourceViewRules   bool
+	targetClient      access.SourceClient
+	targetRule        config.SourceAccessRule
+	width, height     int
+	page, selected    int
+	loading           bool
+	statusLoading     bool
+	sourceLoading     bool
+	nextStatus        time.Time
+	nextSource        time.Time
+	ready             bool
+	message           string
+	messageArgs       []any
+	err               error
+	form              string
+	input             string
+	ruleFlow          flow
+	ruleChoice        int
+	ruleFamily        int
+	licenseID         string
 }
 
 func (m model) Init() tea.Cmd {
 	if m.client == nil {
 		return tick()
 	}
-	return tea.Batch(m.load(), m.loadStatuses(), tick())
+	return tea.Batch(m.load(), m.loadStatuses(), m.loadSources(), tick())
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -167,6 +188,20 @@ func (m model) loadStatuses() tea.Cmd {
 	return func() tea.Msg {
 		statuses, err := m.client.Statuses(m.ctx)
 		return statusesMsg{statuses: statuses, err: err, generation: m.generation}
+	}
+}
+
+func (m model) loadSources() tea.Cmd {
+	return func() tea.Msg {
+		snap, err := m.client.SourceClients(m.ctx)
+		return sourceSnapshotMsg{snapshot: snap, err: err, generation: m.generation}
+	}
+}
+
+func (m model) blockSource(address string) tea.Cmd {
+	return func() tea.Msg {
+		res, err := m.client.BlockSource(m.ctx, m.cfg.Revision, address)
+		return blockSourceMsg{result: res, address: address, err: err, generation: m.generation}
 	}
 }
 
@@ -214,9 +249,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = false
-		// A refresh already in flight must not replace the revision or outbound
-		// choices behind an open editor. Its save must retain conflict protection.
-		if m.form == "rule" || m.form == "outbound" {
+		// A refresh already in flight must not replace the revision or choices behind
+		// an open editor or confirmation dialog.
+		if m.form == "rule" || m.form == "outbound" || m.form == "source_rule" || m.form == "block_source" || m.form == "delete_source_rule" {
 			return m, nil
 		}
 		m.err = msg.err
@@ -228,6 +263,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.page == 1 && m.selected < len(m.cfg.Outbounds) {
 				selectedOutbound = m.cfg.Outbounds[m.selected].ID
+			}
+			var selectedRuleID string
+			if m.page == 2 && m.sourceViewRules && m.selected < len(m.cfg.SourceAccess.Rules) {
+				selectedRuleID = m.cfg.SourceAccess.Rules[m.selected].ID
+			}
+			var selectedClientAddr string
+			if m.page == 2 && !m.sourceViewRules && m.selected < len(m.sourceSnapshot.Clients) {
+				selectedClientAddr = m.sourceSnapshot.Clients[m.selected].Address
 			}
 			m.cfg = msg.cfg
 			m.serverInfo = msg.info
@@ -243,6 +286,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selectedOutbound != "" {
 				for i, o := range m.cfg.Outbounds {
 					if o.ID == selectedOutbound {
+						m.selected = i
+						break
+					}
+				}
+			}
+			if selectedRuleID != "" {
+				for i, r := range m.cfg.SourceAccess.Rules {
+					if r.ID == selectedRuleID {
+						m.selected = i
+						break
+					}
+				}
+			}
+			if selectedClientAddr != "" {
+				for i, c := range m.sourceSnapshot.Clients {
+					if c.Address == selectedClientAddr {
 						m.selected = i
 						break
 					}
@@ -269,29 +328,81 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.err = msg.err
 		}
+	case sourceSnapshotMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.sourceLoading = false
+		if m.form == "source_rule" || m.form == "block_source" || m.form == "delete_source_rule" {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		var selectedClientAddr string
+		if m.page == 2 && !m.sourceViewRules && m.selected < len(m.sourceSnapshot.Clients) {
+			selectedClientAddr = m.sourceSnapshot.Clients[m.selected].Address
+		}
+		m.sourceSnapshot = msg.snapshot
+		if selectedClientAddr != "" {
+			for i, c := range m.sourceSnapshot.Clients {
+				if c.Address == selectedClientAddr {
+					m.selected = i
+					break
+				}
+			}
+		}
+		m.clamp()
+	case blockSourceMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.saving = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.form = ""
+		m.err = nil
+		m.cfg = msg.result.Config
+		m.message = "Source client blocked (%d connection(s) disconnected)."
+		m.messageArgs = []any{msg.result.Disconnected}
+		m.sourceLoading = true
+		m.loading = true
+		return m, tea.Batch(m.load(), m.loadSources())
 	case resultMsg:
 		if msg.generation != m.generation {
 			return m, nil
 		}
 		m.saving = false
-		m.err = msg.err
-		if msg.err == nil {
-			if msg.form != "" && m.form == msg.form {
-				m.form = ""
-				m.fields = nil
-			}
-			m.message = msg.message
-			if msg.form == "memory" {
-				m.memoryLoading = true
-				return m, m.loadMemory(false)
-			}
-			m.loading = true
-			if !m.statusLoading {
-				m.statusLoading = true
-				return m, tea.Batch(m.load(), m.loadStatuses())
-			}
-			return m, m.load()
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
 		}
+		m.err = nil
+		if msg.form != "" && m.form == msg.form {
+			m.form = ""
+			m.fields = nil
+			m.editingSourceRule = ""
+		}
+		m.message = msg.message
+		m.messageArgs = nil
+		if msg.form == "memory" {
+			m.memoryLoading = true
+			return m, m.loadMemory(false)
+		}
+		if msg.form == "source_rule" || msg.form == "delete_source_rule" {
+			m.sourceLoading = true
+			m.loading = true
+			return m, tea.Batch(m.load(), m.loadSources())
+		}
+		m.loading = true
+		if !m.statusLoading {
+			m.statusLoading = true
+			return m, tea.Batch(m.load(), m.loadStatuses())
+		}
+		return m, m.load()
 	case tickMsg:
 		commands := []tea.Cmd{tick()}
 		if !m.loading && m.ready && m.form == "" {
@@ -303,13 +414,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nextStatus = time.Now().Add(10 * time.Second)
 			commands = append(commands, m.loadStatuses())
 		}
+		if m.ready && m.page == 2 && m.form == "" && !m.sourceLoading && time.Now().After(m.nextSource) {
+			m.sourceLoading = true
+			m.nextSource = time.Now().Add(5 * time.Second)
+			commands = append(commands, m.loadSources())
+		}
 		return m, tea.Batch(commands...)
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			m.input = ""
 			return m, tea.Quit
 		}
-		if msg.String() == "ctrl+l" || msg.String() == "L" && m.form != "license" && m.form != "connection" && m.form != "outbound" {
+		if msg.String() == "ctrl+l" || msg.String() == "L" && m.form != "license" && m.form != "connection" && m.form != "outbound" && m.form != "source_rule" {
 			if m.locale == i18n.TraditionalChinese {
 				m.locale = i18n.English
 			} else {
@@ -328,12 +444,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "esc":
 			return m, tea.Quit
 		case "tab", "right":
-			m.page = (m.page + 1) % 3
+			m.page = (m.page + 1) % 4
 			m.selected = 0
 			m.tokenVisible = false
 			m.advancedVisible = false
 		case "shift+tab", "left":
-			m.page = (m.page + 2) % 3
+			m.page = (m.page + 3) % 4
 			m.selected = 0
 			m.tokenVisible = false
 			m.advancedVisible = false
@@ -346,9 +462,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.client != nil && !m.loading {
 				m.loading = true
-				if m.page == 2 && !m.memoryLoading {
+				if m.page == 3 && !m.memoryLoading {
 					m.memoryLoading = true
 					return m, tea.Batch(m.load(), m.loadMemory(false))
+				}
+				if m.page == 2 {
+					m.sourceLoading = true
+					return m, tea.Batch(m.load(), m.loadSources())
 				}
 				return m, m.load()
 			}
@@ -361,15 +481,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "o":
 			m.openConnection()
 		case "t":
-			if m.ready && m.page == 2 && m.managementToken != "" {
+			if m.ready && m.page == 3 && m.managementToken != "" {
 				m.tokenVisible = !m.tokenVisible
 			}
 		case "x":
-			if m.ready && m.page == 2 {
+			if m.ready && m.page == 3 {
 				m.advancedVisible = !m.advancedVisible
 			}
 		case "m":
-			if m.ready && m.page == 2 && !m.memoryLoading {
+			if m.ready && m.page == 3 && !m.memoryLoading {
 				m.memoryLoading = true
 				return m, m.loadMemory(true)
 			}
@@ -382,6 +502,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "+":
 			if m.ready && m.page == 1 {
 				m.openOutbound()
+			} else if m.ready && m.page == 2 {
+				m.openAddSourceRule()
+			}
+		case "e":
+			if m.ready && m.page == 2 && m.sourceViewRules && len(m.cfg.SourceAccess.Rules) > 0 {
+				m.openEditSourceRule(m.cfg.SourceAccess.Rules[m.selected])
+			}
+		case " ":
+			if m.ready && m.page == 2 && m.sourceViewRules && len(m.cfg.SourceAccess.Rules) > 0 {
+				cfg := clone(m.cfg)
+				cfg.SourceAccess.Rules[m.selected].Enabled = !cfg.SourceAccess.Rules[m.selected].Enabled
+				return m, m.apply(cfg)
+			}
+		case "v":
+			if m.ready && m.page == 1 && len(m.cfg.Outbounds) > 0 {
+				return m, m.action(m.cfg.Outbounds[m.selected].ID, "verify", "")
+			} else if m.ready && m.page == 2 {
+				m.sourceViewRules = !m.sourceViewRules
+				m.selected = 0
+				m.clamp()
+			}
+		case "b":
+			if m.ready && m.page == 2 && !m.sourceViewRules && len(m.sourceSnapshot.Clients) > 0 {
+				m.form = "block_source"
+				m.targetClient = m.sourceSnapshot.Clients[m.selected]
+			}
+		case "d":
+			if m.ready && m.page == 1 && len(m.cfg.Outbounds) > 0 {
+				return m, m.action(m.cfg.Outbounds[m.selected].ID, "disconnect", "")
+			} else if m.ready && m.page == 2 && m.sourceViewRules && len(m.cfg.SourceAccess.Rules) > 0 {
+				m.form = "delete_source_rule"
+				m.targetRule = m.cfg.SourceAccess.Rules[m.selected]
 			}
 		case "enter":
 			if m.ready && m.page == 0 && len(m.flows) > 0 {
@@ -399,9 +551,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.ruleFamily = 0
 			}
-		case "c", "d", "v", "n":
+		case "c", "n":
 			if m.ready && m.page == 1 && len(m.cfg.Outbounds) > 0 {
-				actions := map[string]string{"c": "connect", "d": "disconnect", "v": "verify", "n": "register"}
+				actions := map[string]string{"c": "connect", "n": "register"}
 				return m, m.action(m.cfg.Outbounds[m.selected].ID, actions[msg.String()], "")
 			}
 		case "l":
@@ -415,9 +567,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.form = "install"
 			}
 		}
-		if m.ready && m.page == 2 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") && !m.memoryLoading {
+		if m.ready && m.page == 3 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") && !m.memoryLoading {
 			m.memoryLoading = true
 			return m, m.loadMemory(false)
+		}
+		if m.ready && m.page == 2 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") && !m.sourceLoading {
+			m.sourceLoading = true
+			return m, m.loadSources()
 		}
 	}
 	return m, nil
@@ -428,12 +584,34 @@ func (m model) updateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.form = ""
 		m.input = ""
 		m.licenseID = ""
+		m.editingSourceRule = ""
 		m.fields = nil
 		return m, nil
 	}
 	switch m.form {
-	case "connection", "outbound", "memory":
+	case "connection", "outbound", "memory", "source_rule":
 		return m.updateFields(key)
+	case "block_source":
+		if key.String() == "enter" {
+			m.saving = true
+			return m, m.blockSource(m.targetClient.Address)
+		}
+	case "delete_source_rule":
+		if key.String() == "enter" {
+			cfg := clone(m.cfg)
+			var filtered []config.SourceAccessRule
+			for _, r := range cfg.SourceAccess.Rules {
+				if r.ID != m.targetRule.ID {
+					filtered = append(filtered, r)
+				}
+			}
+			cfg.SourceAccess.Rules = filtered
+			m.saving = true
+			return m, func() tea.Msg {
+				_, err := m.client.Apply(m.ctx, cfg)
+				return resultMsg{message: "Source access rule deleted.", err: err, generation: m.generation, form: "delete_source_rule"}
+			}
+		}
 	case "help":
 		if key.String() == "enter" {
 			m.form = ""
@@ -560,6 +738,13 @@ func (m *model) clamp() {
 		count = len(m.cfg.Outbounds)
 	}
 	if m.page == 2 {
+		if m.sourceViewRules {
+			count = len(m.cfg.SourceAccess.Rules)
+		} else {
+			count = len(m.sourceSnapshot.Clients)
+		}
+	}
+	if m.page == 3 {
 		count = 0
 	}
 	if m.selected >= count {
@@ -570,10 +755,104 @@ func (m *model) clamp() {
 	}
 }
 
+func (m *model) openAddSourceRule() {
+	m.form = "source_rule"
+	m.field = 0
+	m.editingSourceRule = ""
+	m.fields = []string{"", "", "allow", "", "true", ""}
+	m.err = nil
+}
+
+func (m *model) openEditSourceRule(r config.SourceAccessRule) {
+	m.form = "source_rule"
+	m.field = 0
+	m.editingSourceRule = r.ID
+	m.fields = []string{r.ID, r.Name, r.Action, strings.Join(r.CIDRs, ", "), fmt.Sprint(r.Enabled), r.Note}
+	m.err = nil
+}
+
+func (m model) sourceVisible(count int) (int, int) {
+	if m.width >= 90 {
+		return m.visible(count)
+	}
+	limit := max(1, (m.height-17)/3)
+	start := max(0, m.selected-limit+1)
+	return start, min(count, start+limit)
+}
+
+func (m model) sourcesView() string {
+	var b strings.Builder
+	if !m.sourceViewRules {
+		fmt.Fprintf(&b, "\n  %s\n\n", m.text("Clients"))
+		if len(m.sourceSnapshot.Clients) == 0 {
+			b.WriteString(m.text("  No client activity observed.\n"))
+			return b.String()
+		}
+		if m.width >= 90 {
+			fmt.Fprintf(&b, "    %s %s %s %s %s\n", cell(m.text("Address"), 20), cell(m.text("Status"), 10), cell(m.text("Active conn"), 14), cell(m.text("Total conn"), 14), m.text("Last seen"))
+		}
+		start, end := m.sourceVisible(len(m.sourceSnapshot.Clients))
+		for i := start; i < end; i++ {
+			c := m.sourceSnapshot.Clients[i]
+			marker := " "
+			if i == m.selected {
+				marker = "›"
+			}
+			status := m.text("Allowed")
+			if c.Decision == "deny" {
+				status = m.text("Denied")
+			}
+			tot := fmt.Sprintf("%d / %d", c.AcceptedConnections, c.DeniedConnections)
+			seen := c.LastSeen.Format("15:04:05")
+			if m.width < 90 {
+				fmt.Fprintf(&b, "  %s %s\n    %s\n    %s\n", marker, cell(c.Address, max(0, m.width-4)), cell(fmt.Sprintf("%s · %d %s", status, c.ActiveConnections, m.text("Active conn")), max(0, m.width-4)), cell(tot+" · "+seen, max(0, m.width-4)))
+			} else {
+				fmt.Fprintf(&b, "  %s %s %s %s %s %s\n", marker, cell(c.Address, 20), cell(status, 10), cell(fmt.Sprint(c.ActiveConnections), 14), cell(tot, 14), seen)
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "\n  %s\n\n", m.text("Rules"))
+		if len(m.cfg.SourceAccess.Rules) == 0 {
+			b.WriteString(m.text("  No source access rules configured.\n"))
+			return b.String()
+		}
+		if m.width >= 90 {
+			fmt.Fprintf(&b, "    %s\n", cell(m.text("Name / ID")+" · "+m.text("Action")+" · "+m.text("Status")+" · "+m.text("IP / CIDR list"), max(0, m.width-4)))
+		}
+		start, end := m.sourceVisible(len(m.cfg.SourceAccess.Rules))
+		for i := start; i < end; i++ {
+			r := m.cfg.SourceAccess.Rules[i]
+			marker := " "
+			if i == m.selected {
+				marker = "›"
+			}
+			name := r.Name
+			if name == "" {
+				name = r.ID
+			}
+			action := m.text("Allowed")
+			if r.Action == "deny" {
+				action = m.text("Denied")
+			}
+			status := m.text("Enabled")
+			if !r.Enabled {
+				status = m.text("Disabled")
+			}
+			cidrs := strings.Join(r.CIDRs, ", ")
+			if m.width < 90 {
+				fmt.Fprintf(&b, "  %s %s\n    %s\n    %s\n", marker, cell(name, max(0, m.width-4)), cell(action+" · "+status, max(0, m.width-4)), cell(cidrs, max(0, m.width-4)))
+			} else {
+				fmt.Fprintf(&b, "  %s %s %s %s %s\n", marker, cell(name, 24), cell(action, 10), cell(status, 12), cell(cidrs, max(0, m.width-53)))
+			}
+		}
+	}
+	return b.String()
+}
+
 func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(m.text("\n  ≈ Rillway   Routing console\n\n"))
-	for i, name := range []string{"Connections", "Outbounds & VPNs", "Service settings"} {
+	for i, name := range []string{"Connections", "Outbounds & VPNs", "Source access", "Service settings"} {
 		name = m.text(name)
 		if m.page == i {
 			fmt.Fprintf(&b, "  [%s]", name)
@@ -612,6 +891,8 @@ func (m model) View() string {
 		case 1:
 			b.WriteString(m.outboundsView())
 		case 2:
+			b.WriteString(m.sourcesView())
+		case 3:
 			fmt.Fprintf(&b, m.text("\n  HTTP proxy    %s\n  SOCKS5        %s\n  Management UI %s\n  PAC           %s\n\n  Use PAC bypass for company services on Mac to keep using local Tailscale.\n  Edit PAC and all routing rules in the Web UI.\n"), m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
 			b.WriteString(m.managementTokenView())
 			b.WriteString(m.memoryView())
@@ -628,7 +909,11 @@ func (m model) View() string {
 	if m.err != nil {
 		fmt.Fprintf(&b, m.text("\n  Error: %s\n"), m.errorText(m.err))
 	} else if m.message != "" {
-		fmt.Fprintf(&b, "\n  %s\n", m.text(m.message))
+		if len(m.messageArgs) > 0 {
+			fmt.Fprintf(&b, "\n  %s\n", i18n.Format(m.locale, catalog, m.message, m.messageArgs...))
+		} else {
+			fmt.Fprintf(&b, "\n  %s\n", m.text(m.message))
+		}
 	}
 	b.WriteString(m.text("\n  Tab Switch tab   ↑↓ Select   a Toggle adaptive routing   r Refresh   q Quit\n"))
 	b.WriteString(m.languageHelp())
@@ -641,6 +926,14 @@ func (m model) View() string {
 		b.WriteString(m.text("  c Connect   d Disconnect   v Verify   n Register   l WARP+ license key\n"))
 	}
 	if m.ready && m.page == 2 {
+		b.WriteString(m.text("  v Toggle Clients / Rules view\n"))
+		if !m.sourceViewRules {
+			b.WriteString(m.text("  b Block selected client\n"))
+		} else {
+			b.WriteString(m.text("  + Add rule   e Edit rule   Space Toggle rule   d Delete rule\n"))
+		}
+	}
+	if m.ready && m.page == 3 {
 		b.WriteString(m.text("  m Edit service memory limit (percent / MiB / GiB)\n"))
 		b.WriteString(m.text("  t Show / hide Web UI token\n"))
 		b.WriteString(m.text("  x Show / hide advanced information\n"))
@@ -746,8 +1039,26 @@ func (m model) visible(count int) (int, int) {
 }
 
 func (m model) formView() string {
-	if m.form == "connection" || m.form == "outbound" || m.form == "memory" {
+	if m.form == "connection" || m.form == "outbound" || m.form == "memory" || m.form == "source_rule" {
 		return m.fieldsView()
+	}
+	if m.form == "block_source" {
+		cidr := m.targetClient.Address + "/32"
+		if ip, err := netip.ParseAddr(m.targetClient.Address); err == nil {
+			cidr = netip.PrefixFrom(ip, ip.BitLen()).String()
+		}
+		res := fmt.Sprintf(m.text("\n  Block source client %s (%s)?\n  This will disconnect %d active connection(s) immediately.\n  Enter Block and disconnect   Esc Cancel\n"), m.targetClient.Address, cidr, m.targetClient.ActiveConnections) + m.languageHelp()
+		if m.err != nil {
+			res += fmt.Sprintf(m.text("\n  Error: %s\n"), m.errorText(m.err))
+		}
+		return res
+	}
+	if m.form == "delete_source_rule" {
+		res := fmt.Sprintf(m.text("\n  Delete source rule %s (%s)?\n  Enter Delete   Esc Cancel\n"), m.targetRule.Name, m.targetRule.ID) + m.languageHelp()
+		if m.err != nil {
+			res += fmt.Sprintf(m.text("\n  Error: %s\n"), m.errorText(m.err))
+		}
+		return res
 	}
 	if m.form == "start" {
 		return m.text("\n  Start the installed local background service?\n  Enter Start   Esc Cancel\n") + m.languageHelp()

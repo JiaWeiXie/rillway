@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"rillway/internal/access"
 	"rillway/internal/config"
 	"strings"
 	"sync"
@@ -22,6 +23,15 @@ import (
 	"time"
 )
 
+func testSourcePolicy(t *testing.T) *access.Policy {
+	t.Helper()
+	p, err := config.CompileSourceAccess(config.Default(t.TempDir()).SourceAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func testServer(t *testing.T, auth bool) *Server {
 	t.Helper()
 	sc := config.Security{}
@@ -30,7 +40,7 @@ func testServer(t *testing.T, auth bool) *Server {
 		sc.ProxyUsername = "user"
 		password = "password"
 	}
-	s, err := New(&net.Dialer{Timeout: time.Second}, sc, password)
+	s, err := New(&net.Dialer{Timeout: time.Second}, sc, testSourcePolicy(t), password)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +169,7 @@ func (blockingDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, e
 // Tunnel providers honor only the context, so plain HTTP forwarding needs the
 // same bounded dial as CONNECT and SOCKS5 instead of hanging the client.
 func TestHTTPProxyBoundsOutboundDial(t *testing.T) {
-	s, err := New(blockingDialer{}, config.Security{}, "")
+	s, err := New(blockingDialer{}, config.Security{}, testSourcePolicy(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,12 +198,12 @@ func TestRemoveConnectionNominatedHeaders(t *testing.T) {
 	}
 }
 
-func TestHTTPAccessAndAuthentication(t *testing.T) {
+func TestHTTPAuthentication(t *testing.T) {
 	s := testServer(t, true)
 	for _, tt := range []struct {
 		remote, auth string
 		code         int
-	}{{"192.0.2.1:1234", "", 403}, {"127.0.0.1:1234", "", 407}, {"127.0.0.1:1234", "Basic " + base64.StdEncoding.EncodeToString([]byte("user:wrong")), 407}} {
+	}{{"127.0.0.1:1234", "", 407}, {"127.0.0.1:1234", "Basic " + base64.StdEncoding.EncodeToString([]byte("user:wrong")), 407}} {
 		request := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
 		request.RemoteAddr = tt.remote
 		request.Header.Set("Proxy-Authorization", tt.auth)
@@ -467,7 +477,7 @@ func (d slowDialer) DialContext(ctx context.Context, network, address string) (n
 // A slow but successful outbound dial must not inherit the client handshake
 // deadline; otherwise the success reply is never written and the client sees EOF.
 func TestSOCKSSlowDialOutlivesHandshakeDeadline(t *testing.T) {
-	s, err := New(slowDialer{delay: 300 * time.Millisecond}, config.Security{}, "")
+	s, err := New(slowDialer{delay: 300 * time.Millisecond}, config.Security{}, testSourcePolicy(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +545,7 @@ func (d loggingDialer) DialContext(ctx context.Context, network, address string)
 // goroutine forever: the reply gets a fresh deadline, cleared only for relay.
 func TestSOCKSReplyWriteHasFreshDeadlineAfterDial(t *testing.T) {
 	log := &deadlineLog{}
-	s, err := New(loggingDialer{log: log}, config.Security{}, "")
+	s, err := New(loggingDialer{log: log}, config.Security{}, testSourcePolicy(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}

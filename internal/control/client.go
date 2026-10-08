@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/i18n"
 	"rillway/internal/memorylimit"
@@ -19,6 +20,11 @@ import (
 	"strings"
 	"time"
 )
+
+type BlockSourceResult struct {
+	Config       config.Config `json:"config"`
+	Disconnected int           `json:"disconnected"`
+}
 
 type Client struct {
 	base  string
@@ -162,4 +168,16 @@ func (c *Client) Statuses(ctx context.Context) ([]outbound.Status, error) {
 
 func (c *Client) Action(ctx context.Context, id, action, value string) error {
 	return c.request(ctx, "POST", "/api/v1/outbounds/"+url.PathEscape(id)+"/"+url.PathEscape(action), map[string]string{"value": value}, nil)
+}
+
+func (c *Client) SourceClients(ctx context.Context) (access.SourceSnapshot, error) {
+	var v access.SourceSnapshot
+	err := c.request(ctx, "GET", "/api/v1/source-clients", nil, &v)
+	return v, err
+}
+
+func (c *Client) BlockSource(ctx context.Context, revision uint64, address string) (BlockSourceResult, error) {
+	var v BlockSourceResult
+	err := c.request(ctx, "POST", "/api/v1/source-clients/block", map[string]any{"revision": revision, "address": address}, &v)
+	return v, err
 }

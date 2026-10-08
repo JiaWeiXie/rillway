@@ -6,7 +6,8 @@
 flowchart LR
   Mac[Mac 瀏覽器 / 系統 Proxy] --> PAC{PAC}
   PAC -->|公司 / 本機| TS[Mac 原有 Tailscale / LAN]
-  PAC -->|公開流量| Proxy[HTTP / CONNECT / SOCKS5]
+  PAC -->|公開流量| Guard{Ingress Guard (IP ACL & 限流)}
+  Guard --> Proxy[HTTP / CONNECT / SOCKS5]
   Proxy --> Engine[規則與自適應]
   Engine --> Direct[Ubuntu 直連]
   Engine --> WARP[官方 WARP Local Proxy]
@@ -50,6 +51,17 @@ CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 
 
 WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用本機 `127.0.0.1:40000` 假冒目的 IP。DNS、傳輸失敗與實際速度不能單靠 IP 城市推論；診斷只列出可實測的資料與回應提供的 CDN header。
 
+## 來源存取控制
+
+Proxy（HTTP／CONNECT 與 SOCKS5）在 TCP socket accept 後、通訊協定解析前進行 pre-parser 入口審查。管理介面與 PAC 則獨立使用各自的授權與監聽邏輯，不經由 Proxy 連線守衛。
+
+- **雙軌 ACL 與設定版本**：`config.json` 版本為 2。`security.allowed_clients` 維持唯讀，作為 HTTPS 管理介面與 HTTP PAC 端點存取的網路邊界；`source_access.rules` 則專門用於 Proxy 連入存取。若版本 2 的 `source_access.rules` 為空，表示明確全域拒絕（deny-all），不再回退至預設或 `security.allowed_clients`。
+- **規則匹配語意**：規則採用前綴二元樹（Trie）評估。各規則定義動作（`allow` 或 `deny`）、啟用狀態與 CIDR 前綴列表。當有多條規則覆蓋同一個 IP 時，以最長前綴（longest/deepest prefix）優先；若在前綴長度完全相同時發生衝突，則以拒絕優先（deny beats allow）；若前綴長度相同且動作一致，則由設定順序中較早啟用的規則決定 `rule_id`。未匹配任何規則的連線預設拒絕（fail closed）。
+- **連線容量與限流防護**：全域最多維持 256 條活躍 Proxy 連線，單一來源 IP 最多維持 64 條連線。超出上限之連線會立即關閉，並將統計計入 `proxy_admission_rejections`。
+- **連線遙測與即時阻斷**：系統在記憶體中維護最多 1,024 筆來源遙測，超過容量時以 LRU 清理，資料在 24 小時無活躍後過期。常規規則編輯（`source_access.rules`）僅影響新連線准入，既有連線不受干擾保持存活；而明確的阻斷來源（Block source）操作具備交易原子性：驗證 revision、附加 /32 或 /128 deny 規則、編譯 ACL、原子存檔，並立即切斷該 IP 所有現存活躍 Proxy 連線（不影響其他來源或管理介面），失敗時保證不中斷任何既有連線。
+- **封鎖輸入與既有規則**：只接受單一 IP，拒絕 CIDR 與 `IP:port`；revision 衝突優先於內容驗證。既有停用規則及備註保持原樣；新增 host deny 規則的 ID 若已使用，依序加上 `-2`、`-3`，不覆寫既有規則。
+- **來源表單與重新載入**：Web 與 TUI 都可編輯 ID、名稱、動作、CIDR、啟用狀態及備註。409／422 保留草稿與原 revision；Web 表單的「重新載入設定」明確重新依 rule ID 載入，避免排序變動造成誤改。TUI 表單開啟期間不以背景快照取代來源資料；窄終端機以 grapheme-aware 來源卡片顯示。
+
 ## 管理 API
 
 所有 `/api/v1` 請求需 `Authorization: Bearer <token>`。Web UI 的 token 只保存在該 tab 的 session storage；URL 不帶秘密。跨來源寫入拒絕。TLS 驗證不可關閉；TUI 可提供信任的 PEM 憑證。
@@ -63,13 +75,15 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 | GET `/api/v1/outbounds` | profile 狀態與可驗證的健康資訊 |
 | DELETE `/api/v1/outbounds/{id}` | `{"revision":CURRENT,"replacement":"OUTBOUND_ID"}`，刪除 profile 並原子替換所有引用；保護 direct、檢查 revision，成功後遞增 |
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |
+| GET `/api/v1/source-clients` | 最近活躍的 Proxy 客戶端遙測快照（上限 1,024 筆，24 小時過期） |
+| POST `/api/v1/source-clients/block` | `{"revision":CURRENT,"address":"IP"}`，原子附加 /32 或 /128 deny 規則、持久化設定並切斷該來源的現存 Proxy 連線 |
 
-設定驗證、provider 建立、私有檔案原子寫入完成後才套用。無效更新與寫入失敗保留原設定；409 表示其他介面已更新版本。listener、ACL、TLS／登入安全設定，以及使用同一 state directory 的執行中 Tailscale 變更，需要在本機修改檔案並重啟 daemon。改變出口時會保留舊 provider，直到既有連線結束才釋放。
+設定驗證、provider 建立、私有檔案原子寫入完成後才套用。無效更新與寫入失敗保留原設定；409 表示其他介面已更新版本。來源存取規則（`source_access.rules`）支援即時更新與 revision 保護，套用後即時影響新連線的准入決策，既有連線保持存活。僅 listener 監聽位址、管理認證與 TLS 安全設定（`security`），以及使用同一 state directory 的執行中 Tailscale 變更，需要在本機修改檔案並重啟 daemon。改變出口時會保留舊 provider，直到既有連線結束才釋放。
 
 ## Web UI 的設定邊界
 
 - PAC 顯示獨立的完整 `http://host:port/proxy.pac` 網址與複製按鈕；這與 PAC 內的 HTTP Proxy 位址不同。Wildcard listener 以目前管理頁的 hostname 組合網址，IPv6 保留方括號。Loopback listener 不會被偽裝成區網可連的服務。
-- Listener、來源限制、管理認證與完整 JSON 為唯讀；在 Server 修改設定後重新啟動。分流、出口、自適應與 PAC 規則使用各自的表單更新。Docker 匯出不會遠端修改另一台主機。
+- Listener、管理認證與完整 JSON 在 Web UI 為唯讀；在 Server 修改設定後重新啟動。分流、出口、自適應、來源存取與 PAC 規則使用各自的介面即時更新。Docker 匯出不會遠端修改另一台主機。
 - `PUT /api/v1/outbounds` 接受 `revision`、`create`、`outbound`，以及選用的 `wireguard_config` 或 `tailscale_auth_key`。秘密只寫入私有檔案，不進入回應或可攜設定內容。新建模式拒絕重複名稱；驗證、同源與認證檢查、revision 衝突均在寫檔之前執行。Runtime 套用衝突／失敗會清除新檔。原始 provider 錯誤保持遮罩。
 - 上傳的設定檔不會執行 Shell hooks，也不能指定檔案寫入位置。狀態目錄仍在使用中的既有 Tailscale，其節點身分與 DNS 欄位顯示唯讀及重啟說明，避免開啟第二個 state owner；啟停和登入操作仍透過既有 API。
 

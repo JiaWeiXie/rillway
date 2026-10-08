@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/i18n"
@@ -103,11 +104,16 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 	}
 	defer func() { _ = r.Close() }()
 	r.restart = make(chan struct{}, 1)
-	p, err := proxy.New(r.Engine, c.Security, password)
+	policy, err := config.CompileSourceAccess(c.SourceAccess)
+	if err != nil {
+		return err
+	}
+	p, err := proxy.New(r.Engine, c.Security, policy, password)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = p.Close() }()
+	r.attachProxy(p)
 	r.Engine.SetDestinationPolicy(p.DestinationPolicy)
 	// Set before any listener starts, so management requests never race it.
 	r.admission = p.AdmissionRejections
@@ -135,12 +141,18 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 	}
 	var jobs []job
 	// Keep management/PAC capacity independent of saturated proxy traffic.
-	controlGuard := proxy.NewConnectionGuard(64, 16, func(peer string) bool {
-		return platform.ClientAllowed(peer, c.Security.AllowedClients)
-	})
+	managementPolicy, err := access.CompileAllowlist(c.Security.AllowedClients)
+	if err != nil {
+		return err
+	}
+	managementAllowed := func(peer string) bool {
+		ip, err := access.ParsePeer(peer)
+		return err == nil && managementPolicy.Decide(ip).Allowed
+	}
+	controlGuard := proxy.NewConnectionGuard(64, 16, managementPolicy.Decide)
 	acl := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if !platform.ClientAllowed(req.RemoteAddr, c.Security.AllowedClients) {
+			if !managementAllowed(req.RemoteAddr) {
 				http.Error(w, "source not allowed", http.StatusForbidden)
 				return
 			}

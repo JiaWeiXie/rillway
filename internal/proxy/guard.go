@@ -5,31 +5,34 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"rillway/internal/access"
+	"sort"
 	"sync"
+	"time"
 )
 
 // ConnectionGuard rejects excess or disallowed sockets before HTTP parsing,
 // TLS handshakes or SOCKS workers allocate resources. A guard can be shared by
 // multiple listeners, so changing protocols cannot evade its budget.
 type ConnectionGuard struct {
-	mu       sync.Mutex
-	clients  map[netip.Addr]int
-	active   int
-	total    int
-	perIP    int
-	allowed  func(string) bool
-	rejected AdmissionRejections
+	mu                   sync.Mutex
+	clients              map[netip.Addr]int
+	ingress              map[*guardedConn]netip.Addr
+	sources              map[netip.Addr]*access.SourceClient
+	active, total, perIP int
+	decide               func(netip.Addr) access.Decision
+	rejected             AdmissionRejections
+	now                  func() time.Time
 }
 
-// AdmissionRejections counts allowed-source sockets closed for capacity since
-// the listeners started. Clients see a reset, not an HTTP or SOCKS5 error.
+// AdmissionRejections counts allowed-source sockets closed for capacity.
 type AdmissionRejections struct {
 	SourceLimit uint64 `json:"source_limit"`
 	TotalLimit  uint64 `json:"total_limit"`
 }
 
-func NewConnectionGuard(total, perIP int, allowed func(string) bool) *ConnectionGuard {
-	return &ConnectionGuard{clients: make(map[netip.Addr]int), total: total, perIP: perIP, allowed: allowed}
+func NewConnectionGuard(total, perIP int, decide func(netip.Addr) access.Decision) *ConnectionGuard {
+	return &ConnectionGuard{clients: make(map[netip.Addr]int), ingress: make(map[*guardedConn]netip.Addr), sources: make(map[netip.Addr]*access.SourceClient), total: total, perIP: perIP, decide: decide, now: time.Now}
 }
 
 func (g *ConnectionGuard) Rejections() AdmissionRejections {
@@ -47,65 +50,177 @@ type guardedListener struct {
 	guard *ConnectionGuard
 }
 
+func (g *ConnectionGuard) decision(ip netip.Addr) access.Decision {
+	if g.decide == nil {
+		return access.Decision{Allowed: true}
+	}
+	return g.decide(ip)
+}
+
+func (g *ConnectionGuard) prune(now time.Time) {
+	for ip, source := range g.sources {
+		if source.ActiveConnections == 0 && now.Sub(source.LastSeen) >= 24*time.Hour {
+			delete(g.sources, ip)
+		}
+	}
+}
+
+func (g *ConnectionGuard) record(ip netip.Addr, now time.Time) *access.SourceClient {
+	if source := g.sources[ip]; source != nil {
+		source.LastSeen = now
+		return source
+	}
+	if len(g.sources) >= 1024 {
+		var oldest netip.Addr
+		var seen time.Time
+		for addr, source := range g.sources {
+			if source.ActiveConnections == 0 && (!oldest.IsValid() || source.LastSeen.Before(seen) || source.LastSeen.Equal(seen) && addr.Compare(oldest) < 0) {
+				oldest = addr
+				seen = source.LastSeen
+			}
+		}
+		if !oldest.IsValid() {
+			return nil
+		}
+		delete(g.sources, oldest)
+	}
+	source := &access.SourceClient{Address: ip.String(), LastSeen: now}
+	g.sources[ip] = source
+	return source
+}
+
 func (l *guardedListener) Accept() (net.Conn, error) {
 	for {
 		c, err := l.Listener.Accept()
 		if err != nil {
 			return nil, err
 		}
-		peer, err := netip.ParseAddrPort(c.RemoteAddr().String())
-		if err != nil || l.guard.allowed != nil && !l.guard.allowed(c.RemoteAddr().String()) {
+		ip, err := access.ParsePeer(c.RemoteAddr().String())
+		if err != nil {
 			_ = c.Close()
 			continue
 		}
-		ip := peer.Addr().Unmap()
 		g := l.guard
 		g.mu.Lock()
-		accepted := g.active < g.total && g.clients[ip] < g.perIP
+		now := g.now().UTC()
+		g.prune(now)
+		source := g.record(ip, now)
+		decision := g.decision(ip)
+		accepted := decision.Allowed && source != nil && g.active < g.total && g.clients[ip] < g.perIP
 		switch {
+		case !decision.Allowed:
+			if source != nil {
+				source.DeniedConnections++
+			}
 		case accepted:
 			g.active++
 			g.clients[ip]++
-		case g.active >= g.total:
-			g.rejected.TotalLimit++
+			source.ActiveConnections++
+			source.AcceptedConnections++
 		default:
-			g.rejected.SourceLimit++
+			if source != nil {
+				source.CapacityRejections++
+			}
+			if g.active >= g.total {
+				g.rejected.TotalLimit++
+			} else {
+				g.rejected.SourceLimit++
+			}
 		}
-		g.mu.Unlock()
 		if !accepted {
+			g.mu.Unlock()
 			_ = c.Close()
 			continue
 		}
-		return &guardedConn{Conn: c, release: func() {
+		wrapped := &guardedConn{Conn: c}
+		wrapped.release = func() {
 			g.mu.Lock()
 			defer g.mu.Unlock()
+			delete(g.ingress, wrapped)
 			g.active--
 			g.clients[ip]--
+			source.ActiveConnections--
 			if g.clients[ip] == 0 {
 				delete(g.clients, ip)
 			}
-		}}, nil
+		}
+		g.ingress[wrapped] = ip
+		g.mu.Unlock()
+		return wrapped, nil
 	}
+}
+
+func (g *ConnectionGuard) SourceClients() access.SourceSnapshot {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := g.now().UTC()
+	g.prune(now)
+	snapshot := access.SourceSnapshot{GeneratedAt: now, Clients: make([]access.SourceClient, 0, len(g.sources))}
+	for ip, source := range g.sources {
+		row := *source
+		d := g.decision(ip)
+		row.Decision = "deny"
+		if d.Allowed {
+			row.Decision = "allow"
+		}
+		row.RuleID = d.RuleID
+		snapshot.Clients = append(snapshot.Clients, row)
+	}
+	sort.Slice(snapshot.Clients, func(i, j int) bool {
+		a, b := snapshot.Clients[i], snapshot.Clients[j]
+		if (a.ActiveConnections > 0) != (b.ActiveConnections > 0) {
+			return a.ActiveConnections > 0
+		}
+		if !a.LastSeen.Equal(b.LastSeen) {
+			return a.LastSeen.After(b.LastSeen)
+		}
+		return a.Address < b.Address
+	})
+	return snapshot
+}
+
+func (g *ConnectionGuard) DisconnectSource(ip netip.Addr) int {
+	ip = ip.WithZone("").Unmap()
+	g.mu.Lock()
+	matches := make([]*guardedConn, 0, g.clients[ip])
+	for c, addr := range g.ingress {
+		if addr == ip {
+			matches = append(matches, c)
+		}
+	}
+	g.mu.Unlock()
+	count := 0
+	for _, c := range matches {
+		if closed, _ := c.closeOnce(); closed {
+			count++
+		}
+	}
+	return count
 }
 
 type guardedConn struct {
 	net.Conn
-	once    sync.Once
-	release func()
+	once     sync.Once
+	release  func()
+	closeErr error
 }
 
-func (c *guardedConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(c.release)
-	return err
+func (c *guardedConn) closeOnce() (bool, error) {
+	closed := false
+	c.once.Do(func() { closed = true; c.closeErr = c.Conn.Close(); c.release() })
+	return closed, c.closeErr
 }
-
+func (c *guardedConn) Close() error { _, err := c.closeOnce(); return err }
 func (c *guardedConn) CloseWrite() error {
 	if half, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return half.CloseWrite()
 	}
 	return c.Close()
 }
+
+func (s *Server) SourceClients() access.SourceSnapshot  { return s.guard.SourceClients() }
+func (s *Server) DisconnectSource(ip netip.Addr) int    { return s.guard.DisconnectSource(ip) }
+func (s *Server) SetSourcePolicy(policy *access.Policy) { s.sourcePolicy.Store(policy) }
 
 // AdmissionRejections reports capacity rejections on the shared HTTP/SOCKS5 budget.
 func (s *Server) AdmissionRejections() AdmissionRejections { return s.guard.Rejections() }

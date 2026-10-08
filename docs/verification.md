@@ -2,6 +2,18 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-08：來源存取控制（Source Access Control）與雙軌 ACL
+
+- **設定版本與雙軌 ACL 隔離**：配置版本升級為 `version: 2`；`security.allowed_clients` 專門守衛 HTTPS 管理介面與 HTTP PAC 端點（唯讀），`source_access.rules` 專門守衛 HTTP／CONNECT／SOCKS5 Proxy 連入。空 rules 意為明確全域拒絕（deny-all），不回退至管理 ACL。`setup` 指令一律同步初始化此兩項 ACL。
+- **Pre-parser 連線守衛與限流**：Proxy listener 在 TCP accept 後即時解析對端 IP 並執行前綴 Trie 匹配（最長前綴優先、等長前綴拒絕優先、動作相同取較早規則）。未匹配一律 fail-closed。全域上限 256 條活躍 Proxy 連線、單一來源上限 64 條；超額連線即時關閉，計入 `proxy_admission_rejections`。
+- **Runtime 交易與即時中斷**：一般規則變更僅影響新連線，現存連線保持存活；`POST /api/v1/source-clients/block` 具備原子性：驗證 revision、附加 /32 或 /128 deny 規則、編譯 ACL、原子存檔，並切斷該來源所有現存活躍 Proxy 連線。實測同連線在 Block 發生後即時觀察到 EOF 關閉，後續連線被即時拒絕。
+- **嵌入式 Web UI**：第 4 個標籤頁「來源存取」，展示客戶端近期遙測快照（上限 1,024 筆，24 小時過期）與規則列表。桌面（1440x900）與手機（375x812）視圖均通過 axe-core 無障礙審查（0 violations），不依賴外部字體或 CDN 素材。
+- **四頁 TUI**：新增第 3 頁來源存取，支援 Clients 與 Rules 視圖切換（`v`）、單鍵封鎖（`b`）、新增／編輯／切換／刪除規則（`+`、`e`、`Space`、`d`）、Esc 取消。支援語言切換保留草稿、列表刷新保留選中項、動態數字雙語翻譯，以及 409 衝突保留對話框。
+- **真實 Daemon 煙霧驗收**：在重建之本機 binary 上啟動 daemon，向 HTTP Proxy 發起真實 CONNECT 連線並取得 `200 Connection Established`。隨後透過驗證之管理 API 呼叫 `GET /api/v1/source-clients`，精確斷言遙測紀錄：`address="127.0.0.1"`, `decision="allow"`, `rule_id="local-clients"`, `active_connections=1`, `accepted_connections>=1`。
+- **品質檢查**：`mise run check`（含 golangci-lint、race detector、shuffle 及測試覆蓋率）全數通過，0 issues。
+
+限制：本次驗收僅使用本機測試 listener、真實本機 socket、瀏覽器 CDP 與 raw PTY 驗證，未涉及外部付費帳號、遠端主機部署或多主機區網網路環境的實測。
+
 ## 2026-10-08：v0.4.1 發布與既有 Linux 服務升級
 
 - 已推送可靠性修正與 changelog，發布 `v0.4.1`。GitHub CI 的 security、Ubuntu／macOS check、cross-build、service-acceptance 五項通過；Release build 重跑 security／race checks／fuzz 並成功產生資產。`release` 環境取得操作人員的明確人工核准後，產生附 provenance 的 draft，驗證後才公開發布。
@@ -337,3 +349,18 @@ Workflow 與下載檔的最終發布紀錄可在 [Actions](https://github.com/Ji
   與 browser profile 清除；部署備份及原始驗證收據只保留於私有位置。未新增
   VPN 註冊、付費 license 套用、全新 VM 首次引導驗收或長時間負載測試；不以
   此次檢查宣稱先前 NAS 記憶體／區網事件的根因已確認。
+
+## 2026-10-08：來源存取控制 review 與修正驗證
+
+- 本輪檢查未提交的 tracked／untracked 變更，Standards／Spec 分開審查；修正封鎖 ID 衝突、revision 驗證順序、錯誤去敏與雙語訊息，以及 Web／TUI 的焦點、草稿、輪詢與來源表單。
+- `mise run build` 與完整 `mise run check` 通過：Lint 0 issues、Go race／shuffle／coverage，以及八項 Python 測試。來源表單逐鍵輸入的回歸測試先重現 KeySpace 遺失，再確認修正後名稱與備註保留空白、CJK 與 emoji。
+- 隔離的 loopback daemon 實測：停用的既有 host deny 規則及備註未改；封鎖交易新增唯一 `-2` 規則並持久化，回報 disconnected=1。同一條持續雙向傳輸的 CONNECT 收到 EOF；下一條 Proxy socket 在解析協定前被拒絕；信任測試 CA 的 authenticated HTTPS 管理 API 仍回 200。另一來源既有 CONNECT 與同一管理 keep-alive 的隔離行為另由真實本機 listener 測試涵蓋；不以單一來源 smoke 宣稱多來源已實測。
+- Web 實際操作確認 409 保留 CJK／emoji 草稿與原 revision，明確重新載入依 rule ID 定位；更新後焦點回到來源控制項，封鎖後回到仍存在的來源列，切換語言重繪確認訊息及成功通知。IP:port 回 422、不回傳原輸入；stale revision 與無效內容並存時回 409。
+- 獨立 Chromium 的 1440×900 英文及 375×812 繁中畫面完成截圖檢查；手機 document width=375，來源資料改用標籤卡片，沒有橫向溢出。axe-core 4.13.0 未確認違規；手機 `glossary` 導覽項因部分被水平捲動區遮住列為人工檢查，實際文字／背景對比 7.94:1。
+- 選擇 2 秒更新週期後，來源輪詢實測間隔約 2 秒；頁籤真正隱藏、離開來源頁及登出各觀察 4.5 秒，來源請求皆為 0。
+- 52 欄的實際 PTY 驗證來源用戶端／規則卡片、六欄表單、CJK／emoji／空白名稱與備註保存；外部更新造成 409 時草稿保留，Ctrl+L 切換語言仍保留輸入，未將衝突草稿寫入設定。終端機 row width 另以 40／52／90 欄及兩種語言測試。
+- Jev 僅執行本機 `--dry-run`，26 筆 findings 的 preview 為 `answers: null`；未送出來源內容，也沒有 live judgment／機率或測試涵蓋判讀。
+- 未執行 `test:live`、部署或發布；未修改主機 VPN／DNS／Proxy 設定或正式服務。測試只使用隔離的本機設定、憑證、權杖、daemon 與 browser profile。
+
+- 本輪建立的測試 daemon、PTY 與 review browser tabs 已停止，隔離的設定／憑證／權杖、throwaway smoke 程式及 Jev payload 已刪除。
+

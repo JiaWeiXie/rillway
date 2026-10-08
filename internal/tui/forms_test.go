@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"rillway/internal/app"
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/i18n"
@@ -244,5 +245,162 @@ func TestLocalServiceListeningOnLANKeepsLocalControls(t *testing.T) {
 	m.connection.BaseURL = "https://192.0.2.11:17892"
 	if m.localTarget() {
 		t.Fatal("switching to another VM kept local controls")
+	}
+}
+
+func TestSourceRuleFormEditingAndValidation(t *testing.T) {
+	m := model{ready: true, page: 2, cfg: config.Default(t.TempDir())}
+	// 按 '+' 開啟表單
+	next, _ := m.Update(key("+"))
+	m = next.(model)
+	if m.form != "source_rule" {
+		t.Fatalf("expected source_rule form, got %s", m.form)
+	}
+	// 嘗試送出空名稱，應觸發驗證錯誤而非儲存
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if cmd != nil || m.err == nil {
+		t.Fatal("blank rule name should produce a validation error")
+	}
+	// 左右鍵切換 action
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab}) // 切到 action
+	next, _ = next.(model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(model)
+	if m.fields[2] != "deny" {
+		t.Fatalf("expected deny action, got %s", m.fields[2])
+	}
+	// 按 Esc 取消，確認 draft fields 被清除
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	if m.form != "" || m.fields != nil {
+		t.Fatal("Esc did not cancel and clear source rule draft")
+	}
+}
+
+func TestSourceRuleDraftPreservedAcrossLanguageSwitch(t *testing.T) {
+	m := model{ready: true, page: 2, width: 100, height: 30}
+	// 1. 開啟新增規則表單
+	next, _ := m.Update(key("+"))
+	m = next.(model)
+	m.field = 1
+
+	// 2. 輸入部分草稿內容
+	for _, r := range "My Custom Office Rule" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(model)
+	}
+	if m.fields[1] != "My Custom Office Rule" {
+		t.Fatalf("draft text not entered: %q", m.fields[1])
+	}
+
+	// 3. 按 Ctrl+L 切換語言至繁體中文
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = next.(model)
+	if m.locale != i18n.TraditionalChinese {
+		t.Fatalf("locale not switched: %s", m.locale)
+	}
+
+	// 4. 驗證草稿資料完整保留，表單依然處於開啟狀態
+	if m.form != "source_rule" || m.fields[1] != "My Custom Office Rule" {
+		t.Fatalf("draft lost on language switch: form=%s, fields=%+v", m.form, m.fields)
+	}
+	viewZH := m.View()
+	if !strings.Contains(viewZH, "新增來源存取規則") || !strings.Contains(viewZH, "My Custom Office Rule") {
+		t.Fatalf("view in Traditional Chinese did not render populated draft: %s", viewZH)
+	}
+	// 驗證動作欄位顯示為「允許」，絕不包含未翻譯的 "allow"
+	if !strings.Contains(viewZH, "允許") || strings.Contains(viewZH, "allow") {
+		t.Fatalf("action should be translated to 允許 without English allow: %s", viewZH)
+	}
+	// 驗證底部按鍵說明為「Enter 儲存」，絕不包含「儲存／連線」或「Save / Connect」
+	if !strings.Contains(viewZH, "Enter 儲存") || strings.Contains(viewZH, "儲存／連線") || strings.Contains(viewZH, "Save / Connect") {
+		t.Fatalf("footer should be Enter 儲存 without 儲存／連線: %s", viewZH)
+	}
+
+	// 4b. 切換 action 為 deny，驗證顯示為「拒絕」，絕不包含 "deny"
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab}) // 切到 action
+	m = next.(model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight}) // 切換為 deny
+	m = next.(model)
+	viewDenyZH := m.View()
+	if !strings.Contains(viewDenyZH, "拒絕") || strings.Contains(viewDenyZH, "deny") {
+		t.Fatalf("action should be translated to 拒絕 without English deny: %s", viewDenyZH)
+	}
+	// 5. 再次切回英文，驗證草稿依然保留
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = next.(model)
+	if m.locale != i18n.English || m.fields[1] != "My Custom Office Rule" {
+		t.Fatalf("draft lost on switching back to English: %+v", m.fields)
+	}
+}
+
+func TestSourceRuleIDNoteSaveAndConflict(t *testing.T) {
+	c := config.Default(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	runtime, err := app.New(t.Context(), path, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	server := httptest.NewServer(control.New(runtime, "token"))
+	defer server.Close()
+	client, err := control.NewClient(server.URL, "token", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := model{ctx: t.Context(), client: client, ready: true, page: 2, cfg: c, width: 100, height: 30}
+	m.openAddSourceRule()
+	values := []string{"office-local", "辦公室 👨‍👩‍👧‍👦", "deny", "192.0.2.0/24", "true", "公司網段備註 😀"}
+	for i, value := range values {
+		m.field = i
+		if i == 2 || i == 4 {
+			continue
+		}
+		for _, r := range value {
+			msg := key(string(r))
+			if r == ' ' {
+				msg = tea.KeyMsg{Type: tea.KeySpace}
+			}
+			next, _ := m.Update(msg)
+			m = next.(model)
+		}
+	}
+	m.field = 2
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(model)
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if cmd == nil || m.err != nil {
+		t.Fatalf("valid ID and note cannot save: %v", m.err)
+	}
+	result := cmd().(resultMsg)
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	saved := runtime.Config()
+	rule := saved.SourceAccess.Rules[len(saved.SourceAccess.Rules)-1]
+	if rule.ID != values[0] || rule.Name != values[1] || rule.Note != values[5] || rule.Action != "deny" || !rule.Enabled {
+		t.Fatalf("source fields lost: %+v", rule)
+	}
+	m.cfg = saved
+	m.saving = false
+	m.openEditSourceRule(rule)
+	m.field = 5
+	next, _ = m.Update(key(" updated"))
+	m = next.(model)
+	newer := runtime.Config()
+	newer.SourceAccess.Rules[0].Note = "external edit"
+	if err := runtime.Apply(t.Context(), newer); err != nil {
+		t.Fatal(err)
+	}
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	next, _ = m.Update(cmd())
+	m = next.(model)
+	var conflict *control.APIError
+	if !errors.As(m.err, &conflict) || conflict.Status != http.StatusConflict || m.form != "source_rule" || m.cfg.Revision != saved.Revision || m.fields[5] != values[5]+" updated" {
+		t.Fatalf("conflict discarded note or revision: %+v %v", m.fields, m.err)
 	}
 }
