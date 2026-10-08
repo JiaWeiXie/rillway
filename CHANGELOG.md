@@ -2,11 +2,11 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
-## Unreleased
+## 0.4.1 - 2026-10-08
 
-### Documentation
+### Fixes
 
-- **release:** prepare v0.4.0 changelog
+- **proxy:** preserve connection budgets and adaptive routes
 ## 0.4.0 - 2026-10-06
 
 ### Features
@@ -16,6 +16,10 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Fixes
 
 - **ci:** focus dependency digest on direct updates
+
+### Documentation
+
+- **release:** prepare v0.4.0 changelog
 ## 0.3.1 - 2026-10-05
 
 ### Fixes
