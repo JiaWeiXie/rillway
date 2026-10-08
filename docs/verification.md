@@ -9,7 +9,7 @@
 - 四個 binary 與 operations Skill 的 checksum、來源 commit／tag／Release workflow provenance 均通過，拒絕 self-hosted runner；五個資產均確認具有已核准第二次 publish 的 provenance。重建後九個資產的 digest 與已驗證本機檔案一致。授權文件與來源一致，Skill 七個允許檔案的 CRC 通過；macOS arm64 binary 實際回報 `v0.5.0`。
 - 在既有 Ubuntu 26.04 amd64 服務上，只原子替換已驗證 binary，未重跑 setup／service install／memory-install。v1 設定的部署前唯讀 plan 精確回報 `version`、`source_access` 兩項預期遷移；部署後 API 為 v2，對原設定的 plan 為 `would_change=false`。磁碟上的 v1 設定內容與 revision 保留，沒有因啟動或驗收而寫入遷移結果。
 - 執行中 binary 的 SHA-256 與發布資產一致；服務為 `active/running`、維持 enabled 與低權限帳號，`NRestarts=0`。既有設定、管理 token／TLS、服務 unit／drop-in 的 hash、owner、mode 與 CPU／記憶體限制保持不變。
-- 可信 CA 驗證的 HTTPS 管理 API 回報新版；未驗證的 config 與 source-clients 請求均回 `401`。agent schema／status／未確認 mutation 拒絕、PAC 與 CLI PAC 一致性、記憶體管理唯讀介面與既有 helper socket 通過。HTTP 轉發、HTTPS CONNECT、SOCKS5 remote DNS、GitHub CDN 小型請求均單次通過；来源遙測記錄實際 Proxy 請求、allow 判定、匹配規則與計數。
+- 可信 CA 驗證的 HTTPS 管理 API 回報新版；未驗證的 config 與 source-clients 請求均回 `401`。agent schema／status／未確認 mutation 拒絕、PAC 與 CLI PAC 一致性、記憶體管理唯讀介面與既有 helper socket 通過。HTTP 轉發、HTTPS CONNECT、SOCKS5 remote DNS、GitHub CDN 小型請求均單次通過；來源遙測記錄實際 Proxy 請求、allow 判定、匹配規則與計數。
 - 已在正式服務登入並視覺確認 Source access 頁、版本、既有規則與 client activity，來源 API 回 `200`，沒有服務錯誤橫幅。自簽憑證使用限於驗收瀏覽器的暫時例外；此視覺檢查不代替前述 CA 驗證。驗收後登出、移除例外並關閉瀏覽器，未提交正式畫面或營運資料。
 - 停止服務後建立一致 state archive，確認其中設定符合升級前 hash；root 擁有的備份目錄為 `0700`、archive 為 `0600`，舊 binary 可執行並回報 `v0.4.1`。流程具備失敗回復；首次 preflight 停止於未中斷舊服務的階段，修正私有驗收工具的遷移預期後成功升級，沒有測試性中斷正式服務來演練回滾。遠端上傳暫存已移除，私有收據與備份不進 Git。
 
