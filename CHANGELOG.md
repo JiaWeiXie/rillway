@@ -2,11 +2,28 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## 0.5.0 - 2026-10-08
+
+### Features
+
+- **proxy:** add live source access control
+
+### Fixes
+
+- **network:** harden proxy and tunnel reliability
+
+### Documentation
+
+- **verification:** record v0.4.1 release and deployment acceptance
 ## 0.4.1 - 2026-10-08
 
 ### Fixes
 
 - **proxy:** preserve connection budgets and adaptive routes
+
+### Documentation
+
+- **release:** prepare v0.4.1 changelog
 ## 0.4.0 - 2026-10-06
 
 ### Features
