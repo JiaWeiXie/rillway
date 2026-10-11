@@ -1,12 +1,12 @@
 module rillway
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 	tailscale.com v1.104.0
 )
