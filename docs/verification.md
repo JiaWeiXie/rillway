@@ -2,7 +2,7 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
-## 2026-10-12：多瀏覽器容量、保存競態與發布前檢查
+## 2026-10-12：v0.5.1 發布、正式服務升級與基本驗收
 
 - **現行資源邊界**：部署 VM 為 4 vCPU、約 5.28 GiB RAM；Rillway 的實際 systemd 配額維持 1 CPU、MemoryMax 1 GiB、MemoryHigh 768 MiB、Go runtime 軟預算 704 MiB。程序 FD 軟／硬限制為 524,287／524,288，觀察當下 FD 136、RSS 約 70 MiB、cgroup 約 25 MiB，沒有 OOM 或自動重啟。這是讀取當下的狀態，並非容量壓測。
 - **設定與測量的區別**：預設保留既有總上限 256，將單一來源預設由 64 調為 256，讓同一 IP 可使用既有全域預算；設定整數上界維持 65,536，兩項都可手動修改。既有明確值保持不變；總上限省略或 0 使用預設，來源上限省略或 0 使用 256 與有效總上限中較小者。既有壓測只確認 48 條混合串流與 128 個短連線 workers，未確立最高安全連線數，因此不在正式部署中以未驗證的 4,096／2,048 取代既有總預算，也不把設定上界宣稱為正式 VM 的最高安全容量。
@@ -11,8 +11,12 @@
 - **同 IP 多分頁實驗**：在最終 256／256 預設下，三個不同程序／獨立 Chrome profiles 各開 20 個本機頁面，共 60 分頁，經同一 SOCKS listener／來源 IP 載入 HTML、CSS 與 JavaScript；60 頁均確認 JavaScript 已執行、stylesheet 存在且樣式生效，沒有失敗的必要資源，來源／總容量拒絕增量均為 0。關閉所有 profiles 後活躍數歸零。這是輕量合成頁面，不能取代三種瀏覽器、外部網站或原機正常 profile 的驗收。
 - **保存後刷新競態**：先以回歸測試重現舊來源 polling 尚未完成時 Save 提早結束。修正後共用 polling Promise，保存會等待舊請求完成，再取得保存後的快照。真實 Chrome 攔截舊快照時，API 已寫入 12／8、表單仍維持 saving；釋放舊快照後確實再發一次來源請求，摘要更新為 0／12 與 0／8，才顯示成功。EN／zh-Hant DOM 確認容量拒絕與政策拒絕分開，語言切換後仍顯示保存的上限。此次新的 screenshot／CDP capture 超時，不冒充新的視覺證據；既有布局畫面檢查見下節。
 - **品質與安全**：更新 Go 至 1.27.2、`golang.org/x/net` 至 0.60.0 並刷新嵌入 notices，修復掃描發現的可達漏洞。最終 `mise run check` 通過 lint、race、shuffle、coverage 與 8 個 Python tests，`mise run build` 通過；`mise run security` 通過公開來源、歷史 secrets、四平台 govulncheck 與 actionlint。四平台可達漏洞及匯入 package 漏洞均為 0；required module 仍列出 `golang.org/x/crypto/openpgp` 的 GO-2026-5932，該 package 未被匯入、沒有上游修復版本，不宣稱 module 無任何弱點。
+- **v0.5.1 發布與 Provenance 驗證**：完成版本標籤與變更紀錄，通過 GitHub Actions CI 與 release 工作流程，發布正式 Release `v0.5.1`。下載之 Linux amd64 二進位檔經由 `sha256sum --check SHA256SUMS` 校驗一致，並以 `gh attestation verify` 確認符合 SLSA build provenance 簽署。
+- **正式服務升級與原子替換**：在部署主機停止服務期間，建立包含設定、憑證、systemd drop-in 與符號連結中繼資料的完整 state 備份封存（權限 0600）；將新二進位檔原子替換至 `/usr/local/lib/rillway/rillway`，程序中斷時間小於 1 秒（`STOP_TO_HEALTHY_SECONDS=0`）。服務重啟後回報 `active (running)`、`NRestarts=0`，執行中程序之 `/proc/$pid/exe` 雜湊符合發布檔。
+- **升級驗收與現行設定狀態**：可信 CA 驗證的 HTTPS 管理端點確認版本回報 `v0.5.1`；未認證管理 API 請求回傳 401；PAC 正常；Web UI 靜態資源包含容量設定表單與計數欄位。HTTP 轉發、HTTPS CONNECT 與 SOCKS5 代理功能正常。初始部署時保留既有省略設定，生效容量為預設 256 總容量／256 單一來源；後續管理端點驗證支援手動設定（現行設定包含手動配置之容量，revision 32，上限為 2,048 總容量／512 單一來源），遙測顯示多來源共有 45 條活躍連線，各來源容量拒絕與全域容量拒絕均為 0。
+- **目標網址代表性載入**：以 Chrome 經由線上 SOCKS 代理實際訪問回報之 `https://github.com/` 與 Google 技術文章網址，主文件與所有必要次資源（CSS、JavaScript 與圖片）全部成功載入（失敗請求數為 0），遙測記錄顯示來源活躍連線正常且容量／政策拒絕增量為 0。
 
-限制：原始受影響 Mac 的正常 Chrome profile 尚未取得；上述本機合成負載及另一台 Mac 的前測，不構成原機修補前後驗收。發布與正式替換的結果須另外以實際驗收記錄，不以測試成功推定部署完成。
+限制：原始受影響 Mac 的日常 Chrome profile 歷史資料未直接進行前測與後測對照；本次驗收是以操作端 Chrome 透過線上代理確認目標頁面、必要資源與遙測計數運作正常。
 
 ## 2026-10-11：連線容量與 macOS SOCKS 瀏覽調查
 
