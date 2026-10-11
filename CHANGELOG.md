@@ -2,6 +2,21 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## 0.5.1 - 2026-10-11
+
+### Fixes
+
+- **proxy:** configure shared connection capacity and expose rejections
+
+### Documentation
+
+- **verification:** record v0.5.0 release and deployment
+- **verification:** use Traditional Chinese source terminology
+
+### Maintenance
+
+- **deps:** patch Go and x/net security vulnerabilities
+- **release:** prepare v0.5.1 release notes
 ## 0.5.0 - 2026-10-08
 
 ### Features
@@ -15,6 +30,7 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Documentation
 
 - **verification:** record v0.4.1 release and deployment acceptance
+- **release:** prepare v0.5.0 changelog
 ## 0.4.1 - 2026-10-08
 
 ### Fixes
