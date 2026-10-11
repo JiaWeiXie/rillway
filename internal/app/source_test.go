@@ -41,7 +41,7 @@ func TestRuntimeBlockSourceTransactionAndStreamSurvival(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := proxy.New(r.Engine, c.Security, initialPolicy, "")
+	p, err := proxy.New(r.Engine, c.Security, c.ConnectionLimits, initialPolicy, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +188,14 @@ func TestRuntimeBlockSourceTransactionAndStreamSurvival(t *testing.T) {
 	if _, _, err := r.BlockSource(t.Context(), before.Revision, "127.0.0.1"); err == nil {
 		t.Fatal("block succeeded without persistence")
 	}
-	if err := r.Apply(t.Context(), before); err == nil {
+	capacityBefore := p.Capacity()
+	candidate := clone(before)
+	candidate.ConnectionLimits = config.ConnectionLimits{MaxConnections: 1, MaxConnectionsPerSource: 1}
+	if err := r.Apply(t.Context(), candidate); err == nil {
 		t.Fatal("update succeeded without persistence")
+	}
+	if p.Capacity() != capacityBefore {
+		t.Fatal("failed persistence changed live admission limits")
 	}
 	if got := r.Config(); !reflect.DeepEqual(got, before) {
 		t.Fatal("failed save changed runtime configuration")
@@ -254,7 +260,7 @@ func TestBlockSourceInputRevisionAndDisabledRule(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			p, err := proxy.New(r.Engine, c.Security, policy, "")
+			p, err := proxy.New(r.Engine, c.Security, c.ConnectionLimits, policy, "")
 			if err != nil {
 				t.Fatal(err)
 			}

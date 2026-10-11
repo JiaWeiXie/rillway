@@ -36,22 +36,34 @@ type Decision struct {
 	RuleID  string
 }
 
+// ConnectionCapacity describes the global and per-source connection capacity and rejections.
+type ConnectionCapacity struct {
+	ActiveConnections       int    `json:"active_connections"`
+	MaxConnections          int    `json:"max_connections"`
+	MaxConnectionsPerSource int    `json:"max_connections_per_source"`
+	SourceLimit             uint64 `json:"source_limit"`
+	TotalLimit              uint64 `json:"total_limit"`
+}
+
 // SourceSnapshot captures recent source activity for telemetry and management.
 type SourceSnapshot struct {
-	GeneratedAt time.Time      `json:"generated_at"`
-	Clients     []SourceClient `json:"clients"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Capacity    ConnectionCapacity `json:"capacity"`
+	Clients     []SourceClient     `json:"clients"`
 }
 
 // SourceClient describes the state and connection metrics of an observed source.
 type SourceClient struct {
-	Address             string    `json:"address"`
-	Decision            string    `json:"decision"`
-	RuleID              string    `json:"rule_id,omitempty"`
-	ActiveConnections   int       `json:"active_connections"`
-	AcceptedConnections uint64    `json:"accepted_connections"`
-	DeniedConnections   uint64    `json:"denied_connections"`
-	CapacityRejections  uint64    `json:"capacity_rejections"`
-	LastSeen            time.Time `json:"last_seen"`
+	Address               string    `json:"address"`
+	Decision              string    `json:"decision"`
+	RuleID                string    `json:"rule_id,omitempty"`
+	ActiveConnections     int       `json:"active_connections"`
+	AcceptedConnections   uint64    `json:"accepted_connections"`
+	DeniedConnections     uint64    `json:"denied_connections"`
+	CapacityRejections    uint64    `json:"capacity_rejections"`
+	SourceLimitRejections uint64    `json:"source_limit_rejections"`
+	TotalLimitRejections  uint64    `json:"total_limit_rejections"`
+	LastSeen              time.Time `json:"last_seen"`
 }
 
 type trieNode struct {

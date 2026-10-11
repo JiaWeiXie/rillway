@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"rillway/internal/access"
+	"rillway/internal/config"
 	"sort"
 	"sync"
 	"time"
@@ -41,6 +42,18 @@ func (g *ConnectionGuard) Rejections() AdmissionRejections {
 	return g.rejected
 }
 
+func (g *ConnectionGuard) Capacity() access.ConnectionCapacity {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return access.ConnectionCapacity{
+		ActiveConnections:       g.active,
+		MaxConnections:          g.total,
+		MaxConnectionsPerSource: g.perIP,
+		SourceLimit:             g.rejected.SourceLimit,
+		TotalLimit:              g.rejected.TotalLimit,
+	}
+}
+
 func (g *ConnectionGuard) Wrap(l net.Listener) net.Listener {
 	return &guardedListener{Listener: l, guard: g}
 }
@@ -65,12 +78,24 @@ func (g *ConnectionGuard) prune(now time.Time) {
 	}
 }
 
-func (g *ConnectionGuard) record(ip netip.Addr, now time.Time) *access.SourceClient {
-	if source := g.sources[ip]; source != nil {
-		source.LastSeen = now
-		return source
+type idleCandidate struct {
+	addr netip.Addr
+	seen time.Time
+}
+
+// evictIdleLocked removes oldest idle source records until len(g.sources) <= target,
+// returning true if the target bound was achieved. Active connection rows are never evicted.
+//
+// Telemetry caveat: when connection limits are lowered, idle source records exceeding
+// the new capacity bound are evicted (oldest last-seen first) to keep metadata storage
+// bounded. Evicted idle records lose their per-source telemetry counters until the source
+// reconnects, while active connections and guard-level cumulative rejection counters are preserved.
+func (g *ConnectionGuard) evictIdleLocked(target int) bool {
+	if len(g.sources) <= target {
+		return true
 	}
-	if len(g.sources) >= 1024 {
+	excess := len(g.sources) - target
+	if excess == 1 {
 		var oldest netip.Addr
 		var seen time.Time
 		for addr, source := range g.sources {
@@ -80,13 +105,66 @@ func (g *ConnectionGuard) record(ip netip.Addr, now time.Time) *access.SourceCli
 			}
 		}
 		if !oldest.IsValid() {
-			return nil
+			return false
 		}
 		delete(g.sources, oldest)
+		return true
+	}
+
+	var idles []idleCandidate
+	for addr, source := range g.sources {
+		if source.ActiveConnections == 0 {
+			idles = append(idles, idleCandidate{addr: addr, seen: source.LastSeen})
+		}
+	}
+	if len(idles) == 0 {
+		return false
+	}
+	if len(idles) <= excess {
+		for _, item := range idles {
+			delete(g.sources, item.addr)
+		}
+		return len(g.sources) <= target
+	}
+	sort.Slice(idles, func(i, j int) bool {
+		if !idles[i].seen.Equal(idles[j].seen) {
+			return idles[i].seen.Before(idles[j].seen)
+		}
+		return idles[i].addr.Compare(idles[j].addr) < 0
+	})
+	for i := range excess {
+		delete(g.sources, idles[i].addr)
+	}
+	return true
+}
+
+func (g *ConnectionGuard) record(ip netip.Addr, now time.Time) *access.SourceClient {
+	if source := g.sources[ip]; source != nil {
+		source.LastSeen = now
+		return source
+	}
+	limit := max(1024, g.total)
+	if len(g.sources) >= limit {
+		if !g.evictIdleLocked(limit - 1) {
+			return nil
+		}
 	}
 	source := &access.SourceClient{Address: ip.String(), LastSeen: now}
 	g.sources[ip] = source
 	return source
+}
+
+// ApplyConnectionLimits updates total and per-source connection capacity limits.
+// It applies the effective limits (substituting zero values with defaults) under lock,
+// preserves existing connections and cumulative counters, and evicts idle source
+// metadata records if over the new capacity bound.
+func (g *ConnectionGuard) ApplyConnectionLimits(limits config.ConnectionLimits) {
+	eff := limits.Effective()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.total = eff.MaxConnections
+	g.perIP = eff.MaxConnectionsPerSource
+	g.evictIdleLocked(max(1024, g.total))
 }
 
 func (l *guardedListener) Accept() (net.Conn, error) {
@@ -117,14 +195,21 @@ func (l *guardedListener) Accept() (net.Conn, error) {
 			g.clients[ip]++
 			source.ActiveConnections++
 			source.AcceptedConnections++
+		case g.active >= g.total:
+			g.rejected.TotalLimit++
+			if source != nil {
+				source.CapacityRejections++
+				source.TotalLimitRejections++
+			}
+		case g.clients[ip] >= g.perIP:
+			g.rejected.SourceLimit++
+			if source != nil {
+				source.CapacityRejections++
+				source.SourceLimitRejections++
+			}
 		default:
 			if source != nil {
 				source.CapacityRejections++
-			}
-			if g.active >= g.total {
-				g.rejected.TotalLimit++
-			} else {
-				g.rejected.SourceLimit++
 			}
 		}
 		if !accepted {
@@ -155,7 +240,17 @@ func (g *ConnectionGuard) SourceClients() access.SourceSnapshot {
 	defer g.mu.Unlock()
 	now := g.now().UTC()
 	g.prune(now)
-	snapshot := access.SourceSnapshot{GeneratedAt: now, Clients: make([]access.SourceClient, 0, len(g.sources))}
+	snapshot := access.SourceSnapshot{
+		GeneratedAt: now,
+		Capacity: access.ConnectionCapacity{
+			ActiveConnections:       g.active,
+			MaxConnections:          g.total,
+			MaxConnectionsPerSource: g.perIP,
+			SourceLimit:             g.rejected.SourceLimit,
+			TotalLimit:              g.rejected.TotalLimit,
+		},
+		Clients: make([]access.SourceClient, 0, len(g.sources)),
+	}
 	for ip, source := range g.sources {
 		row := *source
 		d := g.decision(ip)
@@ -222,11 +317,18 @@ func (s *Server) SourceClients() access.SourceSnapshot  { return s.guard.SourceC
 func (s *Server) DisconnectSource(ip netip.Addr) int    { return s.guard.DisconnectSource(ip) }
 func (s *Server) SetSourcePolicy(policy *access.Policy) { s.sourcePolicy.Store(policy) }
 
+func (s *Server) Capacity() access.ConnectionCapacity { return s.guard.Capacity() }
+
 // AdmissionRejections reports capacity rejections on the shared HTTP/SOCKS5 budget.
 func (s *Server) AdmissionRejections() AdmissionRejections { return s.guard.Rejections() }
 
+// ApplyConnectionLimits updates connection limits on the shared connection guard.
+func (s *Server) ApplyConnectionLimits(limits config.ConnectionLimits) {
+	s.guard.ApplyConnectionLimits(limits)
+}
+
 // GuardListener registers a proxy endpoint for loop prevention and shares the
-// HTTP/SOCKS admission budget: 256 sockets total, 64 per source IP.
+// configured HTTP/SOCKS admission budget across all guarded listeners.
 func (s *Server) GuardListener(l net.Listener) net.Listener {
 	if guarded, ok := l.(*guardedListener); ok && guarded.guard == s.guard {
 		return l

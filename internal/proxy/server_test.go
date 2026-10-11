@@ -40,7 +40,7 @@ func testServer(t *testing.T, auth bool) *Server {
 		sc.ProxyUsername = "user"
 		password = "password"
 	}
-	s, err := New(&net.Dialer{Timeout: time.Second}, sc, testSourcePolicy(t), password)
+	s, err := New(&net.Dialer{Timeout: time.Second}, sc, config.ConnectionLimits{}, testSourcePolicy(t), password)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func (blockingDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, e
 // Tunnel providers honor only the context, so plain HTTP forwarding needs the
 // same bounded dial as CONNECT and SOCKS5 instead of hanging the client.
 func TestHTTPProxyBoundsOutboundDial(t *testing.T) {
-	s, err := New(blockingDialer{}, config.Security{}, testSourcePolicy(t), "")
+	s, err := New(blockingDialer{}, config.Security{}, config.ConnectionLimits{}, testSourcePolicy(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +477,7 @@ func (d slowDialer) DialContext(ctx context.Context, network, address string) (n
 // A slow but successful outbound dial must not inherit the client handshake
 // deadline; otherwise the success reply is never written and the client sees EOF.
 func TestSOCKSSlowDialOutlivesHandshakeDeadline(t *testing.T) {
-	s, err := New(slowDialer{delay: 300 * time.Millisecond}, config.Security{}, testSourcePolicy(t), "")
+	s, err := New(slowDialer{delay: 300 * time.Millisecond}, config.Security{}, config.ConnectionLimits{}, testSourcePolicy(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func (d loggingDialer) DialContext(ctx context.Context, network, address string)
 // goroutine forever: the reply gets a fresh deadline, cleared only for relay.
 func TestSOCKSReplyWriteHasFreshDeadlineAfterDial(t *testing.T) {
 	log := &deadlineLog{}
-	s, err := New(loggingDialer{log: log}, config.Security{}, testSourcePolicy(t), "")
+	s, err := New(loggingDialer{log: log}, config.Security{}, config.ConnectionLimits{}, testSourcePolicy(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,4 +641,60 @@ func FuzzSOCKSAddress(f *testing.F) {
 			t.Fatalf("invalid parsed address %q", address)
 		}
 	})
+}
+
+func TestNewConstructorValidation(t *testing.T) {
+	dialer := &net.Dialer{Timeout: time.Second}
+	sec := config.Security{}
+
+	// dialer nil
+	if _, err := New(nil, sec, config.ConnectionLimits{}, nil, ""); err == nil {
+		t.Fatal("expected error for nil dialer")
+	}
+
+	// mismatched credentials
+	if _, err := New(dialer, config.Security{ProxyUsername: "user"}, config.ConnectionLimits{}, nil, ""); err == nil {
+		t.Fatal("expected error for missing password")
+	}
+	if _, err := New(dialer, sec, config.ConnectionLimits{}, nil, "password"); err == nil {
+		t.Fatal("expected error for missing username")
+	}
+
+	// credentials > 255 bytes
+	longCred := strings.Repeat("a", 256)
+	if _, err := New(dialer, config.Security{ProxyUsername: longCred}, config.ConnectionLimits{}, nil, "pass"); err == nil {
+		t.Fatal("expected error for username > 255 bytes")
+	}
+
+	// negative limits
+	if _, err := New(dialer, sec, config.ConnectionLimits{MaxConnections: -1}, nil, ""); err == nil {
+		t.Fatal("expected error for negative max_connections")
+	}
+	if _, err := New(dialer, sec, config.ConnectionLimits{MaxConnectionsPerSource: -1}, nil, ""); err == nil {
+		t.Fatal("expected error for negative max_connections_per_source")
+	}
+
+	// > 65536
+	if _, err := New(dialer, sec, config.ConnectionLimits{MaxConnections: 65537}, nil, ""); err == nil {
+		t.Fatal("expected error for max_connections > 65536")
+	}
+	if _, err := New(dialer, sec, config.ConnectionLimits{MaxConnectionsPerSource: 65537}, nil, ""); err == nil {
+		t.Fatal("expected error for max_connections_per_source > 65536")
+	}
+
+	// per-source > total
+	if _, err := New(dialer, sec, config.ConnectionLimits{MaxConnections: 10, MaxConnectionsPerSource: 20}, nil, ""); err == nil {
+		t.Fatal("expected error for per-source > total")
+	}
+
+	// valid custom limits
+	s, err := New(dialer, sec, config.ConnectionLimits{MaxConnections: 500, MaxConnectionsPerSource: 100}, nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error for valid limits: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	cap := s.Capacity()
+	if cap.MaxConnections != 500 || cap.MaxConnectionsPerSource != 100 {
+		t.Fatalf("unexpected capacity limits: %+v", cap)
+	}
 }

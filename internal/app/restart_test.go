@@ -15,6 +15,7 @@ import (
 
 func TestWebRestartReloadsSavedConfigAndReleasesListeners(t *testing.T) {
 	c := config.Default(t.TempDir())
+	c.ConnectionLimits = config.ConnectionLimits{MaxConnections: 512, MaxConnectionsPerSource: 128}
 	c.Listeners = config.Listeners{HTTP: freeAddress(t), SOCKS5: freeAddress(t), Admin: freeAddress(t), PAC: freeAddress(t)}
 	c.PAC.ProxyAddress = c.Listeners.HTTP
 	path := filepath.Join(t.TempDir(), "config.json")
@@ -59,8 +60,13 @@ func TestWebRestartReloadsSavedConfigAndReleasesListeners(t *testing.T) {
 	// loads an independently saved valid configuration without any privileges.
 	c.Revision++
 	c.PAC.BypassDomains = append(c.PAC.BypassDomains, config.PACBypass{Value: "corp.example", Enabled: true})
+	c.ConnectionLimits = config.ConnectionLimits{MaxConnections: 8, MaxConnectionsPerSource: 4}
 	if err := config.Save(path, c); err != nil {
 		t.Fatal(err)
+	}
+	before, err := client.SourceClients(ctx)
+	if err != nil || before.Capacity.MaxConnections != 512 || before.Capacity.MaxConnectionsPerSource != 128 {
+		t.Fatalf("saved limits became effective before restart: %+v, %v", before.Capacity, err)
 	}
 	if err := client.Restart(ctx); err != nil {
 		t.Fatal(err)
@@ -69,6 +75,10 @@ func TestWebRestartReloadsSavedConfigAndReleasesListeners(t *testing.T) {
 	got, err := client.Config(ctx)
 	if err != nil || got.Revision != c.Revision || len(got.PAC.BypassDomains) != len(c.PAC.BypassDomains) {
 		t.Fatalf("restart did not reload saved settings: %v", err)
+	}
+	after, err := client.SourceClients(ctx)
+	if err != nil || got.ConnectionLimits != c.ConnectionLimits || after.Capacity.MaxConnections != 8 || after.Capacity.MaxConnectionsPerSource != 4 || after.Capacity.ActiveConnections != 0 {
+		t.Fatalf("restart did not apply limits: %+v, %v", after.Capacity, err)
 	}
 	// The prior token still works and a second restart uses the same listeners.
 	if err := client.Restart(ctx); err != nil {

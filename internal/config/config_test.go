@@ -761,3 +761,87 @@ func TestExampleConfigValidates(t *testing.T) {
 		t.Fatalf("failed to compile source access from examples/config.json: %v", err)
 	}
 }
+
+func TestConnectionLimitsValidation(t *testing.T) {
+	c := Default(t.TempDir())
+	for _, tc := range []struct {
+		name    string
+		limits  ConnectionLimits
+		invalid bool
+	}{
+		{"unset", ConnectionLimits{}, false},
+		{"negative-total", ConnectionLimits{-1, 10}, true},
+		{"negative-source", ConnectionLimits{10, -1}, true},
+		{"total-over-maximum", ConnectionLimits{MaxConnectionLimit + 1, 64}, true},
+		{"source-over-maximum", ConnectionLimits{MaxConnectionLimit, MaxConnectionLimit + 1}, true},
+		{"maximum", ConnectionLimits{MaxConnectionLimit, MaxConnectionLimit}, false},
+		{"explicit-source-over-total", ConnectionLimits{50, 100}, true},
+		{"small-total-unset-source", ConnectionLimits{128, 0}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c.ConnectionLimits = tc.limits
+			if err := Validate(c); (err != nil) != tc.invalid {
+				t.Fatalf("validation for %+v: %v, invalid=%v", tc.limits, err, tc.invalid)
+			}
+		})
+	}
+}
+
+func TestConnectionLimitsVersionCompatibility(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		for _, tc := range []struct {
+			name      string
+			omit      bool
+			limits    ConnectionLimits
+			effective ConnectionLimits
+		}{
+			{"omitted", true, ConnectionLimits{}, ConnectionLimits{256, 256}},
+			{"zero", false, ConnectionLimits{}, ConnectionLimits{256, 256}},
+			{"explicit-previous-defaults", false, ConnectionLimits{256, 64}, ConnectionLimits{256, 64}},
+			{"explicit-higher-capacity", false, ConnectionLimits{16384, 8192}, ConnectionLimits{16384, 8192}},
+			{"small-total-unset-source", false, ConnectionLimits{128, 0}, ConnectionLimits{128, 128}},
+		} {
+			t.Run(fmt.Sprintf("v%d/%s", version, tc.name), func(t *testing.T) {
+				c := Default(t.TempDir())
+				c.Version = version
+				c.ConnectionLimits = tc.limits
+				data, err := json.Marshal(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var raw map[string]json.RawMessage
+				if err := json.Unmarshal(data, &raw); err != nil {
+					t.Fatal(err)
+				}
+				if version == 1 {
+					delete(raw, "source_access")
+				}
+				if tc.omit {
+					delete(raw, "connection_limits")
+				}
+				data, err = json.Marshal(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoded, err := Decode(data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if decoded.ConnectionLimits != tc.limits || decoded.ConnectionLimits.Effective() != tc.effective {
+					t.Fatalf("limits: configured=%+v effective=%+v, want %+v / %+v", decoded.ConnectionLimits, decoded.ConnectionLimits.Effective(), tc.limits, tc.effective)
+				}
+				path := filepath.Join(t.TempDir(), "limits.json")
+				if err := Save(path, decoded); err != nil {
+					t.Fatal(err)
+				}
+				loaded, err := Load(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if loaded.ConnectionLimits != tc.limits || loaded.ConnectionLimits.Effective() != tc.effective {
+					t.Fatalf("persisted limits changed: configured=%+v effective=%+v", loaded.ConnectionLimits, loaded.ConnectionLimits.Effective())
+				}
+			})
+		}
+	}
+}

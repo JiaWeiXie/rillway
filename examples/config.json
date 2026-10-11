@@ -13,6 +13,10 @@
     "tls_cert_file": "./.local/state/admin.crt",
     "tls_key_file": "./.local/state/admin.key"
   },
+  "connection_limits": {
+    "max_connections": 256,
+    "max_connections_per_source": 256
+  },
   "source_access": {
     "rules": [
       {

@@ -44,7 +44,7 @@ type Server struct {
 	localIPs           map[netip.Addr]bool
 }
 
-func New(dialer Dialer, security config.Security, policy *access.Policy, password string) (*Server, error) {
+func New(dialer Dialer, security config.Security, limits config.ConnectionLimits, policy *access.Policy, password string) (*Server, error) {
 	if dialer == nil {
 		return nil, errors.New("proxy dialer is required")
 	}
@@ -54,9 +54,19 @@ func New(dialer Dialer, security config.Security, policy *access.Policy, passwor
 	if len(security.ProxyUsername) > 255 || len(password) > 255 {
 		return nil, errors.New("SOCKS credentials must fit in 255 bytes")
 	}
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+	eff := limits.Effective()
 	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
 	s.sourcePolicy.Store(policy)
-	s.guard = NewConnectionGuard(256, 64, func(ip netip.Addr) access.Decision { return s.sourcePolicy.Load().Decide(ip) })
+	s.guard = NewConnectionGuard(eff.MaxConnections, eff.MaxConnectionsPerSource, func(ip netip.Addr) access.Decision {
+		p := s.sourcePolicy.Load()
+		if p == nil {
+			return access.Decision{Allowed: false}
+		}
+		return p.Decide(ip)
+	})
 	s.localIPs = map[netip.Addr]bool{netip.MustParseAddr("127.0.0.1"): true, netip.MustParseAddr("::1"): true}
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {

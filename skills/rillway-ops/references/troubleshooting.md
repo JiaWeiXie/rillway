@@ -105,12 +105,9 @@ Narrow the ACL to individually approved clients; do not replace it with an empty
 list or disable authentication. Proxying the host's own outbound traffic back to
 Rillway must be corrected before restarting.
 
-Current source bounds HTTP/SOCKS sockets at 256 total/64 per source, with a separate
-management/PAC budget of 64 total/16 per source. It also rejects its own proxy
-endpoints. Check the installed version before assuming those protections exist.
-They do not limit network bandwidth, detect every multi-proxy loop, or provide an
-OS memory ceiling. Apply VM/service resource limits appropriate to the machine
-before controlled recovery; replacing only the binary does not update a unit.
+HTTP/SOCKS sockets share configurable `connection_limits`, defaulting to 256 total/256 per source; management/PAC has a separate 64 total/16 per-source budget. Web Source access can save limits without restart; lowering leaves existing streams open. It also reports enforced active/limit values and capacity rejections separately from policy denials. `source_limit`/`total_limit` are cumulative rejection counters, independent of retained source rows. Record their before/after deltas alongside the browser error and required-resource failures during normal workload; zero policy denials does not imply zero capacity rejections. A successful HEAD request, isolated profile or larger limit does not establish the original browser failure is fixed. If no rejection coincides with the failure, inspect SOCKS negotiation, selected outbound/DNS, fixed routes and stream errors instead.
+
+Check the installed version before assuming these protections exist. They do not limit network bandwidth, detect every multi-proxy loop, or provide an OS memory ceiling. Apply VM/service resource limits appropriate to the machine before controlled recovery; replacing only the binary does not update a unit.
 Resume with one approved client and observe memory and connection counts before
 adding more. Do not run bulk traffic tests on the affected LAN.
 

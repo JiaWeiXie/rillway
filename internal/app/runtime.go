@@ -34,7 +34,6 @@ type Runtime struct {
 	Engine          *engine.Engine
 	appliedAt       time.Time
 	restart         chan struct{}
-	admission       func() proxy.AdmissionRejections
 	proxy           *proxy.Server
 }
 
@@ -230,16 +229,17 @@ func (r *Runtime) RestartRequiredOutbounds() []string {
 func (r *Runtime) Snapshot() any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var rejections proxy.AdmissionRejections
-	if r.admission != nil {
-		rejections = r.admission()
+	var capacity access.ConnectionCapacity
+	if r.proxy != nil {
+		capacity = r.proxy.Capacity()
 	}
 	return struct {
 		engine.Snapshot
 		Revision   uint64                    `json:"config_revision"`
 		AppliedAt  time.Time                 `json:"applied_at"`
 		Rejections proxy.AdmissionRejections `json:"proxy_admission_rejections"`
-	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, rejections}
+		Capacity   access.ConnectionCapacity `json:"proxy_capacity"`
+	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity}
 }
 
 func (r *Runtime) attachProxy(p *proxy.Server) {
@@ -407,6 +407,7 @@ func (r *Runtime) applyLocked(ctx context.Context, c config.Config, policy *acce
 	r.pruneTailscaleOwners()
 	if r.proxy != nil {
 		r.proxy.SetSourcePolicy(policy)
+		r.proxy.ApplyConnectionLimits(c.ConnectionLimits)
 	}
 	r.cfg = clone(c)
 	r.providers = next

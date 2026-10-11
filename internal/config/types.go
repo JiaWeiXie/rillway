@@ -2,16 +2,17 @@ package config
 
 // Config is the versioned, portable configuration. Secrets are file references.
 type Config struct {
-	Version         int          `json:"version"`
-	Revision        uint64       `json:"revision"`
-	Listeners       Listeners    `json:"listeners"`
-	Security        Security     `json:"security"`
-	SourceAccess    SourceAccess `json:"source_access"`
-	Outbounds       []Outbound   `json:"outbounds"`
-	Rules           []Rule       `json:"rules"`
-	DefaultOutbound string       `json:"default_outbound"`
-	Adaptive        Adaptive     `json:"adaptive"`
-	PAC             PAC          `json:"pac"`
+	Version          int              `json:"version"`
+	Revision         uint64           `json:"revision"`
+	Listeners        Listeners        `json:"listeners"`
+	Security         Security         `json:"security"`
+	ConnectionLimits ConnectionLimits `json:"connection_limits"`
+	SourceAccess     SourceAccess     `json:"source_access"`
+	Outbounds        []Outbound       `json:"outbounds"`
+	Rules            []Rule           `json:"rules"`
+	DefaultOutbound  string           `json:"default_outbound"`
+	Adaptive         Adaptive         `json:"adaptive"`
+	PAC              PAC              `json:"pac"`
 }
 
 type Listeners struct {
@@ -28,6 +29,32 @@ type Security struct {
 	TLSKeyFile        string   `json:"tls_key_file"`
 	ProxyUsername     string   `json:"proxy_username,omitempty"`
 	ProxyPasswordFile string   `json:"proxy_password_file,omitempty"`
+}
+
+// ConnectionLimits configures total and per-source connection capacity limits.
+// Zero or omitted values use defaults; an unset per-source limit is bounded
+// by the effective total. Negative values are invalid.
+type ConnectionLimits struct {
+	MaxConnections          int `json:"max_connections"`
+	MaxConnectionsPerSource int `json:"max_connections_per_source"`
+}
+
+const (
+	DefaultMaxConnections          = 256
+	DefaultMaxConnectionsPerSource = 256
+	MaxConnectionLimit             = 65536
+)
+
+// Effective returns the active limits after substituting zero values with defaults.
+func (l ConnectionLimits) Effective() ConnectionLimits {
+	eff := l
+	if eff.MaxConnections == 0 {
+		eff.MaxConnections = DefaultMaxConnections
+	}
+	if eff.MaxConnectionsPerSource == 0 {
+		eff.MaxConnectionsPerSource = min(DefaultMaxConnectionsPerSource, eff.MaxConnections)
+	}
+	return eff
 }
 
 type SourceAccess struct {

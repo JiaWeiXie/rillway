@@ -186,8 +186,9 @@ func (p PAC) EnabledCIDRs() []string { return enabledPACValues(p.BypassCIDRs) }
 func Default(stateDir string) Config {
 	return Config{
 		Version: 2, Revision: 1,
-		Listeners: Listeners{HTTP: "127.0.0.1:17890", SOCKS5: "127.0.0.1:17891", Admin: "127.0.0.1:17892", PAC: "127.0.0.1:17893"},
-		Security:  Security{AllowedClients: []string{"127.0.0.0/8", "::1/128"}, AdminTokenFile: filepath.Join(stateDir, "admin.token"), TLSCertFile: filepath.Join(stateDir, "admin.crt"), TLSKeyFile: filepath.Join(stateDir, "admin.key")},
+		Listeners:        Listeners{HTTP: "127.0.0.1:17890", SOCKS5: "127.0.0.1:17891", Admin: "127.0.0.1:17892", PAC: "127.0.0.1:17893"},
+		Security:         Security{AllowedClients: []string{"127.0.0.0/8", "::1/128"}, AdminTokenFile: filepath.Join(stateDir, "admin.token"), TLSCertFile: filepath.Join(stateDir, "admin.crt"), TLSKeyFile: filepath.Join(stateDir, "admin.key")},
+		ConnectionLimits: ConnectionLimits{MaxConnections: DefaultMaxConnections, MaxConnectionsPerSource: DefaultMaxConnectionsPerSource},
 		SourceAccess: SourceAccess{
 			Rules: []SourceAccessRule{
 				{
@@ -210,15 +211,16 @@ func Default(stateDir string) Config {
 }
 
 type rawConfigV1 struct {
-	Version         int        `json:"version"`
-	Revision        uint64     `json:"revision"`
-	Listeners       Listeners  `json:"listeners"`
-	Security        Security   `json:"security"`
-	Outbounds       []Outbound `json:"outbounds"`
-	Rules           []Rule     `json:"rules"`
-	DefaultOutbound string     `json:"default_outbound"`
-	Adaptive        Adaptive   `json:"adaptive"`
-	PAC             PAC        `json:"pac"`
+	Version          int              `json:"version"`
+	Revision         uint64           `json:"revision"`
+	Listeners        Listeners        `json:"listeners"`
+	Security         Security         `json:"security"`
+	ConnectionLimits ConnectionLimits `json:"connection_limits"`
+	Outbounds        []Outbound       `json:"outbounds"`
+	Rules            []Rule           `json:"rules"`
+	DefaultOutbound  string           `json:"default_outbound"`
+	Adaptive         Adaptive         `json:"adaptive"`
+	PAC              PAC              `json:"pac"`
 }
 
 func Decode(data []byte) (Config, error) {
@@ -240,16 +242,17 @@ func Decode(data []byte) (Config, error) {
 			return Config{}, errors.New("configuration must contain one JSON object")
 		}
 		c := Config{
-			Version:         2,
-			Revision:        v1.Revision,
-			Listeners:       v1.Listeners,
-			Security:        v1.Security,
-			SourceAccess:    SourceAccess{Rules: []SourceAccessRule{}},
-			Outbounds:       v1.Outbounds,
-			Rules:           v1.Rules,
-			DefaultOutbound: v1.DefaultOutbound,
-			Adaptive:        v1.Adaptive,
-			PAC:             v1.PAC,
+			Version:          2,
+			Revision:         v1.Revision,
+			Listeners:        v1.Listeners,
+			Security:         v1.Security,
+			ConnectionLimits: v1.ConnectionLimits,
+			SourceAccess:     SourceAccess{Rules: []SourceAccessRule{}},
+			Outbounds:        v1.Outbounds,
+			Rules:            v1.Rules,
+			DefaultOutbound:  v1.DefaultOutbound,
+			Adaptive:         v1.Adaptive,
+			PAC:              v1.PAC,
 		}
 		if len(v1.Security.AllowedClients) > 0 {
 			c.SourceAccess.Rules = []SourceAccessRule{
@@ -341,6 +344,9 @@ func validateNonSourceSettings(c Config) error {
 	}
 	if c.Revision == 0 {
 		return errors.New("revision must be positive")
+	}
+	if err := c.ConnectionLimits.Validate(); err != nil {
+		return err
 	}
 	listeners := []string{c.Listeners.HTTP, c.Listeners.SOCKS5, c.Listeners.Admin, c.Listeners.PAC}
 	for i, addr := range listeners {
@@ -496,6 +502,18 @@ func validateNonSourceSettings(c Config) error {
 		if err := validatePACBypass(entry, seenPAC, prefix.Masked().String()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// Validate checks both configured values and the effective shared budget.
+func (l ConnectionLimits) Validate() error {
+	if l.MaxConnections < 0 || l.MaxConnectionsPerSource < 0 || l.MaxConnections > MaxConnectionLimit || l.MaxConnectionsPerSource > MaxConnectionLimit {
+		return errors.New("connection_limits must be non-negative and within the supported maximum")
+	}
+	eff := l.Effective()
+	if eff.MaxConnectionsPerSource > eff.MaxConnections {
+		return errors.New("effective max_connections_per_source must not exceed max_connections")
 	}
 	return nil
 }

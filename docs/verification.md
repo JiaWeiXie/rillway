@@ -2,6 +2,29 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-12：多瀏覽器容量、保存競態與發布前檢查
+
+- **現行資源邊界**：部署 VM 為 4 vCPU、約 5.28 GiB RAM；Rillway 的實際 systemd 配額維持 1 CPU、MemoryMax 1 GiB、MemoryHigh 768 MiB、Go runtime 軟預算 704 MiB。程序 FD 軟／硬限制為 524,287／524,288，觀察當下 FD 136、RSS 約 70 MiB、cgroup 約 25 MiB，沒有 OOM 或自動重啟。這是讀取當下的狀態，並非容量壓測。
+- **設定與測量的區別**：預設保留既有總上限 256，將單一來源預設由 64 調為 256，讓同一 IP 可使用既有全域預算；設定整數上界維持 65,536，兩項都可手動修改。既有明確值保持不變；總上限省略或 0 使用預設，來源上限省略或 0 使用 256 與有效總上限中較小者。既有壓測只確認 48 條混合串流與 128 個短連線 workers，未確立最高安全連線數，因此不在正式部署中以未驗證的 4,096／2,048 取代既有總預算，也不把設定上界宣稱為正式 VM 的最高安全容量。
+- **真實本機容量實驗**：自訂總上限 4,096／單一來源 2,048 的隔離 daemon 同時保留 2,048 條 CONNECT／SOCKS5 串流，來源上限額外 socket 關閉，來源容量拒絕增加 1、政策拒絕為 0。熱調低總上限至 2,048 後新增 socket 以總上限拒絕；分散抽樣的 16 條既有串流均能 echo。全部釋放後活躍數回到 0，新 SOCKS5 串流傳輸成功並再次回到 0。此實驗未驗證正式 VM 的記憶體或持續傳輸能力。
+- **預設共用預算**：以重建的 binary 啟動省略 `connection_limits` 的隔離 daemon，API 確認生效值 256／256。同時保留 128 條 CONNECT 與 128 條 SOCKS5 串流，第 257 條入口以 EOF 關閉，總容量拒絕增加 1、來源容量與政策拒絕為 0。既有抽樣串流仍可 echo，全部釋放後活躍數歸零，新 SOCKS5 傳輸成功。
+- **同 IP 多分頁實驗**：在最終 256／256 預設下，三個不同程序／獨立 Chrome profiles 各開 20 個本機頁面，共 60 分頁，經同一 SOCKS listener／來源 IP 載入 HTML、CSS 與 JavaScript；60 頁均確認 JavaScript 已執行、stylesheet 存在且樣式生效，沒有失敗的必要資源，來源／總容量拒絕增量均為 0。關閉所有 profiles 後活躍數歸零。這是輕量合成頁面，不能取代三種瀏覽器、外部網站或原機正常 profile 的驗收。
+- **保存後刷新競態**：先以回歸測試重現舊來源 polling 尚未完成時 Save 提早結束。修正後共用 polling Promise，保存會等待舊請求完成，再取得保存後的快照。真實 Chrome 攔截舊快照時，API 已寫入 12／8、表單仍維持 saving；釋放舊快照後確實再發一次來源請求，摘要更新為 0／12 與 0／8，才顯示成功。EN／zh-Hant DOM 確認容量拒絕與政策拒絕分開，語言切換後仍顯示保存的上限。此次新的 screenshot／CDP capture 超時，不冒充新的視覺證據；既有布局畫面檢查見下節。
+- **品質與安全**：更新 Go 至 1.27.2、`golang.org/x/net` 至 0.60.0 並刷新嵌入 notices，修復掃描發現的可達漏洞。最終 `mise run check` 通過 lint、race、shuffle、coverage 與 8 個 Python tests，`mise run build` 通過；`mise run security` 通過公開來源、歷史 secrets、四平台 govulncheck 與 actionlint。四平台可達漏洞及匯入 package 漏洞均為 0；required module 仍列出 `golang.org/x/crypto/openpgp` 的 GO-2026-5932，該 package 未被匯入、沒有上游修復版本，不宣稱 module 無任何弱點。
+
+限制：原始受影響 Mac 的正常 Chrome profile 尚未取得；上述本機合成負載及另一台 Mac 的前測，不構成原機修補前後驗收。發布與正式替換的結果須另外以實際驗收記錄，不以測試成功推定部署完成。
+
+## 2026-10-11：連線容量與 macOS SOCKS 瀏覽調查
+
+- **部署端唯讀觀察**：在另一台 Mac 的既有應用程式負載下，以隔離 Chrome profile 連向既有 SOCKS 服務。GitHub 主文件載入，但 46 筆請求失敗，包含 CSS／JavaScript，錯誤為 `net::ERR_CONNECTION_RESET` 與 `net::ERR_SOCKS_CONNECTION_FAILED`。同一來源的 active connections 達 64，capacity rejections 從 586 增至 640，policy denials 維持 0。Google 文章主文件載入，但 18 筆資源請求出現 `net::ERR_CONNECTION_RESET`，包含橫幅圖片、CSS 與 JavaScript；該來源 active connections 仍為 64，capacity rejections 達 664，畫面可見橫幅圖片載入失敗。
+- **計數歸因限制**：同來源包含其他應用程式，瀏覽器亦可能自行重試；拒絕增量不能逐筆等同於頁面資源失敗數。兩頁測試期間 aggregate `total_limit` 維持 0，`source_limit` 增加。原報告來源已有 1,258 次歷史容量拒絕，但本次觀察期間該值未變，不能據此認定原始故障的時間與原因。部署 binary 的精確 commit 未核對，舊 API 不提供新加入的 guard capacity 快照，engine flow 數不可代替 admission guard 的活躍 socket 數。
+- **本機真實 daemon／socket**：只使用 loopback listener 與 direct outbound，HTTP CONNECT 和 SOCKS5 共用 4／2 預算。兩條既有串流仍能 echo；超額 SOCKS socket 在 greeting 階段關閉，`source_limit` 由 0 增至 1、policy denials 維持 0。關閉串流後 active 回到 0，新 SOCKS 串流成功。另以 2／2 額度填滿後啟動真實 Chrome，local page 出現 `net::ERR_CONNECTION_RESET` 且 `total_limit` 增加，確認容量耗盡可以產生瀏覽器連線失敗。
+- **容量表單與熱更新**：以最新本機 binary 實際操作 Save limits；2／2 滿額時同一 SOCKS Chrome page 失敗，調為 12／8 後主文件、必要 CSS 與 JavaScript 均回 `200`，JavaScript 實際更新頁面，沒有 requestfailed。調低至 1／1 後，兩條既有 CONNECT／SOCKS5 串流繼續正確 echo；新增 socket 被以 global reason 拒絕，capacity rejections 達 12、policy denials 為 0。關閉既有串流後 active 回到 0，新 SOCKS5 echo 成功並再次回到 0。設定檔確認持久化新的 1／1 上限。
+- **管理 UI**：EN／zh-Hant 的桌面 1440×1000 與手機 375×812 畫面確認容量、分原因拒絕數與可編輯欄位；手機沒有水平溢出。語言切換保留草稿，外部 revision 變更後儲存收到 `409` 並保留輸入，Reload limits 取得新值；per-source 大於 total 的輸入遭拒且有效容量不變。最終桌面 axe-core 為 0 violations／0 incomplete；手機為 0 violations，非可見導覽按鈕的色彩對比仍有 1 項人工檢查結果。容量區塊原有 4 處對比不足已修正並重建 binary 驗證。
+- **品質檢查**：`mise run check` 通過 golangci-lint、race detector、shuffle、coverage 及 8 個 Python tests；既有 JavaScript memory form suite 通過。測試涵蓋設定相容與非法值、共用 HTTP／SOCKS 額度、分原因計數、連線回收、限制熱更新及存檔失敗不發布新容量。
+
+限制：尚未取得原始受影響 Mac 的正常 Chrome profile，native capture／Accessibility 權限不足，Chrome relay 無法連線。上述另一台 Mac 的前測與本機受控實驗，不構成原機修補前後驗收。本次未部署修補、修改正式設定或主機 SOCKS／VPN／DNS；不能宣稱兩個原始頁面已在原機的代表性工作負載下修復。
+
 ## 2026-10-08：v0.5.0 發布與既有 Linux 服務升級
 
 - 已提交來源存取控制功能、可靠性修正與 changelog，發布 `v0.5.0`。對應來源的 GitHub CI 五項工作全部通過；Release build 完成 security、race checks、fuzz 與四平台封裝。四個目標的 govulncheck 未發現可達漏洞，但仍回報一項未被目前程式呼叫的相依模組漏洞，不能解讀成所有相依套件皆無漏洞。

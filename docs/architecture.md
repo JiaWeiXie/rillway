@@ -57,8 +57,9 @@ Proxy（HTTP／CONNECT 與 SOCKS5）在 TCP socket accept 後、通訊協定解�
 
 - **雙軌 ACL 與設定版本**：`config.json` 版本為 2。`security.allowed_clients` 維持唯讀，作為 HTTPS 管理介面與 HTTP PAC 端點存取的網路邊界；`source_access.rules` 則專門用於 Proxy 連入存取。若版本 2 的 `source_access.rules` 為空，表示明確全域拒絕（deny-all），不再回退至預設或 `security.allowed_clients`。
 - **規則匹配語意**：規則採用前綴二元樹（Trie）評估。各規則定義動作（`allow` 或 `deny`）、啟用狀態與 CIDR 前綴列表。當有多條規則覆蓋同一個 IP 時，以最長前綴（longest/deepest prefix）優先；若在前綴長度完全相同時發生衝突，則以拒絕優先（deny beats allow）；若前綴長度相同且動作一致，則由設定順序中較早啟用的規則決定 `rule_id`。未匹配任何規則的連線預設拒絕（fail closed）。
-- **連線容量與限流防護**：全域最多維持 256 條活躍 Proxy 連線，單一來源 IP 最多維持 64 條連線。超出上限之連線會立即關閉，並將統計計入 `proxy_admission_rejections`。
-- **連線遙測與即時阻斷**：系統在記憶體中維護最多 1,024 筆來源遙測，超過容量時以 LRU 清理，資料在 24 小時無活躍後過期。常規規則編輯（`source_access.rules`）僅影響新連線准入，既有連線不受干擾保持存活；而明確的阻斷來源（Block source）操作具備交易原子性：驗證 revision、附加 /32 或 /128 deny 規則、編譯 ACL、原子存檔，並立即切斷該 IP 所有現存活躍 Proxy 連線（不影響其他來源或管理介面），失敗時保證不中斷任何既有連線。
+- **連線容量與限流防護**：`connection_limits.max_connections`／`max_connections_per_source` 預設為 256／256，保留既有全域預算；總上限省略或填 0 使用預設，來源上限省略或填 0 使用預設與生效總上限中較小者，不代表無上限。既有明確設定值保持不變，設定上限不代表經實測的安全容量。整數最大 65,536，生效後單一來源上限不得大於總上限。HTTP 轉發、CONNECT 與 SOCKS5 的握手、閒置及傳輸中入口 socket 共用預算；同一標準化 IP 的多個應用程式／profile 共用來源額度。容量拒絕發生於協定解析前，直接關閉 socket。來源政策拒絕優先；若兩項容量都滿額，記為 `total_limit`。
+- **容量設定 publication**：Web 來源存取表單與 `PUT /api/v1/config` 使用同一驗證、revision 及原子持久化流程，成功寫入後更新共用 guard，不需重啟。提高上限立即允許新准入；降低上限保留既有串流，活躍數可暫時高於新上限，直到兩項預算都有餘額才接受新連線。直接修改主機設定檔仍需重啟載入。
+- **連線遙測與即時阻斷**：來源紀錄有界，預設最多 1,024 筆；總容量調高時可保留所有活躍來源，最多 65,536 筆。降低容量仍保留既有活躍來源。閒置紀錄在上次連入達 24 小時且無活躍連線時過期，容量滿時移除最舊閒置列。每列保留 accepted、政策 denied、capacity_rejections 及 source_limit_rejections／total_limit_rejections；全域累積計數獨立於列的過期／移除，直到 listener 重啟才重設，不能用保留列加總代替。一般來源規則變更只影響新准入；Block source 仍會原子持久化 /32 或 /128 deny 規則並切斷該 IP 的既有 Proxy 連線，失敗保留原設定與串流。
 - **封鎖輸入與既有規則**：只接受單一 IP，拒絕 CIDR 與 `IP:port`；revision 衝突優先於內容驗證。既有停用規則及備註保持原樣；新增 host deny 規則的 ID 若已使用，依序加上 `-2`、`-3`，不覆寫既有規則。
 - **來源表單與重新載入**：Web 與 TUI 都可編輯 ID、名稱、動作、CIDR、啟用狀態及備註。409／422 保留草稿與原 revision；Web 表單的「重新載入設定」明確重新依 rule ID 載入，避免排序變動造成誤改。TUI 表單開啟期間不以背景快照取代來源資料；窄終端機以 grapheme-aware 來源卡片顯示。
 
@@ -71,19 +72,19 @@ Proxy（HTTP／CONNECT 與 SOCKS5）在 TCP socket accept 後、通訊協定解�
 | GET `/api/v1/info` | 已驗證身分後取得 daemon 的程式版本；與設定 revision 各自獨立 |
 | GET `/api/v1/config` | 目前生效設定與 revision，秘密為檔案參照 |
 | PUT `/api/v1/config` | 完整設定，revision 必須與目前一致，成功後遞增 |
-| GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at；`proxy_admission_rejections` 的 `source_limit`／`total_limit` 是 listener 啟動後 HTTP／SOCKS5 因容量上限直接關閉的連線數 |
+| GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at；`proxy_capacity` 包含 `active_connections` 與生效中的 `max_connections`／`max_connections_per_source`，其中 `source_limit`／`total_limit` 為啟動後累積容量拒絕數；既有 `proxy_admission_rejections` 保留相同兩項計數 |
 | GET `/api/v1/outbounds` | profile 狀態與可驗證的健康資訊 |
 | DELETE `/api/v1/outbounds/{id}` | `{"revision":CURRENT,"replacement":"OUTBOUND_ID"}`，刪除 profile 並原子替換所有引用；保護 direct、檢查 revision，成功後遞增 |
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |
-| GET `/api/v1/source-clients` | 最近活躍的 Proxy 客戶端遙測快照（上限 1,024 筆，24 小時過期） |
+| GET `/api/v1/source-clients` | 有界的近期 Proxy 客戶端遙測；`capacity` 是與來源列同鎖產生的有效活躍數／上限／累積拒絕快照，包含尚未完成握手的 socket，與僅計已建立 flows 的 engine totals 不同 |
 | POST `/api/v1/source-clients/block` | `{"revision":CURRENT,"address":"IP"}`，原子附加 /32 或 /128 deny 規則、持久化設定並切斷該來源的現存 Proxy 連線 |
 
-設定驗證、provider 建立、私有檔案原子寫入完成後才套用。無效更新與寫入失敗保留原設定；409 表示其他介面已更新版本。來源存取規則（`source_access.rules`）支援即時更新與 revision 保護，套用後即時影響新連線的准入決策，既有連線保持存活。僅 listener 監聽位址、管理認證與 TLS 安全設定（`security`），以及使用同一 state directory 的執行中 Tailscale 變更，需要在本機修改檔案並重啟 daemon。改變出口時會保留舊 provider，直到既有連線結束才釋放。
+設定驗證、provider 建立、私有檔案原子寫入完成後才套用。無效更新與寫入失敗保留原設定及連線上限；409 表示其他介面已更新版本。來源存取規則與連線容量支援即時更新及 revision 保護；既有連線保持存活。listener 位址、管理認證與 TLS 安全設定，以及使用同一 state directory 的執行中 Tailscale 變更，仍需在本機修改檔案並重啟。改變出口時保留舊 provider，直到既有連線結束才釋放。
 
 ## Web UI 的設定邊界
 
 - PAC 顯示獨立的完整 `http://host:port/proxy.pac` 網址與複製按鈕；這與 PAC 內的 HTTP Proxy 位址不同。Wildcard listener 以目前管理頁的 hostname 組合網址，IPv6 保留方括號。Loopback listener 不會被偽裝成區網可連的服務。
-- Listener、管理認證與完整 JSON 在 Web UI 為唯讀；在 Server 修改設定後重新啟動。分流、出口、自適應、來源存取與 PAC 規則使用各自的介面即時更新。Docker 匯出不會遠端修改另一台主機。
+- Listener、管理認證與完整 JSON 在 Web UI 為唯讀；在 Server 修改設定後重新啟動。分流、出口、自適應、來源存取、連線容量與 PAC 規則使用各自介面即時更新。Source access 顯示有效容量與可編輯上限，政策拒絕為零時仍顯示容量拒絕及命中原因。Docker 匯出不會遠端修改另一台主機。
 - `PUT /api/v1/outbounds` 接受 `revision`、`create`、`outbound`，以及選用的 `wireguard_config` 或 `tailscale_auth_key`。秘密只寫入私有檔案，不進入回應或可攜設定內容。新建模式拒絕重複名稱；驗證、同源與認證檢查、revision 衝突均在寫檔之前執行。Runtime 套用衝突／失敗會清除新檔。原始 provider 錯誤保持遮罩。
 - 上傳的設定檔不會執行 Shell hooks，也不能指定檔案寫入位置。狀態目錄仍在使用中的既有 Tailscale，其節點身分與 DNS 欄位顯示唯讀及重啟說明，避免開啟第二個 state owner；啟停和登入操作仍透過既有 API。
 

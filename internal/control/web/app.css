@@ -18,6 +18,7 @@
 input[readonly],textarea[readonly]{background:#f3f6f6;color:var(--muted);border-style:dashed}#pac-url{flex:1;min-width:0}#out-profile{font-family:ui-monospace,"Rillway Noto Sans TC",monospace;font-size:.85rem}
 
 #memory-fields{border:0;margin:0 0 1rem;padding:0;min-width:0}.memory-inputs{display:grid;grid-template-columns:1fr 1fr;gap:1rem}#memory-fields:disabled{opacity:.65}@media(max-width:640px){.memory-inputs{grid-template-columns:1fr}}
+#source-capacity-fields{border:0;margin:0;padding:0;min-width:0}#source-capacity-fields:disabled{opacity:.65}@media(max-width:640px){#source-capacity-fields .form-grid{grid-template-columns:1fr}}
 .source-intro{margin-bottom:18px}.source-intro .footnote{margin:0;color:var(--muted);font-size:.84rem;line-height:1.5}
 .source-activity-meta{display:flex;align-items:center;gap:12px}
 .section-bar-spaced{margin-top:28px}
@@ -27,6 +28,10 @@ input[readonly],textarea[readonly]{background:#f3f6f6;color:var(--muted);border-
 .source-table td code{font-family:ui-monospace,"Rillway Noto Sans TC",monospace;font-size:.85rem}
 .source-table .selected-row{background:rgba(23,109,105,.05)}
 .source-table tr:focus-visible{outline:3px solid var(--accent);outline-offset:-3px}
+#source-capacity-band .traffic-number small{display:block;font-size:.73rem;color:var(--muted);margin-top:4px}
+#source-capacity-description,#source-capacity-band .traffic-number>span{color:var(--muted)}
+#source-capacity-rejections-detail span{display:inline;font:inherit;color:inherit}
+.source-table td .sub{max-width:none;white-space:normal}
 @media(max-width:720px){
   .source-table thead{display:none}
   .source-table, .source-table tbody, .source-table tr, .source-table td{display:block;width:100%}
@@ -34,4 +39,5 @@ input[readonly],textarea[readonly]{background:#f3f6f6;color:var(--muted);border-
   .source-table td{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:.9rem}
   .source-table td:last-child{border-bottom:0;padding-top:8px}
   .source-table td::before{content:attr(data-label);font-weight:600;color:var(--muted);font-size:.8rem;margin-right:8px}
+  .source-table td>div{text-align:right}
 }

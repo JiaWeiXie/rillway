@@ -5,6 +5,8 @@ forms, profile import and secret entry. Keep listener/security settings on the
 server; changing them requires a restart. Verify actual applied revision after
 an update. A saved/accepted configuration is not proof of end-to-end connectivity.
 
+Connection capacity is adjustable on Web **Source access** or through revision-checked configuration updates. `connection_limits.max_connections` and `max_connections_per_source` default to 256/256; omitted or zero total selects 256, and omitted or zero per-source selects min(256, effective total), never unlimited. Existing explicit limits are preserved. The maximum is a configuration bound, not verified host capacity. Integers are bounded to 65,536 and effective per-source capacity cannot exceed total capacity. HTTP/CONNECT/SOCKS share the ingress budget across all apps using one source IP. Limits persist before hot application; lowering preserves existing streams and affects new admissions only. Host-file edits need a restart to be loaded.
+
 ## Outbounds
 
 - `direct`: immutable built-in public outbound. Never delete/disable/rename it.

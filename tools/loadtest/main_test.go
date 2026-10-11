@@ -38,7 +38,7 @@ func TestProtocolsAgainstLocalRillway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := proxy.New(&net.Dialer{Timeout: time.Second}, config.Security{}, policy, "")
+	s, err := proxy.New(&net.Dialer{Timeout: time.Second}, config.Security{}, config.ConnectionLimits{}, policy, "")
 	if err != nil {
 		t.Fatal(err)
 	}

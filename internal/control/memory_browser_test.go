@@ -12,10 +12,14 @@ func TestBrowserMemoryFormContract(t *testing.T) {
 	if err != nil {
 		t.Skip("Node unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, node, "testdata/memory_test.js").CombinedOutput()
-	if err != nil {
-		t.Fatalf("memory form: %v\n%s", err, out)
+	for _, script := range []string{"testdata/memory_test.js", "testdata/capacity_test.js"} {
+		t.Run(script, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, node, script).CombinedOutput()
+			if err != nil {
+				t.Fatalf("browser form: %v\n%s", err, out)
+			}
+		})
 	}
 }

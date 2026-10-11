@@ -114,6 +114,24 @@ func TestAtomicApplyAndConflict(t *testing.T) {
 	if err = r.Apply(t.Context(), next); err == nil {
 		t.Fatal("listener change needs restart")
 	}
+	next = r.Config()
+	next.ConnectionLimits = config.ConnectionLimits{MaxConnections: 512, MaxConnectionsPerSource: 128}
+	if err = r.Apply(t.Context(), next); err != nil {
+		t.Fatal("valid connection-limit update failed", err)
+	}
+	disk, err = config.Load(path)
+	if err != nil || disk.ConnectionLimits != next.ConnectionLimits || r.Config().ConnectionLimits != next.ConnectionLimits || disk.Revision != 3 {
+		t.Fatal("connection-limit update was not persisted atomically", disk, err)
+	}
+	next = r.Config()
+	next.ConnectionLimits.MaxConnectionsPerSource = 513
+	if err := r.Apply(t.Context(), next); err == nil {
+		t.Fatal("invalid limits accepted")
+	}
+	disk, err = config.Load(path)
+	if err != nil || disk.ConnectionLimits.MaxConnectionsPerSource != 128 || disk.Revision != 3 || r.Config().Revision != 3 {
+		t.Fatal("invalid update changed effective or persisted state", disk, err)
+	}
 }
 
 type testProvider struct {

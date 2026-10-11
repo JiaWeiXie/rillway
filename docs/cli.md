@@ -117,6 +117,27 @@ Use `setup --no-install` to choose LAN settings before credentials are generated
 If editing listeners after init, supply a matching TLS certificate; the daemon
 never replaces an existing certificate automatically.
 
+### Connection capacity
+
+The optional top-level `connection_limits` object is supported in v1 and v2 configurations:
+
+```json
+"connection_limits": {
+  "max_connections": 256,
+  "max_connections_per_source": 256
+}
+```
+
+The global default preserves the existing 256-socket budget; the per-source default lets one IP use that budget without the old 64-socket bottleneck. Omitted or `0` global capacity selects 256; an omitted or `0` per-source capacity selects the smaller of 256 and the effective global capacity. Zero does **not** disable protection. Explicit limits in existing configurations are preserved. Values must be integers from 0 to 65,536, and the effective per-source limit must not exceed the effective global limit. Negative, fractional and out-of-range values are rejected. The maximum is a configuration bound, not a verified safe host capacity.
+
+Three browsers with 10–20 tabs each share the same source allowance. Tabs are not connections: required resources, persistent connections and other apps also consume sockets. Prior streaming benchmarks do not establish a maximum safe socket count; do not extrapolate it from RSS or worker counts. Keep service memory/CPU limits and observe active sockets, rejection deltas and resource usage for the actual workload.
+
+HTTP forwarding, HTTPS CONNECT and SOCKS5 TCP share one ingress-socket budget, including handshakes and idle accepted connections. The per-source allowance is shared by every application/profile using the same canonical source IP. It counts connections, not HTTP requests. Management/PAC capacity is separate. Rejected sockets close before protocol parsing, so browsers can see connection errors without an HTTP or SOCKS error response.
+
+Use **Source access → Connection capacity → Save limits**, or a revision-checked `PUT /api/v1/config`, to validate, persist and apply changes **without restarting**. Raising a limit allows new admissions immediately. Lowering a limit preserves existing streams, even if active usage temporarily exceeds the new limit; new sockets are rejected until both budgets have room. Editing only the host configuration file requires a daemon restart to load it. Restart closes connections and resets in-memory counters.
+
+Source access shows enforced active/limit values, policy denials and capacity rejections separately. `source_limit` and `total_limit` are cumulative **rejection counters**, not configured limits; when both budgets are full, the global reason wins. Policy-denied sockets do not increment capacity counters. Recent source rows may expire or be evicted; their sum is not the lifetime aggregate. Capture counter deltas and the actual browser/resource error during the failure before attributing a website problem to capacity. A larger limit alone does not prove it resolved the problem.
+
 ## `tui`: local or remote management
 
 ```sh

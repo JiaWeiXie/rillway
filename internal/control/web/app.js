@@ -33,13 +33,14 @@ const pacPresetNotes = {
   'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
 };
 let memoryStatus = null, memoryDraftRevision = "", memoryDirty = false, memorySaving = false, memoryLoading = false, memoryInputMode = "MiB";
+let capacityDirty = false, capacityDraftRevision = null, capacitySaving = false;
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
 let outboundGeneration = 0;
 const pendingOutboundActions = new Set();
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, serverInfo = null, lastNotice = null, isOnline = false;
 let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
-let sourceClients = [], sourcePollTimer = null, sourcePolling = false, sourceRuleDraft = null, editingSourceRuleID = '', blockSourceContext = null, selectedSourceAddress = '';
+let sourceClients = [], sourceCapacity = null, sourcePollTimer = null, sourcePollPromise = null, sourceRuleDraft = null, editingSourceRuleID = '', blockSourceContext = null, selectedSourceAddress = '';
 let sourceSnapshotGeneratedAt = null;
 const refreshChoices = [1,2,5,10,30];
 let flowPollTimer, refreshSeconds = 1, openFlowGroups = new Set();
@@ -266,7 +267,30 @@ function renderRules() {
     return `<tr><td><strong>${esc(r.id)}</strong><span class="sub">${esc(targets.join(', ') || t('No matching destinations configured'))}</span></td><td><span class="badge">${esc(r.adaptive ? t('Adaptive routing') : r.outbound)}</span>${r.adaptive ? `<span class="sub">${esc((r.candidates || []).join(', '))}</span>` : ''}</td><td>${esc(r.family || t('Dual stack'))}</td><td><button class="table-action" data-edit-rule="${index}">${et('Edit')}</button> <button class="table-action" data-up-rule="${index}"${index === 0 ? ' disabled' : ''} aria-label="${et('Move {name} up',{name:r.id})}">↑</button> <button class="table-action danger" data-delete-rule="${index}">${et('Delete')}</button></td></tr>`;
   }).join('') || `<tr><td colspan="4" class="muted">${et('No rules yet. Add a domain or IP rule to choose its outbound.')}</td></tr>`;
 }
+function renderCapacity(syncInputs = !capacityDirty) {
+  const form = $('source-capacity-form');
+  if(!form || !cfg) return;
+  const limits = cfg.connection_limits || {};
+  const maxConn = Number.isInteger(limits.max_connections) && limits.max_connections > 0
+    ? limits.max_connections
+    : 256;
+  const maxPerSource = Number.isInteger(limits.max_connections_per_source) && limits.max_connections_per_source > 0
+    ? limits.max_connections_per_source
+    : Math.min(256, maxConn);
+  if(syncInputs) {
+    const totalInput = $('capacity-max-total');
+    const perSourceInput = $('capacity-max-per-source');
+    if(totalInput) totalInput.value = String(maxConn);
+    if(perSourceInput) perSourceInput.value = String(maxPerSource);
+    capacityDraftRevision = cfg.revision;
+  }
+  const fields = $('source-capacity-fields');
+  if(fields) fields.disabled = capacitySaving;
+  const reloadBtn = $('capacity-reload');
+  if(reloadBtn) reloadBtn.disabled = capacitySaving;
+}
 function renderSourceAccess() {
+  renderCapacity();
   renderSourceClients();
   renderSourceRules();
 }
@@ -282,6 +306,33 @@ function renderSourceClients() {
     } else {
       timeSpan.textContent = '';
     }
+  }
+  const capTotal = $('source-capacity-total');
+  const capTotalDetail = $('source-capacity-total-detail');
+  const capPerSource = $('source-capacity-per-source');
+  const capPerSourceDetail = $('source-capacity-per-source-detail');
+  const capRejections = $('source-capacity-rejections');
+  const capRejectionsDetail = $('source-capacity-rejections-detail');
+  const cap = sourceCapacity;
+  let effectiveSourceLimit = null;
+  if(cap && Number.isInteger(cap.max_connections) && cap.max_connections > 0) {
+    if(capTotal) capTotal.textContent = `${cap.active_connections} / ${cap.max_connections}`;
+    if(capTotalDetail) capTotalDetail.textContent = t('effective limit');
+    effectiveSourceLimit = cap.max_connections_per_source;
+    const peakSourceActive = (sourceClients || []).reduce((max, c) => Math.max(max, c.active_connections || 0), 0);
+    if(capPerSource) capPerSource.textContent = `${peakSourceActive} / ${effectiveSourceLimit}`;
+    if(capPerSourceDetail) capPerSourceDetail.textContent = t('Busiest source / per-source limit');
+    if(capRejections) capRejections.textContent = String(cap.source_limit + cap.total_limit);
+    if(capRejectionsDetail) {
+      capRejectionsDetail.innerHTML = `<span id="total-limit-rejections">${cap.total_limit}</span> ${et('total limit')} · <span id="source-limit-rejections">${cap.source_limit}</span> ${et('source limit')}`;
+    }
+  } else {
+    if(capTotal) capTotal.textContent = t('Unavailable');
+    if(capTotalDetail) capTotalDetail.textContent = t('Not available');
+    if(capPerSource) capPerSource.textContent = t('Unavailable');
+    if(capPerSourceDetail) capPerSourceDetail.textContent = t('Not available');
+    if(capRejections) capRejections.textContent = t('Unavailable');
+    if(capRejectionsDetail) capRejectionsDetail.textContent = t('Not available');
   }
   if(!sourceClients || sourceClients.length === 0) {
     tbody.innerHTML = '';
@@ -299,7 +350,14 @@ function renderSourceClients() {
     const lastSeenText = c.last_seen ? new Date(c.last_seen).toLocaleTimeString() : t('Never');
     const canBlock = isAllow || c.active_connections > 0;
     const blockBtn = canBlock ? `<button class="table-action danger" data-block-source="${esc(c.address)}">${et('Block and disconnect')}</button>` : `<span class="muted">${et('Blocked')}</span>`;
-    return `<tr tabindex="-1" data-client-addr="${esc(c.address)}" class="${selectedSourceAddress === c.address ? 'selected-row' : ''}"><td data-label="${et('Client address')}"><strong>${esc(c.address)}</strong></td><td data-label="${et('Access status')}"><span class="badge ${badgeClass}">${esc(decisionText)}</span></td><td data-label="${et('Matched rule')}">${esc(c.rule_id || t('Default deny'))}</td><td data-label="${et('Connections')}"><strong>${c.active_connections}</strong> ${et('active')}</td><td data-label="${et('Counters')}"><small>${c.accepted_connections} ${et('accepted')} · ${c.denied_connections} ${et('denied')}</small></td><td data-label="${et('Last seen')}">${esc(lastSeenText)}</td><td data-label="${et('Actions')}">${blockBtn}</td></tr>`;
+    const connText = effectiveSourceLimit !== null
+      ? `<strong>${c.active_connections}</strong> / ${effectiveSourceLimit} ${et('active')}`
+      : `<strong>${c.active_connections}</strong> ${et('active')}`;
+    const capRej = c.capacity_rejections || 0;
+    const srcRej = c.source_limit_rejections || 0;
+    const totRej = c.total_limit_rejections || 0;
+    const counterText = `<div><small><span data-counter="accepted">${c.accepted_connections}</span> ${et('accepted')} · <span data-counter="denied">${c.denied_connections}</span> ${et('policy denied')}</small><span class="sub" data-counter="capacity-rejections"><strong data-counter="capacity-total">${capRej}</strong> ${et('capacity rejected')} (<span data-counter="source-limit">${srcRej}</span> ${et('source limit')}, <span data-counter="total-limit">${totRej}</span> ${et('total limit')})</span></div>`;
+    return `<tr tabindex="-1" data-client-addr="${esc(c.address)}" class="${selectedSourceAddress === c.address ? 'selected-row' : ''}"><td data-label="${et('Client address')}"><strong>${esc(c.address)}</strong></td><td data-label="${et('Access status')}"><span class="badge ${badgeClass}">${esc(decisionText)}</span></td><td data-label="${et('Matched rule')}">${esc(c.rule_id || t('Default deny'))}</td><td data-label="${et('Connections')}">${connText}</td><td data-label="${et('Counters')}">${counterText}</td><td data-label="${et('Last seen')}">${esc(lastSeenText)}</td><td data-label="${et('Actions')}">${blockBtn}</td></tr>`;
   }).join('');
   if(hadSourceFocus && focusedAddr) focusSource(focusedAddr);
 }
@@ -328,18 +386,26 @@ function renderSourceRules() {
     return `<tr data-source-rule-id="${esc(r.id)}"><td data-label="${et('Rule')}"><strong>${esc(r.name || r.id)}</strong><br><small class="sub">${esc(r.id)}</small></td><td data-label="${et('Action')}"><span class="badge ${actionClass}">${esc(actionText)}</span></td><td data-label="${et('Network ranges (CIDR)')}"><code>${esc(cidrs)}</code></td><td data-label="${et('Status')}" class="${statusClass}">${esc(statusText)}</td><td data-label="${et('Note')}"><small>${esc(r.note || '')}</small></td><td data-label="${et('Actions')}"><button class="table-action" data-edit-source-rule="${index}">${et('Edit')}</button> <button class="table-action danger" data-delete-source-rule="${index}">${et('Delete')}</button></td></tr>`;
   }).join('');
 }
-async function loadSourceClients() {
-  if(!active || currentPage !== 'sources' || document.hidden || sourcePolling) return;
-  sourcePolling = true;
-  try {
-    const data = await api('/source-clients');
-    if(!active || currentPage !== 'sources' || document.hidden) return;
-    sourceClients = data.clients || [];
-    sourceSnapshotGeneratedAt = data.generated_at;
-    renderSourceClients();
-  } catch(error) {
-    if(error.status !== 401 && currentPage === 'sources' && !document.hidden) notice(error,true);
-  } finally { sourcePolling = false; }
+async function loadSourceClients(fresh = false) {
+  if(!active || currentPage !== 'sources' || document.hidden) return;
+  if(sourcePollPromise) {
+    await sourcePollPromise;
+    return fresh ? loadSourceClients() : undefined;
+  }
+  sourcePollPromise = (async () => {
+    try {
+      const data = await api('/source-clients');
+      if(!active || currentPage !== 'sources' || document.hidden) return;
+      sourceClients = data.clients || [];
+      sourceSnapshotGeneratedAt = data.generated_at;
+      sourceCapacity = data.capacity || null;
+      renderSourceClients();
+    } catch(error) {
+      if(error.status !== 401 && currentPage === 'sources' && !document.hidden) notice(error,true);
+    }
+  })();
+  try { await sourcePollPromise; }
+  finally { sourcePollPromise = null; }
 }
 function restartSourcePolling() {
   stopSourcePolling();
@@ -475,7 +541,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -576,6 +642,10 @@ function renderConfigText() {
   $('listeners').innerHTML = Object.entries(cfg.listeners).map(([k,v]) => `<dt>${esc(t({http:'HTTP Proxy',socks5:'SOCKS5',admin:'Management UI',pac:'PAC'}[k] || k))}</dt><dd>${esc(v || t('Not configured'))}</dd>`).join('');
   const security = cfg.security || {};
   $('server-security').innerHTML = `<dt>${et('Management and PAC allowed networks')}</dt><dd>${esc((security.allowed_clients || []).join(', ') || t('Not configured'))}</dd><dt>${et('Proxy username')}</dt><dd>${esc(security.proxy_username || t('Not configured'))}</dd><dt>${et('Management token and TLS credentials')}</dt><dd>${et('Managed on Server; secret contents are never shown.')}</dd>`;
+  const limitsEl = $('connection-limits');
+  if(limitsEl) {
+    limitsEl.innerHTML = `<dt>${et('Connection capacity')}</dt><dd><a href="#sources">${et('Adjust connection capacity on the Source access page.')}</a></dd>`;
+  }
 }
 async function loadMemory(explicit = false) {
   if(!active || memoryLoading || memorySaving) return;
@@ -759,7 +829,7 @@ $('rules').addEventListener('click',async e => {
   if(del) { if(!confirm(t('Delete rule "{name}"?',{name:next.rules[index].id}))) return; next.rules.splice(index,1); }
   try { await save(next); } catch(error) { notice(error,true); }
 });
-$('refresh-sources').addEventListener('click',() => loadSourceClients().catch(e => notice(e,true)));
+$('refresh-sources').addEventListener('click',() => loadSourceClients(true).catch(e => notice(e,true)));
 $('add-source-rule').addEventListener('click',() => openSourceRule());
 $('source-rules-body').addEventListener('click',async e => {
   const edit = e.target.closest('[data-edit-source-rule]');
@@ -825,10 +895,74 @@ $('block-source-form').addEventListener('submit',async e => {
     $('block-source-dialog').close();
     notice({source:'Blocked {address}; disconnected {count} connection(s).',values:{address,count:res.disconnected}});
     renderConfig();
-    await loadSourceClients();
+    await loadSourceClients(true);
     focusSource(address);
   } catch(error) { errorIn(e.target,error); }
   finally { btn.disabled = false; }
+});
+function onCapacityEdit() {
+  if(!capacityDirty) {
+    capacityDirty = true;
+    capacityDraftRevision = cfg?.revision;
+  }
+}
+$('capacity-max-total').addEventListener('input', onCapacityEdit);
+$('capacity-max-per-source').addEventListener('input', onCapacityEdit);
+$('capacity-max-total').addEventListener('change', onCapacityEdit);
+$('capacity-max-per-source').addEventListener('change', onCapacityEdit);
+$('source-capacity-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if(capacitySaving) return;
+  clearError(e.target);
+  const totalVal = Number($('capacity-max-total').value);
+  const perSourceVal = Number($('capacity-max-per-source').value);
+  try {
+    if(!Number.isInteger(totalVal) || totalVal < 1 || totalVal > 65536) {
+      throw sourceError('Total connection limit must be between 1 and 65536.');
+    }
+    if(!Number.isInteger(perSourceVal) || perSourceVal < 1 || perSourceVal > 65536) {
+      throw sourceError('Per-source connection limit must be between 1 and 65536.');
+    }
+    if(perSourceVal > totalVal) {
+      throw sourceError('Per-source connection limit must not exceed total connection limit.');
+    }
+    capacitySaving = true;
+    renderCapacity(false);
+    const next = cloneConfig();
+    if(capacityDraftRevision !== null && capacityDraftRevision !== undefined) {
+      next.revision = capacityDraftRevision;
+    }
+    next.connection_limits = {
+      max_connections: totalVal,
+      max_connections_per_source: perSourceVal,
+    };
+    cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
+    capacityDirty = false;
+    capacityDraftRevision = cfg.revision;
+    renderConfig();
+    await poll();
+    if(currentPage === 'sources') await loadSourceClients(true);
+    notice('Connection capacity saved. New connections will use the updated limits.');
+  } catch(error) {
+    errorIn(e.target, error);
+  } finally {
+    capacitySaving = false;
+    renderCapacity(false);
+  }
+});
+$('capacity-reload').addEventListener('click', async () => {
+  if(capacitySaving) return;
+  clearError($('source-capacity-form'));
+  try {
+    cfg = await api('/config');
+    capacityDirty = false;
+    capacityDraftRevision = cfg.revision;
+    renderConfig();
+    if(currentPage === 'sources') await loadSourceClients(true);
+    notice('Connection limits reloaded.');
+  } catch(error) {
+    errorIn($('source-capacity-form'), error);
+  }
 });
 $('outbound-list').addEventListener('click',async e => {
   const edit = e.target.closest('[data-edit-outbound]'); if(edit) { openOutbound(Number(edit.dataset.editOutbound)); return; }

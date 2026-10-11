@@ -108,15 +108,13 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 	if err != nil {
 		return err
 	}
-	p, err := proxy.New(r.Engine, c.Security, policy, password)
+	p, err := proxy.New(r.Engine, c.Security, c.ConnectionLimits, policy, password)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = p.Close() }()
 	r.attachProxy(p)
 	r.Engine.SetDestinationPolicy(p.DestinationPolicy)
-	// Set before any listener starts, so management requests never race it.
-	r.admission = p.AdmissionRejections
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var listeners []net.Listener

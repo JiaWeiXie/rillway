@@ -3,6 +3,8 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"connection_limits must be non-negative and within the supported maximum":                  "connection_limits 必須為非負整數，且不得超過支援的最大值。",
+	"effective max_connections_per_source must not exceed max_connections":                     "生效後的 max_connections_per_source 不得超過 max_connections。",
 	"Invalid client IP address to block.":                                                      "請輸入要封鎖的有效 IP 位址。",
 	"Specify one IP address to block, not a CIDR network range.":                               "請指定單一 IP 位址，不要輸入 CIDR 網段。",
 	"Proxy source control is unavailable.":                                                     "Proxy 來源控制目前無法使用。",
