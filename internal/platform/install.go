@@ -7,16 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"rillway/internal/config"
-	"rillway/internal/memorylimit"
+	"rillway/internal/resourcecontrol"
 	"runtime"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 )
 
 const ExistingInstallation = "Rillway is already installed or has retained files. Back up the existing installation and update its binary instead of reinstalling."
 
-type linuxPaths struct{ state, configDir, binary, link, unit string }
+type linuxPaths struct{ state, configDir, binary, link, unit, root string }
 
 func defaultLinuxPaths() linuxPaths {
-	return linuxPaths{"/var/lib/rillway", "/etc/rillway", "/usr/local/lib/rillway/rillway", "/usr/local/bin/rillway", "/etc/systemd/system/rillway.service"}
+	return linuxPaths{"/var/lib/rillway", "/etc/rillway", "/usr/local/lib/rillway/rillway", "/usr/local/bin/rillway", "/etc/systemd/system/rillway.service", ""}
 }
 
 func refuseExisting(paths ...string) error {
@@ -32,8 +36,14 @@ func refuseExisting(paths ...string) error {
 }
 
 func (p linuxPaths) check() error {
-	return refuseExisting(p.unit, p.binary, p.link, p.configDir, p.state,
-		filepath.Join(filepath.Dir(p.unit), "rillway-memory.socket"), filepath.Join(filepath.Dir(p.unit), "rillway-memory.service"))
+	unitDir := filepath.Dir(p.unit)
+	return refuseExisting(
+		p.unit, p.binary, p.link, p.configDir, p.state,
+		filepath.Join(unitDir, "rillway-resource-control.socket"),
+		filepath.Join(unitDir, "rillway-resource-control.service"),
+		filepath.Join(unitDir, "rillway-memory.socket"),
+		filepath.Join(unitDir, "rillway-memory.service"),
+	)
 }
 
 // CheckNewInstallation is a read-only preflight. The privileged installer checks
@@ -190,7 +200,7 @@ func installLinux(ctx context.Context, source string, paths linuxPaths, run Runn
 	if err = config.WritePrivate(paths.unit, []byte(unit)); err != nil {
 		return "", err
 	}
-	if err = writeMemoryUnits(paths, installedConfig); err != nil {
+	if err = reconcileResourceControl(ctx, paths, installedConfig, run); err != nil {
 		return "", err
 	}
 	if _, err = run(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -199,60 +209,198 @@ func installLinux(ctx context.Context, source string, paths linuxPaths, run Runn
 	if _, err = run(ctx, "systemctl", "enable", "rillway.service"); err != nil {
 		return "", err
 	}
-	if _, err = run(ctx, "systemctl", "enable", "--now", "rillway-memory.socket"); err != nil {
-		return "", err
-	}
 	out, err := run(ctx, "systemctl", "start", "rillway.service")
 	return string(out), err
 }
 
-func writeMemoryUnits(paths linuxPaths, configPath string) error {
-	socket, service, err := memorylimit.Units(paths.binary, configPath)
-	if err != nil {
+func checkSecureOwnership(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	if os.Geteuid() == 0 {
+		return stat.Uid == 0
+	}
+	return stat.Uid == uint32(os.Getuid())
+}
+
+func validateSecureHierarchy(p, root string) error {
+	for curr := p; curr != "" && curr != "/" && curr != root; curr = filepath.Dir(curr) {
+		info, err := os.Lstat(curr)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("insecure symlink at %s", curr)
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("insecure permissions (%04o) at %s", info.Mode().Perm(), curr)
+		}
+		if !checkSecureOwnership(info) {
+			return fmt.Errorf("insecure ownership at %s", curr)
+		}
+	}
+	return nil
+}
+
+func writeUnitFile(dst, content string) error {
+	tmp := dst + ".tmp." + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
 		return err
 	}
-	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
-	if err = os.MkdirAll(resourceDir, 0o755); err != nil {
-		return err
+	return os.Rename(tmp, dst)
+}
+
+func restoreUnitFile(dst string, prev []byte, existed bool) error {
+	if existed {
+		return os.WriteFile(dst, prev, 0o644)
 	}
-	info, err := os.Lstat(resourceDir)
-	if err != nil || !info.IsDir() || !ownedByCurrentUser(info) || info.Mode().Perm()&0o022 != 0 {
-		return errors.New("unsafe memory control state directory")
-	}
-	target := filepath.Join(resourceDir, "memory-limit.conf")
-	info, err = os.Lstat(target)
+	err := os.Remove(dst)
 	if os.IsNotExist(err) {
-		// An empty valid drop-in changes no limits and prevents dangling links
-		// from making first-install enable/start report a bad unit file.
-		if err = config.WritePrivate(target, []byte("# Rillway memory limits are unchanged until saved.\n[Service]\n")); err != nil {
+		return nil
+	}
+	return err
+}
+
+func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath string, run Runner) error {
+	// 1. Validate installed binary and parent directories.
+	bInfo, err := os.Lstat(paths.binary)
+	if err != nil || !bInfo.Mode().IsRegular() {
+		return errors.New("resource control requires an installed binary")
+	}
+	if err := validateSecureHierarchy(paths.binary, paths.root); err != nil {
+		return fmt.Errorf("resource control requires secure binary directory: %w", err)
+	}
+
+	// 2. Validate systemd directory and unit file if already present.
+	unitDir := filepath.Dir(paths.unit)
+	if err := validateSecureHierarchy(unitDir, paths.root); err != nil {
+		return fmt.Errorf("resource control requires secure systemd directory: %w", err)
+	}
+	if uInfo, err := os.Lstat(paths.unit); err == nil {
+		if uInfo.Mode()&os.ModeSymlink != 0 || uInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(uInfo) {
+			return errors.New("resource control requires secure rillway.service unit file")
+		}
+	}
+
+	// 3. Resource state directory.
+	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
+	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+		return err
+	}
+	rInfo, err := os.Lstat(resourceDir)
+	if err != nil || !rInfo.IsDir() || rInfo.Mode()&os.ModeSymlink != 0 || rInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(rInfo) {
+		return errors.New("unsafe resource control state directory")
+	}
+
+	// 4. Memory drop-in and state file preservation.
+	memoryTarget := filepath.Join(resourceDir, "memory-limit.conf")
+	mInfo, err := os.Lstat(memoryTarget)
+	if os.IsNotExist(err) {
+		if err = config.WritePrivate(memoryTarget, []byte("# Rillway memory limits are unchanged until saved.\n[Service]\n")); err != nil {
 			return err
 		}
-		if err = os.Chmod(target, 0o644); err != nil {
+		if err = os.Chmod(memoryTarget, 0o644); err != nil {
 			return err
 		}
-	} else if err != nil || !info.Mode().IsRegular() || !ownedByCurrentUser(info) || info.Mode().Perm()&0o022 != 0 {
+	} else if err != nil || !mInfo.Mode().IsRegular() || mInfo.Mode()&os.ModeSymlink != 0 || mInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(mInfo) {
 		return errors.New("unsafe memory control state file")
 	}
-	dir := filepath.Join(filepath.Dir(paths.unit), "rillway.service.d")
-	if err = os.MkdirAll(dir, 0o755); err != nil {
+
+	dropinDir := filepath.Join(unitDir, "rillway.service.d")
+	if err = os.MkdirAll(dropinDir, 0o755); err != nil {
 		return err
 	}
-	link := filepath.Join(dir, "zzzz-rillway-memory.conf")
-	if current, readErr := os.Readlink(link); readErr == nil {
-		if current != target {
+	dInfo, err := os.Lstat(dropinDir)
+	if err != nil || !dInfo.IsDir() || dInfo.Mode()&os.ModeSymlink != 0 || dInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(dInfo) {
+		return errors.New("unsafe rillway.service.d directory")
+	}
+
+	memoryLink := filepath.Join(dropinDir, "zzzz-rillway-memory.conf")
+	if current, readErr := os.Readlink(memoryLink); readErr == nil {
+		if current != memoryTarget {
 			return errors.New("memory control drop-in already exists with another target")
 		}
 	} else if os.IsNotExist(readErr) {
-		if err = os.Symlink(target, link); err != nil {
+		if err = os.Symlink(memoryTarget, memoryLink); err != nil {
 			return err
 		}
 	} else {
 		return errors.New("memory control drop-in already exists with another target")
 	}
-	for name, contents := range map[string]string{"rillway-memory.socket": socket, "rillway-memory.service": service} {
-		if err = config.WritePrivate(filepath.Join(filepath.Dir(paths.unit), name), []byte(contents)); err != nil {
+
+	// 5. Units generation and atomic activation.
+	socketContent, serviceContent, err := resourcecontrol.Units(paths.binary, configPath)
+	if err != nil {
+		return err
+	}
+	newSocket := filepath.Join(unitDir, "rillway-resource-control.socket")
+	newService := filepath.Join(unitDir, "rillway-resource-control.service")
+
+	prevSocket, hadPrevSocket := os.ReadFile(newSocket)
+	prevService, hadPrevService := os.ReadFile(newService)
+
+	if err = writeUnitFile(newSocket, socketContent); err != nil {
+		return err
+	}
+	if err = writeUnitFile(newService, serviceContent); err != nil {
+		_ = restoreUnitFile(newSocket, prevSocket, hadPrevSocket == nil)
+		return err
+	}
+
+	rollbackNewUnits := func() {
+		_ = restoreUnitFile(newSocket, prevSocket, hadPrevSocket == nil)
+		_ = restoreUnitFile(newService, prevService, hadPrevService == nil)
+		_, _ = run(ctx, "systemctl", "daemon-reload")
+	}
+
+	if _, err = run(ctx, "systemctl", "daemon-reload"); err != nil {
+		rollbackNewUnits()
+		return err
+	}
+	if _, err = run(ctx, "systemctl", "enable", "--now", "rillway-resource-control.socket"); err != nil {
+		rollbackNewUnits()
+		return err
+	}
+	activeOut, err := run(ctx, "systemctl", "is-active", "rillway-resource-control.socket")
+	if err != nil || strings.TrimSpace(string(activeOut)) != "active" {
+		rollbackNewUnits()
+		if err != nil {
+			return fmt.Errorf("resource control socket activation failed: %w", err)
+		}
+		return errors.New("resource control socket is not active")
+	}
+
+	// 6. Socket is active; clean up legacy memory units if present.
+	oldSocket := filepath.Join(unitDir, "rillway-memory.socket")
+	oldService := filepath.Join(unitDir, "rillway-memory.service")
+	oldFound := false
+	if _, err := os.Stat(oldSocket); err == nil {
+		oldFound = true
+	}
+	if _, err := os.Stat(oldService); err == nil {
+		oldFound = true
+	}
+	if oldFound {
+		if _, err := run(ctx, "systemctl", "disable", "--now", "rillway-memory.socket"); err != nil {
+			return err
+		}
+		if _, err := run(ctx, "systemctl", "stop", "rillway-memory.service"); err != nil {
+			return err
+		}
+		if err := os.Remove(oldSocket); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Remove(oldService); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if _, err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }

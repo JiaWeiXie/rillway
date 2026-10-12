@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"rillway/internal/config"
@@ -11,14 +12,42 @@ import (
 	"testing"
 )
 
+func freeAddress(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	return addr
+}
+
+func fixtureConfig(t *testing.T, dir string) config.Config {
+	t.Helper()
+	c := config.Default(dir)
+	c.Listeners.HTTP = freeAddress(t)
+	c.Listeners.SOCKS5 = freeAddress(t)
+	c.Listeners.Admin = freeAddress(t)
+	c.Listeners.PAC = freeAddress(t)
+	return c
+}
+
 func fixtureLinuxPaths(root string) linuxPaths {
-	return linuxPaths{filepath.Join(root, "var/lib/rillway"), filepath.Join(root, "etc/rillway"), filepath.Join(root, "usr/local/lib/rillway/rillway"), filepath.Join(root, "usr/local/bin/rillway"), filepath.Join(root, "etc/systemd/system/rillway.service")}
+	return linuxPaths{
+		filepath.Join(root, "var/lib/rillway"),
+		filepath.Join(root, "etc/rillway"),
+		filepath.Join(root, "usr/local/lib/rillway/rillway"),
+		filepath.Join(root, "usr/local/bin/rillway"),
+		filepath.Join(root, "etc/systemd/system/rillway.service"),
+		root,
+	}
 }
 
 func TestLinuxInstallationPreservesSourceAndRegistersService(t *testing.T) {
 	paths := fixtureLinuxPaths(t.TempDir())
 	source := filepath.Join(t.TempDir(), "config.json")
-	c := config.Default(filepath.Join(filepath.Dir(source), "state"))
+	c := fixtureConfig(t, filepath.Join(filepath.Dir(source), "state"))
 	if err := config.Save(source, c); err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +73,9 @@ func TestLinuxInstallationPreservesSourceAndRegistersService(t *testing.T) {
 		if name == "id" {
 			return nil, errors.New("no service user")
 		}
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			return []byte("active\n"), nil
+		}
 		return nil, nil
 	}
 	if _, err = installLinux(t.Context(), source, paths, run, func() (string, error) { return binary, nil }); err != nil {
@@ -62,25 +94,12 @@ func TestLinuxInstallationPreservesSourceAndRegistersService(t *testing.T) {
 	}
 	after, err := os.ReadFile(source)
 	if err != nil || !bytes.Equal(original, after) {
-		t.Fatal("source changed")
-	}
-	link, err := os.Readlink(paths.link)
-	if err != nil || link != paths.binary {
-		t.Fatal("PATH symlink", link, err)
-	}
-	memoryLink := filepath.Join(filepath.Dir(paths.unit), "rillway.service.d", "zzzz-rillway-memory.conf")
-	target, err := os.Readlink(memoryLink)
-	if err != nil {
-		t.Fatal(err)
-	}
-	initial, err := os.ReadFile(target)
-	if err != nil || !strings.Contains(string(initial), "[Service]") || strings.Contains(string(initial), "MemoryMax=") {
-		t.Fatal("memory installation changes limits or leaves a dangling drop-in", err)
+		t.Fatal("source configuration was mutated", err)
 	}
 	for _, p := range []string{paths.state, paths.configDir} {
 		info, err := os.Stat(p)
 		if err != nil || info.Mode().Perm() != 0o700 {
-			t.Fatalf("directory permission: %s %v", p, err)
+			t.Fatal("directory permissions are not private", p, err)
 		}
 	}
 	info, err := os.Stat(paths.binary)
@@ -97,7 +116,7 @@ func TestLinuxInstallationPreservesSourceAndRegistersService(t *testing.T) {
 		}
 	}
 	joined := strings.Join(calls, "\n")
-	for _, want := range []string{"useradd --system --user-group", "chown -R rillway:rillway " + paths.state + " " + paths.configDir, "systemctl daemon-reload\nsystemctl enable rillway.service\nsystemctl enable --now rillway-memory.socket\nsystemctl start rillway.service"} {
+	for _, want := range []string{"useradd --system --user-group", "chown -R rillway:rillway " + paths.state + " " + paths.configDir, "systemctl enable --now rillway-resource-control.socket", "systemctl is-active rillway-resource-control.socket", "systemctl enable rillway.service", "systemctl start rillway.service"} {
 		if !strings.Contains(joined, want) {
 			t.Error("missing installer command", want)
 		}
@@ -116,22 +135,19 @@ func TestInstallerRefusesEveryRetainedPath(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if kind == "link" {
-				if err := os.Symlink("missing", p); err != nil {
-					t.Fatal(err)
-				}
-			} else if err := os.WriteFile(p, []byte("retain me"), 0o600); err != nil {
+			if err := os.WriteFile(p, []byte("occupied"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := installLinux(t.Context(), "does-not-exist", paths, func(context.Context, string, ...string) ([]byte, error) {
-				t.Fatal("ran privileged command")
+			source := filepath.Join(t.TempDir(), "config.json")
+			if err := config.Save(source, fixtureConfig(t, t.TempDir())); err != nil {
+				t.Fatal(err)
+			}
+			_, err := installLinux(t.Context(), source, paths, func(context.Context, string, ...string) ([]byte, error) {
+				t.Fatal("refused installation ran privileged commands")
 				return nil, nil
 			}, nil)
-			if err == nil || !strings.Contains(err.Error(), ExistingInstallation) {
-				t.Fatal(err)
-			}
-			if _, err = os.Lstat(p); err != nil {
-				t.Fatal("removed retained file")
+			if err == nil || !strings.Contains(err.Error(), "already installed") {
+				t.Fatal("occupied path did not report existing installation", p, err)
 			}
 		})
 	}
@@ -140,7 +156,7 @@ func TestInstallerRefusesEveryRetainedPath(t *testing.T) {
 func TestMissingCredentialFailsBeforeCreatingAccount(t *testing.T) {
 	paths := fixtureLinuxPaths(t.TempDir())
 	source := filepath.Join(t.TempDir(), "config.json")
-	c := config.Default(filepath.Join(filepath.Dir(source), "state"))
+	c := fixtureConfig(t, filepath.Join(filepath.Dir(source), "state"))
 	c.Security.ProxyUsername = "user"
 	c.Security.ProxyPasswordFile = filepath.Join(filepath.Dir(source), "missing.password")
 	if err := config.Save(source, c); err != nil {
@@ -158,7 +174,7 @@ func TestMissingCredentialFailsBeforeCreatingAccount(t *testing.T) {
 func TestDisabledOutboundFilesDoNotBlockInstallationPreflight(t *testing.T) {
 	paths := fixtureLinuxPaths(t.TempDir())
 	source := filepath.Join(t.TempDir(), "config.json")
-	c := config.Default(filepath.Join(filepath.Dir(source), "state"))
+	c := fixtureConfig(t, filepath.Join(filepath.Dir(source), "state"))
 	c.Outbounds = append(c.Outbounds, config.DefaultsForForms(c).Outbounds["wireguard"])
 	if err := config.Save(source, c); err != nil {
 		t.Fatal(err)
@@ -175,7 +191,7 @@ func TestDisabledOutboundFilesDoNotBlockInstallationPreflight(t *testing.T) {
 func TestDisabledSuggestedOutboundsInstallWithoutSourceFiles(t *testing.T) {
 	paths := fixtureLinuxPaths(t.TempDir())
 	source := filepath.Join(t.TempDir(), "config.json")
-	c := config.Default(filepath.Join(filepath.Dir(source), "state"))
+	c := fixtureConfig(t, filepath.Join(filepath.Dir(source), "state"))
 	forms := config.DefaultsForForms(c)
 	c.Outbounds = append(c.Outbounds, forms.Outbounds["wireguard"], forms.Outbounds["tailscale"])
 	if err := config.Save(source, c); err != nil {
@@ -188,9 +204,12 @@ func TestDisabledSuggestedOutboundsInstallWithoutSourceFiles(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("executable"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run := func(_ context.Context, name string, _ ...string) ([]byte, error) {
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "id" {
 			return []byte("1000"), nil
+		}
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			return []byte("active\n"), nil
 		}
 		return nil, nil
 	}
@@ -214,7 +233,7 @@ func TestDisabledSuggestedOutboundsInstallWithoutSourceFiles(t *testing.T) {
 func TestEnabledTailscaleInstallCreatesFreshStateDirectory(t *testing.T) {
 	paths := fixtureLinuxPaths(t.TempDir())
 	source := filepath.Join(t.TempDir(), "config.json")
-	c := config.Default(filepath.Join(filepath.Dir(source), "state"))
+	c := fixtureConfig(t, filepath.Join(filepath.Dir(source), "state"))
 	profile := config.DefaultsForForms(c).Outbounds["tailscale"]
 	profile.Enabled = true
 	profile.StateDir = filepath.Join(t.TempDir(), "not-created-yet")
@@ -229,9 +248,12 @@ func TestEnabledTailscaleInstallCreatesFreshStateDirectory(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("executable"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run := func(_ context.Context, name string, _ ...string) ([]byte, error) {
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "id" {
 			return []byte("1000"), nil
+		}
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			return []byte("active\n"), nil
 		}
 		return nil, nil
 	}
@@ -246,5 +268,176 @@ func TestEnabledTailscaleInstallCreatesFreshStateDirectory(t *testing.T) {
 		if outbound.ID == profile.ID && outbound.StateDir != filepath.Join(paths.state, "outbounds", profile.ID) {
 			t.Fatalf("fresh Tailscale state directory was not mapped into service state: %s", outbound.StateDir)
 		}
+	}
+}
+
+func TestReconcileResourceControlMigratesLegacyUnitsAndPreservesMemoryState(t *testing.T) {
+	root := t.TempDir()
+	paths := fixtureLinuxPaths(root)
+	if err := os.MkdirAll(filepath.Dir(paths.binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.binary, []byte("mock-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitDir := filepath.Dir(paths.unit)
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.unit, []byte("mock-unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up legacy units
+	oldSocket := filepath.Join(unitDir, "rillway-memory.socket")
+	oldService := filepath.Join(unitDir, "rillway-memory.service")
+	if err := os.WriteFile(oldSocket, []byte("old-socket"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldService, []byte("old-service"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up existing memory limit state and symlink
+	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
+	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	memState := filepath.Join(resourceDir, "memory-limit.conf")
+	customMem := []byte("# rillway-memory custom\n[Service]\nMemoryMax=1073741824\n")
+	if err := os.WriteFile(memState, customMem, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dropinDir := filepath.Join(unitDir, "rillway.service.d")
+	if err := os.MkdirAll(dropinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	memLink := filepath.Join(dropinDir, "zzzz-rillway-memory.conf")
+	if err := os.Symlink(memState, memLink); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(root, "config.json")
+
+	var commands []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		cmd := strings.Join(append([]string{name}, args...), " ")
+		commands = append(commands, cmd)
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			return []byte("active\n"), nil
+		}
+		return nil, nil
+	}
+
+	if err := reconcileResourceControl(t.Context(), paths, cfgPath, run); err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+
+	// Verify legacy units deleted
+	if _, err := os.Stat(oldSocket); !os.IsNotExist(err) {
+		t.Errorf("old socket was not removed: %v", err)
+	}
+	if _, err := os.Stat(oldService); !os.IsNotExist(err) {
+		t.Errorf("old service was not removed: %v", err)
+	}
+
+	// Verify new units exist
+	newSocket := filepath.Join(unitDir, "rillway-resource-control.socket")
+	newService := filepath.Join(unitDir, "rillway-resource-control.service")
+	if _, err := os.Stat(newSocket); err != nil {
+		t.Errorf("new socket not found: %v", err)
+	}
+	if _, err := os.Stat(newService); err != nil {
+		t.Errorf("new service not found: %v", err)
+	}
+
+	// Verify memory state was preserved
+	content, err := os.ReadFile(memState)
+	if err != nil || !bytes.Equal(content, customMem) {
+		t.Errorf("memory state was altered: %s", string(content))
+	}
+
+	// Verify idempotency
+	commands = nil
+	if err := reconcileResourceControl(t.Context(), paths, cfgPath, run); err != nil {
+		t.Fatalf("second reconcile failed: %v", err)
+	}
+}
+
+func TestReconcileResourceControlRollsBackOnActivationFailure(t *testing.T) {
+	root := t.TempDir()
+	paths := fixtureLinuxPaths(root)
+	if err := os.MkdirAll(filepath.Dir(paths.binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.binary, []byte("mock-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitDir := filepath.Dir(paths.unit)
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.unit, []byte("mock-unit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Legacy units present
+	oldSocket := filepath.Join(unitDir, "rillway-memory.socket")
+	if err := os.WriteFile(oldSocket, []byte("old-socket"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(root, "config.json")
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
+			return []byte("failed\n"), errors.New("socket activation failed")
+		}
+		return nil, nil
+	}
+
+	err := reconcileResourceControl(t.Context(), paths, cfgPath, run)
+	if err == nil {
+		t.Fatal("expected failure on socket inactive")
+	}
+
+	// Old socket should remain
+	if _, err := os.Stat(oldSocket); err != nil {
+		t.Errorf("old socket should be retained on rollback: %v", err)
+	}
+
+	// New socket should be cleaned up
+	newSocket := filepath.Join(unitDir, "rillway-resource-control.socket")
+	if _, err := os.Stat(newSocket); !os.IsNotExist(err) {
+		t.Errorf("new socket should be cleaned up on rollback: %v", err)
+	}
+}
+
+func TestReconcileResourceControlRejectsInsecureDropinTarget(t *testing.T) {
+	root := t.TempDir()
+	paths := fixtureLinuxPaths(root)
+	if err := os.MkdirAll(filepath.Dir(paths.binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.binary, []byte("mock-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitDir := filepath.Dir(paths.unit)
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dropinDir := filepath.Join(unitDir, "rillway.service.d")
+	if err := os.MkdirAll(dropinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	memLink := filepath.Join(dropinDir, "zzzz-rillway-memory.conf")
+	if err := os.Symlink("/etc/shadow", memLink); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(_ context.Context, _ string, _ ...string) ([]byte, error) { return nil, nil }
+	err := reconcileResourceControl(t.Context(), paths, filepath.Join(root, "config.json"), run)
+	if err == nil || !strings.Contains(err.Error(), "another target") {
+		t.Fatalf("expected rejection of hijacked symlink target: %v", err)
 	}
 }

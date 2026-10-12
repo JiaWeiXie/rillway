@@ -84,16 +84,16 @@ Repository acceptance scripts are for disposable first-install VMs, not live
 production upgrades. They may uninstall the service on exit. Do not run live VPN
 tests against a state directory already owned by the running daemon.
 
-### Memory-controller upgrade
+### Resource-controller upgrade
 
-New Linux installs register the same-binary, socket-activated resource helper.
-After replacing an older installed binary, `sudo rillway service memory-install`
-adds it without reinstalling the daemon or changing its config/startup policy.
+New Linux installs register the same-binary, socket-activated resource helper (`rillway-resource-control.socket`/`.service`).
+After replacing an older installed binary, running `sudo rillway service restart`
+migrates helper units automatically without reinstalling the daemon or changing its config/startup policy.
 Custom units require their real `--config FILE`. Keep the installed binary and
 its parent directories root-owned and not group/world-writable. Web Settings and
 TUI Service settings (`m`) expose percent/MiB/GiB, detected host ceiling and
 conservative service floor; changes apply immediately and persist. Foreground
 and macOS processes cannot claim the same OS hard cap. After an ambiguous write,
 read current limits before retrying. Before rolling back to an older binary,
-stop/disable both `rillway-memory.socket` and `rillway-memory.service`; preserve
-private backups and intentionally restore previous OS properties if needed.
+stop/disable both `rillway-resource-control.socket` and `rillway-resource-control.service`; restore
+backed-up units and preserve private backups.

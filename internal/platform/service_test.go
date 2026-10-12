@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,5 +93,23 @@ func TestPACRollbackUsesIndependentContextAfterCancellation(t *testing.T) {
 	}
 	if !restored {
 		t.Fatal("canceled operation prevented PAC rollback")
+	}
+}
+
+func TestLinuxServiceActionPermissions(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping non-root check when running as root")
+	}
+	ctx := context.Background()
+	dummyConfig := "/etc/rillway/config.json"
+	for _, action := range []string{"install", "restart", "uninstall"} {
+		_, err := linuxService(ctx, action, dummyConfig)
+		if err == nil || !strings.Contains(err.Error(), "sudo") {
+			t.Errorf("action %q did not require sudo: %v", action, err)
+		}
+	}
+	_, err := linuxService(ctx, "invalid-action", dummyConfig)
+	if err == nil || !strings.Contains(err.Error(), "unknown service action") {
+		t.Errorf("invalid action accepted: %v", err)
 	}
 }

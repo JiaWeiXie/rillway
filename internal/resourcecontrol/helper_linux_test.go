@@ -1,4 +1,4 @@
-package memorylimit
+package resourcecontrol
 
 import (
 	"bytes"
@@ -28,24 +28,28 @@ func (f *fakeSystem) run(_ context.Context, args ...string) ([]byte, error) {
 	case "show":
 		return []byte(fmt.Sprintf("LoadState=loaded\nControlGroup=/system.slice/rillway.service\nMemoryCurrent=%d\nMemoryMax=%d\nMemoryHigh=%d\n", f.current, f.limit, f.high)), nil
 	case "daemon-reload":
+		if f.fail || f.failures > 0 {
+			f.failures--
+			return nil, errors.New("command output containing token-123456 and /private/var/credentials")
+		}
 		return nil, nil
 	case "set-property":
-		if len(args) != 4 || args[1] != "rillway.service" {
-			return nil, errors.New("unexpected command")
+		if f.fail || f.failures > 0 {
+			f.failures--
+			return nil, errors.New("command output containing token-123456 and /private/var/credentials")
 		}
 		f.sets++
-		if f.failures > 0 {
-			f.failures--
-			return nil, errors.New("private-command-output")
+		for _, arg := range args[2:] {
+			if strings.HasPrefix(arg, "MemoryMax=") {
+				f.limit = parseBytes(strings.TrimPrefix(arg, "MemoryMax="))
+			}
+			if strings.HasPrefix(arg, "MemoryHigh=") {
+				f.high = parseBytes(strings.TrimPrefix(arg, "MemoryHigh="))
+			}
 		}
-		if f.fail {
-			return nil, errors.New("private-command-output")
-		}
-		f.limit = parseBytes(strings.TrimPrefix(args[2], "MemoryMax="))
-		f.high = parseBytes(strings.TrimPrefix(args[3], "MemoryHigh="))
 		return nil, nil
 	default:
-		return nil, errors.New("unexpected command")
+		return nil, fmt.Errorf("unexpected command %q", args[0])
 	}
 }
 
@@ -78,16 +82,16 @@ func TestControllerLivePersistenceCASAndRollback(t *testing.T) {
 		t.Fatal(s, err)
 	}
 	old := s.Revision
-	for _, req := range []Request{{Mode: "GiB", Value: "0.1", Revision: old}, {Mode: "percent", Value: "91", Revision: old}, {Mode: "MiB", Value: "600", Revision: "stale"}} {
+	for _, req := range []MemoryRequest{{Mode: "GiB", Value: "0.1", Revision: old}, {Mode: "percent", Value: "91", Revision: old}, {Mode: "MiB", Value: "600", Revision: "stale"}} {
 		if _, err = c.apply(ctx, req); err == nil || f.sets != 0 {
 			t.Fatal("invalid or stale write mutated service", err, f.sets)
 		}
 	}
-	s, err = c.apply(ctx, Request{Mode: "percent", Value: "25", Revision: old})
+	s, err = c.apply(ctx, MemoryRequest{Mode: "percent", Value: "25", Revision: old})
 	if err != nil || f.limit != GiB || f.high != 768*MiB || s.Mode != "percent" || s.Value != "25" || s.GoLimitBytes != 704*MiB || s.Revision == old {
 		t.Fatal(s, err, f)
 	}
-	if _, err = c.apply(ctx, Request{Mode: "GiB", Value: "0.5", Revision: old}); !errors.Is(err, ErrConflict) {
+	if _, err = c.apply(ctx, MemoryRequest{Mode: "GiB", Value: "0.5", Revision: old}); !errors.Is(err, ErrMemoryConflict) {
 		t.Fatal(err)
 	}
 	// A new controller process restores the exact requested mode, not a guessed
@@ -99,7 +103,7 @@ func TestControllerLivePersistenceCASAndRollback(t *testing.T) {
 	}
 	save := c.save
 	c.save = func(metadata) error { return errors.New("private-filesystem-path") }
-	if _, err = c.apply(ctx, Request{Mode: "GiB", Value: "0.5", Revision: s.Revision}); err == nil || !strings.Contains(err.Error(), "unchanged") || f.limit != GiB || f.high != 768*MiB || strings.Contains(err.Error(), "private") {
+	if _, err = c.apply(ctx, MemoryRequest{Mode: "GiB", Value: "0.5", Revision: s.Revision}); err == nil || !strings.Contains(err.Error(), "unchanged") || f.limit != GiB || f.high != 768*MiB || strings.Contains(err.Error(), "private") {
 		t.Fatal(err, f)
 	}
 	f.current = 900 * MiB
@@ -107,12 +111,12 @@ func TestControllerLivePersistenceCASAndRollback(t *testing.T) {
 	if err != nil || s.MinimumBytes != 1125*MiB {
 		t.Fatal(s, err)
 	}
-	if _, err = c.apply(ctx, Request{Mode: "MiB", Value: "1024", Revision: s.Revision}); err == nil {
+	if _, err = c.apply(ctx, MemoryRequest{Mode: "MiB", Value: "1024", Revision: s.Revision}); err == nil {
 		t.Fatal("current usage headroom ignored")
 	}
 	c.save = save
 	f.fail = true
-	if _, err = c.apply(ctx, Request{Mode: "GiB", Value: "1.5", Revision: s.Revision}); err == nil || strings.Contains(err.Error(), "private") {
+	if _, err = c.apply(ctx, MemoryRequest{Mode: "GiB", Value: "1.5", Revision: s.Revision}); err == nil || strings.Contains(err.Error(), "private") {
 		t.Fatal("command diagnostic leaked", err)
 	}
 }
@@ -121,7 +125,7 @@ func TestControllerPropertyFailureRestoresAtomicState(t *testing.T) {
 	c, f := testController(t)
 	ctx := context.Background()
 	s, _ := c.status(ctx)
-	s, err := c.apply(ctx, Request{Mode: "MiB", Value: "600", Revision: s.Revision})
+	s, err := c.apply(ctx, MemoryRequest{Mode: "MiB", Value: "600", Revision: s.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +134,7 @@ func TestControllerPropertyFailureRestoresAtomicState(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.failures = 1
-	if _, err = c.apply(ctx, Request{Mode: "GiB", Value: "1", Revision: s.Revision}); err == nil || !strings.Contains(err.Error(), "restored") {
+	if _, err = c.apply(ctx, MemoryRequest{Mode: "GiB", Value: "1", Revision: s.Revision}); err == nil || !strings.Contains(err.Error(), "restored") {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(filepath.Join(c.stateDir, memoryFilename))
@@ -153,14 +157,14 @@ func TestControllerRechecksEnabledVPNFloor(t *testing.T) {
 	if err = config.Save(c.configPath, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.apply(context.Background(), Request{Mode: "MiB", Value: "512", Revision: s.Revision}); !errors.Is(err, ErrConflict) {
+	if _, err = c.apply(context.Background(), MemoryRequest{Mode: "MiB", Value: "512", Revision: s.Revision}); !errors.Is(err, ErrMemoryConflict) {
 		t.Fatal(err)
 	}
 	after, err := c.status(context.Background())
 	if err != nil || after.MinimumBytes != GiB {
 		t.Fatal(after, err)
 	}
-	if _, err = c.apply(context.Background(), Request{Mode: "MiB", Value: "512", Revision: after.Revision}); err == nil {
+	if _, err = c.apply(context.Background(), MemoryRequest{Mode: "MiB", Value: "512", Revision: after.Revision}); err == nil {
 		t.Fatal("embedded VPN minimum ignored")
 	}
 }
@@ -172,18 +176,18 @@ type controlBuffers struct {
 
 func TestControllerStrictBoundedProtocol(t *testing.T) {
 	c, f := testController(t)
-	for _, input := range []string{"{}\n", "{\"action\":\"reboot\"}\n", "{\"action\":\"status\",\"command\":\"bad\"}\n", "{\"action\":\"status\"} {}\n", "{\"action\":\"status\"}", strings.Repeat(" ", 2048) + "{}\n"} {
+	for _, input := range []string{"{}\n", "{\"action\":\"reboot\"}\n", "{\"action\":\"memory.status\",\"command\":\"bad\"}\n", "{\"action\":\"memory.status\"} {}\n", "{\"action\":\"memory.status\"}", strings.Repeat(" ", 2048) + "{}\n"} {
 		var output bytes.Buffer
 		handleControl(context.Background(), controlBuffers{strings.NewReader(input), &output}, c)
 		var reply wireResponse
-		if err := json.Unmarshal(output.Bytes(), &reply); err != nil || reply.Error != "Invalid memory control request." || f.sets != 0 {
+		if err := json.Unmarshal(output.Bytes(), &reply); err != nil || reply.Error != "Invalid resource control request." || f.sets != 0 {
 			t.Fatal(input, output.String(), err)
 		}
 	}
 	var output bytes.Buffer
-	handleControl(context.Background(), controlBuffers{strings.NewReader("{\"action\":\"status\"}\n"), &output}, c)
+	handleControl(context.Background(), controlBuffers{strings.NewReader("{\"action\":\"memory.status\"}\n"), &output}, c)
 	var reply wireResponse
-	if err := json.Unmarshal(output.Bytes(), &reply); err != nil || !reply.Status.Supported || reply.Error != "" {
+	if err := json.Unmarshal(output.Bytes(), &reply); err != nil || !reply.Memory.Supported || reply.Error != "" {
 		t.Fatal(reply, err)
 	}
 }

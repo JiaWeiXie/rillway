@@ -353,22 +353,23 @@ not cap RSS. Limits cover Rillway, not the external WARP daemon or the entire VM
 A percent value is converted and persisted when saved; reapply after changing
 host RAM. macOS and foreground daemons show this control as unavailable.
 
-New Linux installs include the private socket-activated controller. When
-upgrading an older installed binary, enable the controller once as an operator:
+New Linux installs include the private socket-activated resource controller. When
+upgrading an older installed binary, restarting the service as root migrates the
+helper units automatically:
 
 ```sh
-sudo rillway service memory-install
+sudo rillway service restart
 # For a custom service config, supply its actual path:
-sudo rillway service memory-install --config /etc/rillway/config.json
+sudo rillway service restart --config /etc/rillway/config.json
 ```
 
-This creates `rillway-memory.socket` and `rillway-memory.service`, using the same
+This creates `rillway-resource-control.socket` and `rillway-resource-control.service`
+(safely migrating from legacy `rillway-memory.*` units if present), using the same
 root-owned binary. It does not reinstall Rillway, change its config, VPN identity,
 network settings, main service startup policy or existing memory cap. The Web
 daemon retains its unprivileged account and `NoNewPrivileges`; the controller
-only changes `rillway.service` memory properties. A privileged operator can still
-inspect or change the cap using systemd. Do not start the internal helper by hand.
-
+only changes `rillway.service` memory properties and WARP service logging. A privileged operator can still
+inspect or change properties using systemd. Do not start the internal resource-helper by hand.
 Authenticated `GET /api/v1/service/memory` returns support, detected capacity,
 usage, current cap, minimum/maximum and an opaque edit revision. `PUT` accepts
 only `mode`, decimal-string `value` (up to three decimals) and that `revision`.

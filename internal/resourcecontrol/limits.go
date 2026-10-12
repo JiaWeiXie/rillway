@@ -1,5 +1,5 @@
-// Package memorylimit validates service memory budgets independently of the UI.
-package memorylimit
+// Package resourcecontrol manages service memory budgets and service logging independently of the UI.
+package resourcecontrol
 
 import (
 	"math/big"
@@ -10,7 +10,7 @@ import (
 const (
 	MiB            = uint64(1 << 20)
 	GiB            = uint64(1 << 30)
-	SocketPath     = "/run/rillway-memory.sock"
+	SocketPath     = "/run/rillway-resource-control.sock"
 	StateDirectory = "/var/lib/rillway-resource-control"
 )
 
@@ -19,13 +19,13 @@ type messageError string
 
 func (e messageError) Error() string { return string(e) }
 
-type Request struct {
+type MemoryRequest struct {
 	Mode     string `json:"mode"`
 	Value    string `json:"value"`
 	Revision string `json:"revision"`
 }
 
-type Status struct {
+type MemoryStatus struct {
 	Supported     bool   `json:"supported"`
 	Reason        string `json:"reason,omitempty"`
 	HostBytes     uint64 `json:"host_bytes"`
@@ -41,9 +41,9 @@ type Status struct {
 	MinimumReason string `json:"minimum_reason"`
 }
 
-// SafeMinimum is a conservative policy floor, not a benchmark of the exact
+// MemorySafeMinimum is a conservative policy floor, not a benchmark of the exact
 // minimum RSS. Embedded VPNs need more headroom than direct/official WARP.
-func SafeMinimum(cfg config.Config, current uint64) (uint64, string) {
+func MemorySafeMinimum(cfg config.Config, current uint64) (uint64, string) {
 	floor, reason := 256*MiB, "Direct and WARP safety floor"
 	for _, o := range cfg.Outbounds {
 		if o.Enabled && (o.Type == "tailscale" || o.Type == "wireguard") {
@@ -58,13 +58,13 @@ func SafeMinimum(cfg config.Config, current uint64) (uint64, string) {
 	return ((floor + MiB - 1) / MiB) * MiB, reason
 }
 
-// Maximum leaves ten percent of detected host/ancestor capacity for other
+// MemoryMaximum leaves ten percent of detected host/ancestor capacity for other
 // services. The service's own existing limit is deliberately not the host cap.
-func Maximum(host uint64) uint64 { return ((host - host/10) / MiB) * MiB }
+func MemoryMaximum(host uint64) uint64 { return ((host - host/10) / MiB) * MiB }
 
 var decimal = regexp.MustCompile(`^(0|[1-9][0-9]{0,7})(\.[0-9]{1,3})?$`)
 
-func Calculate(req Request, status Status) (uint64, error) {
+func CalculateMemory(req MemoryRequest, status MemoryStatus) (uint64, error) {
 	if !decimal.MatchString(req.Value) {
 		return 0, messageError("Enter a positive memory value with at most three decimal places.")
 	}
@@ -102,7 +102,7 @@ func Calculate(req Request, status Status) (uint64, error) {
 	return limit, nil
 }
 
-func GoBudget(limit uint64) uint64 {
+func MemoryGoBudget(limit uint64) uint64 {
 	high := limit * 3 / 4
 	if high > 64*MiB {
 		return high - 64*MiB

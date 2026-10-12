@@ -249,20 +249,19 @@ Web UI「設定 → 服務記憶體限制」可用主機記憶體百分比、MiB
 WARP daemon，也不等於 NAS 顯示的整台 VM 用量。百分比在儲存時換算並保留；
 調整主機 RAM 後請重新套用。macOS 與前景執行模式會顯示此控制不適用。
 
-新版 Linux 首次安裝會一併註冊控制程序。舊服務更新 binary 後，由管理者執行一次：
+新版 Linux 首次安裝會一併註冊資源控制程序。舊服務更新 binary 後，由管理者重新啟動服務即可自動完成遷移：
 
 ```sh
-sudo rillway service memory-install
+sudo rillway service restart
 # 自訂 unit 請明確指定它使用的設定檔：
-sudo rillway service memory-install --config /etc/rillway/config.json
+sudo rillway service restart --config /etc/rillway/config.json
 ```
 
-這會註冊 `rillway-memory.socket` 與 `rillway-memory.service`，共用同一個 root
+這會註冊 `rillway-resource-control.socket` 與 `rillway-resource-control.service`（自動安全遷移舊版 `rillway-memory.*` unit），共用同一個 root
 擁有的 binary。它不重裝主服務、不修改設定／VPN／網路、主服務的開機啟動政策
 或既有記憶體上限。Web daemon 維持低權限與 `NoNewPrivileges`；控制程序只可
-修改 `rillway.service` 的記憶體屬性。管理者仍可透過 systemd 查閱／修改上限。
-不要手動啟動內部 helper。
-
+修改 `rillway.service` 的記憶體屬性與 WARP 服務日誌。管理者仍可透過 systemd 查閱／修改屬性。
+不要手動啟動內部 resource-helper。
 需要登入的 `GET /api/v1/service/memory` 回傳支援狀態、主機容量、用量、上限、
 可設定範圍與編輯版本；`PUT` 只接受 `mode`、最多三位小數的字串 `value` 及該
 `revision`。單位為 `percent`、`MiB`、`GiB`，版本衝突回傳 HTTP 409。這與主設定

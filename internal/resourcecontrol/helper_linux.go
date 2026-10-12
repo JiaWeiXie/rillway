@@ -1,4 +1,4 @@
-package memorylimit
+package resourcecontrol
 
 import (
 	"bufio"
@@ -23,7 +23,7 @@ import (
 )
 
 type metadata struct {
-	Request
+	MemoryRequest
 	Bytes   uint64 `json:"bytes"`
 	Updated int64  `json:"updated"`
 }
@@ -81,22 +81,22 @@ func (c *controller) properties(ctx context.Context) (map[string]string, error) 
 	return p, nil
 }
 
-func (c *controller) status(ctx context.Context) (Status, error) {
+func (c *controller) status(ctx context.Context) (MemoryStatus, error) {
 	p, err := c.properties(ctx)
 	if err != nil {
-		return Status{}, err
+		return MemoryStatus{}, err
 	}
 	host, err := c.capacity(p["ControlGroup"])
 	if err != nil || host == 0 {
-		return Status{}, messageError("Could not detect the host memory capacity.")
+		return MemoryStatus{}, messageError("Could not detect the host memory capacity.")
 	}
 	cfg, err := config.Load(c.configPath)
 	if err != nil {
-		return Status{}, messageError("Could not validate the installed service configuration.")
+		return MemoryStatus{}, messageError("Could not validate the installed service configuration.")
 	}
 	current, limit, high := parseBytes(p["MemoryCurrent"]), parseBytes(p["MemoryMax"]), parseBytes(p["MemoryHigh"])
-	minimum, reason := SafeMinimum(cfg, current)
-	s := Status{Supported: true, HostBytes: host, MaximumBytes: Maximum(host), MinimumBytes: minimum, CurrentBytes: current, LimitBytes: limit, HighBytes: high, MinimumReason: reason, Mode: "MiB"}
+	minimum, reason := MemorySafeMinimum(cfg, current)
+	s := MemoryStatus{Supported: true, HostBytes: host, MaximumBytes: MemoryMaximum(host), MinimumBytes: minimum, CurrentBytes: current, LimitBytes: limit, HighBytes: high, MinimumReason: reason, Mode: "MiB"}
 	value := limit
 	if value == 0 {
 		value = 512 * MiB
@@ -110,7 +110,7 @@ func (c *controller) status(ctx context.Context) (Status, error) {
 		line, _, _ := bytes.Cut(b, []byte("\n"))
 		if json.Unmarshal(bytes.TrimPrefix(line, []byte("# rillway-memory ")), &m) == nil && m.Bytes == limit && limit != 0 {
 			s.Mode, s.Value = m.Mode, m.Value
-			s.GoLimitBytes = GoBudget(limit)
+			s.GoLimitBytes = MemoryGoBudget(limit)
 		}
 	}
 	identity, _ := json.Marshal([]any{limit, high, host, cfg.Revision, m})
@@ -123,7 +123,7 @@ func (c *controller) status(ctx context.Context) (Status, error) {
 	return s, nil
 }
 
-func (c *controller) apply(ctx context.Context, req Request) (Status, error) {
+func (c *controller) apply(ctx context.Context, req MemoryRequest) (MemoryStatus, error) {
 	s, err := c.status(ctx)
 	if err != nil {
 		return s, err
@@ -132,9 +132,9 @@ func (c *controller) apply(ctx context.Context, req Request) (Status, error) {
 		return s, messageError(s.Reason)
 	}
 	if req.Revision == "" || req.Revision != s.Revision {
-		return s, ErrConflict
+		return s, ErrMemoryConflict
 	}
-	limit, err := Calculate(req, s)
+	limit, err := CalculateMemory(req, s)
 	if err != nil {
 		return s, err
 	}
@@ -153,7 +153,7 @@ func (c *controller) apply(ctx context.Context, req Request) (Status, error) {
 		_, err := c.command(ctx, "set-property", "rillway.service", "MemoryMax="+format(max), "MemoryHigh="+format(soft))
 		return err
 	}
-	if err = c.save(metadata{Request: req, Bytes: limit, Updated: time.Now().UnixNano()}); err != nil {
+	if err = c.save(metadata{MemoryRequest: req, Bytes: limit, Updated: time.Now().UnixNano()}); err != nil {
 		return s, messageError("Could not save memory settings. Your current limit is unchanged.")
 	}
 	// The dedicated final drop-in survives other existing unit drop-ins, unlike
@@ -298,20 +298,20 @@ func handleControl(ctx context.Context, conn io.ReadWriter, c *controller) {
 		}
 	}
 	if readErr != nil || len(data) > 2048 || err != nil {
-		reply.Error = "Invalid memory control request."
+		reply.Error = "Invalid resource control request."
 	} else {
 		var err error
 		switch {
-		case req.Action == "status" && req.Limit == nil:
-			reply.Status, err = c.status(ctx)
-		case req.Action == "apply" && req.Limit != nil:
-			reply.Status, err = c.apply(ctx, *req.Limit)
+		case req.Action == "memory.status" && req.Memory == nil:
+			reply.Memory, err = c.status(ctx)
+		case req.Action == "memory.apply" && req.Memory != nil:
+			reply.Memory, err = c.apply(ctx, *req.Memory)
 		default:
-			err = messageError("Invalid memory control request.")
+			err = messageError("Invalid resource control request.")
 		}
 		if err != nil {
 			reply.Error = err.Error()
-			reply.Conflict = errors.Is(err, ErrConflict)
+			reply.Conflict = errors.Is(err, ErrMemoryConflict)
 		}
 	}
 	_ = json.NewEncoder(conn).Encode(reply)
@@ -319,26 +319,26 @@ func handleControl(ctx context.Context, conn io.ReadWriter, c *controller) {
 
 func ServeHelper(ctx context.Context, configPath string) error {
 	if os.Geteuid() != 0 || os.Getenv("LISTEN_PID") != strconv.Itoa(os.Getpid()) || os.Getenv("LISTEN_FDS") != "1" {
-		return messageError("Memory control requires systemd socket activation.")
+		return messageError("Resource control requires systemd socket activation.")
 	}
-	f := os.NewFile(3, "memory-control")
+	f := os.NewFile(3, "resource-control")
 	l, err := net.FileListener(f)
 	_ = f.Close()
 	if err != nil {
-		return messageError("Memory control socket is unavailable.")
+		return messageError("Resource control socket is unavailable.")
 	}
 	defer func() { _ = l.Close() }()
 	unix, ok := l.(*net.UnixListener)
 	if !ok || unix.Addr().String() != SocketPath {
-		return messageError("Memory control socket is unavailable.")
+		return messageError("Resource control socket is unavailable.")
 	}
 	account, err := user.Lookup("rillway")
 	if err != nil {
-		return messageError("Memory control service account is unavailable.")
+		return messageError("Resource control service account is unavailable.")
 	}
 	uid, err := strconv.ParseUint(account.Uid, 10, 32)
 	if err != nil {
-		return messageError("Memory control service account is unavailable.")
+		return messageError("Resource control service account is unavailable.")
 	}
 	c := &controller{configPath: configPath, stateDir: StateDirectory, command: systemctl, capacity: hostCapacity, save: saveMetadata, restore: writeMemoryState}
 	stop := context.AfterFunc(ctx, func() { _ = unix.Close() })
@@ -350,7 +350,7 @@ func ServeHelper(ctx context.Context, configPath string) error {
 			if ctx.Err() != nil || errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			return messageError("Memory control socket stopped.")
+			return messageError("Resource control socket stopped.")
 		}
 		p, err := c.properties(ctx)
 		if err == nil && peerAllowed(conn, uint32(uid), p["ControlGroup"]) {

@@ -97,3 +97,11 @@ func TestCLILocalizedErrorsPreserveArguments(t *testing.T) {
 		t.Fatalf("language parsing changed a flag value: %v %v %v", locale, remaining, err)
 	}
 }
+
+func TestServiceResourceHelperRejectsPositionalArgs(t *testing.T) {
+	var out bytes.Buffer
+	err := run(t.Context(), []string{"service", "resource-helper", "unexpected"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "resource-helper does not accept positional arguments") {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}

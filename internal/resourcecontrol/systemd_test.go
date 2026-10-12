@@ -1,21 +1,21 @@
-package memorylimit
+package resourcecontrol
 
 import (
 	"strings"
 	"testing"
 )
 
-func TestMemoryUnitsRemainNarrowAndPrivate(t *testing.T) {
+func TestResourceUnitsRemainNarrowAndPrivate(t *testing.T) {
 	socket, service, err := Units("/usr/local/lib/rillway/rillway", "/etc/rillway/config.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"SocketMode=0660", "SocketGroup=rillway", "Backlog=8", "RemoveOnStop=yes"} {
+	for _, s := range []string{"SocketMode=0660", "SocketGroup=rillway", "Backlog=8", "RemoveOnStop=yes", "ListenStream=/run/rillway-resource-control.sock"} {
 		if !strings.Contains(socket, s) {
 			t.Fatal(s)
 		}
 	}
-	for _, s := range []string{"NoNewPrivileges=yes", "RestrictAddressFamilies=AF_UNIX", "MemoryMax=64M", "ProtectSystem=strict", "service memory-helper", "StateDirectoryMode=0755"} {
+	for _, s := range []string{"NoNewPrivileges=yes", "RestrictAddressFamilies=AF_UNIX", "MemoryMax=64M", "ProtectSystem=strict", "service resource-helper", "StateDirectoryMode=0755", "StateDirectory=rillway-resource-control"} {
 		if !strings.Contains(service, s) {
 			t.Fatal(s)
 		}

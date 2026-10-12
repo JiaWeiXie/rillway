@@ -1,4 +1,4 @@
-package memorylimit
+package resourcecontrol
 
 import (
 	"errors"
@@ -18,10 +18,10 @@ func Units(binary, configPath string) (socket, service string, err error) {
 	}
 	quote := func(p string) string { return strconv.Quote(strings.ReplaceAll(p, "%", "%%")) }
 	socket = `[Unit]
-Description=Rillway memory control socket
+Description=Rillway resource control socket
 
 [Socket]
-ListenStream=/run/rillway-memory.sock
+ListenStream=/run/rillway-resource-control.sock
 SocketUser=root
 SocketGroup=rillway
 SocketMode=0660
@@ -32,15 +32,15 @@ RemoveOnStop=yes
 WantedBy=sockets.target
 `
 	service = fmt.Sprintf(`[Unit]
-Description=Rillway memory control
-Requires=rillway-memory.socket
-After=rillway-memory.socket
+Description=Rillway resource control
+Requires=rillway-resource-control.socket
+After=rillway-resource-control.socket
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStart=%s service memory-helper --config %s
+ExecStart=%s service resource-helper --config %s
 StateDirectory=rillway-resource-control
 StateDirectoryMode=0755
 UMask=0077

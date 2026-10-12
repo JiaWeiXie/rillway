@@ -105,40 +105,20 @@ func linuxService(ctx context.Context, action, source string) (string, error) {
 			return "", errors.New("run service install with sudo to create the dedicated rillway service account")
 		}
 		return installLinux(ctx, source, defaultLinuxPaths(), Run, os.Executable)
-	case "memory-install":
+	case "restart":
 		if os.Geteuid() != 0 {
-			return "", errors.New("memory control installation requires sudo")
+			return "", errors.New("service restart requires sudo to reconcile systemd configuration")
 		}
 		paths := defaultLinuxPaths()
 		if _, err := config.Load(source); err != nil {
 			return "", err
 		}
-		// A root controller must never execute a binary writable by its service
-		// account. Validate the installed executable and every parent directory.
-		for path := paths.binary; path != "/"; path = filepath.Dir(path) {
-			info, err := os.Lstat(path)
-			if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 || !rootOwned(info) {
-				return "", errors.New("memory control requires a root-owned installed binary and directories")
-			}
-		}
-		for _, path := range []string{paths.unit, filepath.Dir(paths.unit), filepath.Join(filepath.Dir(paths.unit), "rillway.service.d")} {
-			info, err := os.Lstat(path)
-			if os.IsNotExist(err) && strings.HasSuffix(path, "rillway.service.d") {
-				continue
-			}
-			if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 || !rootOwned(info) {
-				return "", errors.New("memory control requires root-owned service registration")
-			}
-		}
-		if err := writeMemoryUnits(paths, source); err != nil {
+		if err := reconcileResourceControl(ctx, paths, source, Run); err != nil {
 			return "", err
 		}
-		if _, err := Run(ctx, "systemctl", "daemon-reload"); err != nil {
-			return "", err
-		}
-		out, err := Run(ctx, "systemctl", "enable", "--now", "rillway-memory.socket")
+		out, err := Run(ctx, "systemctl", "restart", "rillway.service")
 		return string(out), err
-	case "start", "stop", "restart", "status":
+	case "start", "stop", "status":
 		args := []string{action, "rillway.service"}
 		if action == "status" {
 			args = append(args, "--no-pager")
@@ -152,16 +132,19 @@ func linuxService(ctx context.Context, action, source string) (string, error) {
 		if _, err := Run(ctx, "systemctl", "disable", "--now", "rillway.service"); err != nil {
 			return "", err
 		}
-		if _, err := os.Stat("/etc/systemd/system/rillway-memory.socket"); err == nil {
-			if _, err = Run(ctx, "systemctl", "disable", "--now", "rillway-memory.socket"); err != nil {
-				return "", err
-			}
-			if _, err = Run(ctx, "systemctl", "stop", "rillway-memory.service"); err != nil {
-				return "", err
-			}
-			for _, name := range []string{"rillway-memory.socket", "rillway-memory.service"} {
-				if err = os.Remove(filepath.Join("/etc/systemd/system", name)); err != nil && !os.IsNotExist(err) {
+		for _, name := range []string{"rillway-resource-control", "rillway-memory"} {
+			socketPath := filepath.Join("/etc/systemd/system", name+".socket")
+			if _, err := os.Stat(socketPath); err == nil {
+				if _, err = Run(ctx, "systemctl", "disable", "--now", name+".socket"); err != nil {
 					return "", err
+				}
+				if _, err = Run(ctx, "systemctl", "stop", name+".service"); err != nil {
+					return "", err
+				}
+				for _, ext := range []string{".socket", ".service"} {
+					if err = os.Remove(filepath.Join("/etc/systemd/system", name+ext)); err != nil && !os.IsNotExist(err) {
+						return "", err
+					}
 				}
 			}
 		}
