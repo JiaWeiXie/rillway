@@ -131,82 +131,58 @@ func TestOutboundRefreshTickSafety(t *testing.T) {
 		nextStatus:        time.Now().Add(-time.Second), // expired deadline
 	}
 
-	// 1. Off-page does NOT poll status
+	// Polling must stay inside the Outbounds page, avoid active requests/forms,
+	// and never advance the deadline when it did not dispatch status loading.
 	for _, page := range []int{0, 2, 3} {
 		m := base
 		m.page = page
-		_, cmd := m.Update(tickMsg(time.Now()))
-		if cmd != nil && m.statusLoading {
+		next, _ := m.Update(tickMsg(time.Now()))
+		if next.(model).statusLoading {
 			t.Fatalf("page %d scheduled status load during tick", page)
 		}
 	}
 
-	// 2. Open form does NOT poll status
-	{
-		m := base
-		m.form = "outbound"
-		_, cmd := m.Update(tickMsg(time.Now()))
-		if cmd != nil && m.statusLoading {
-			t.Fatal("open form scheduled status load during tick")
-		}
-	}
-
-	// 3. Already loading does NOT poll status
-	{
-		m := base
-		m.loading = true
-		_, cmd := m.Update(tickMsg(time.Now()))
-		if cmd != nil && m.statusLoading {
-			t.Fatal("loading=true scheduled status load during tick")
-		}
-	}
-
-	// 4. Status already in flight does NOT duplicate
-	{
-		m := base
-		m.statusLoading = true
-		_, cmd := m.Update(tickMsg(time.Now()))
-		if cmd != nil {
-			// tick returns tick() cmd, but should not have loaded statuses
-			if m.nextStatus.After(time.Now().Add(10 * time.Second)) {
-				t.Fatal("statusLoading=true re-scheduled status load")
+	for _, test := range []struct {
+		name  string
+		apply func(*model)
+	}{
+		{"open form", func(m *model) { m.form = "outbound" }},
+		{"loading", func(m *model) { m.loading = true }},
+		{"status loading", func(m *model) { m.statusLoading = true }},
+		{"off", func(m *model) { m.outboundRefresh = 0 }},
+		{"unexpired deadline", func(m *model) { m.nextStatus = time.Now().Add(25 * time.Second) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := base
+			test.apply(&m)
+			before := m.nextStatus
+			next, _ := m.Update(tickMsg(time.Now()))
+			result := next.(model)
+			if test.name == "status loading" {
+				if !result.statusLoading {
+					t.Fatal("statusLoading state was cleared")
+				}
+			} else if result.statusLoading {
+				t.Fatal("scheduled status load during protected tick")
 			}
-		}
+			if !result.nextStatus.Equal(before) {
+				t.Fatal("protected tick advanced outbound refresh deadline")
+			}
+		})
 	}
 
-	// 5. Off (0s) does NOT poll status
-	{
-		m := base
-		m.outboundRefresh = 0
-		_, cmd := m.Update(tickMsg(time.Now()))
-		if m.statusLoading {
-			t.Fatal("outboundRefresh=0 scheduled status load")
-		}
-		_ = cmd
-	}
-
-	// 6. Deadline not expired does NOT poll status
-	{
-		m := base
-		m.nextStatus = time.Now().Add(25 * time.Second)
-		_, _ = m.Update(tickMsg(time.Now()))
-		if m.statusLoading {
-			t.Fatal("unexpired deadline scheduled status load")
-		}
-	}
-
-	// 7. Legitimate tick: on page 1, ready, no form, not loading, deadline expired
+	// A valid tick dispatches a status load and advances its deadline.
 	{
 		m := base
 		next, cmd := m.Update(tickMsg(time.Now()))
-		m = next.(model)
-		if !m.statusLoading {
+		result := next.(model)
+		if !result.statusLoading {
 			t.Fatal("expected statusLoading=true on valid tick")
 		}
 		if cmd == nil {
 			t.Fatal("expected tick command batch to be scheduled")
 		}
-		if !m.nextStatus.After(time.Now()) {
+		if !result.nextStatus.After(time.Now()) {
 			t.Fatal("nextStatus was not updated to future deadline")
 		}
 	}

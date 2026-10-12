@@ -303,7 +303,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				strings.Contains(strings.ToLower(msg.err.Error()), "conflict") ||
 				strings.Contains(strings.ToLower(msg.err.Error()), "changed elsewhere")
 			if isConflict {
-				m.err = errors.New("WARP logging settings changed elsewhere. Revision refreshed; press Enter to retry.")
+				m.err = errors.New("WARP logging settings changed elsewhere. Revision refreshed; press Enter to retry")
 				m.warpLogLoading = true
 				return m, m.loadWarpLog(false)
 			}
@@ -481,22 +481,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.load()
 	case tickMsg:
 		commands := []tea.Cmd{tick()}
-		if !m.loading && m.ready && m.form == "" {
-			m.loading = true
-			commands = append(commands, m.load())
-		}
 		interval := m.outboundRefresh
 		if !m.refreshConfigured && interval == 0 {
 			interval = 30 * time.Second
 		}
-		if m.ready && m.page == 1 && m.form == "" && !m.statusLoading && interval > 0 && time.Now().After(m.nextStatus) {
+		now := time.Now()
+		statusDue := m.ready && m.page == 1 && m.form == "" && !m.loading && !m.statusLoading && interval > 0 && now.After(m.nextStatus)
+		if !m.loading && m.ready && m.form == "" && !statusDue {
+			m.loading = true
+			commands = append(commands, m.load())
+		}
+		if statusDue {
 			m.statusLoading = true
-			m.nextStatus = time.Now().Add(interval)
+			m.nextStatus = now.Add(interval)
 			commands = append(commands, m.loadStatuses(false))
 		}
-		if m.ready && m.page == 2 && m.form == "" && !m.sourceLoading && time.Now().After(m.nextSource) {
+		if m.ready && m.page == 2 && m.form == "" && !m.sourceLoading && now.After(m.nextSource) {
 			m.sourceLoading = true
-			m.nextSource = time.Now().Add(5 * time.Second)
+			m.nextSource = now.Add(5 * time.Second)
 			commands = append(commands, m.loadSources())
 		}
 		return m, tea.Batch(commands...)
@@ -1062,7 +1064,7 @@ func (m model) View() string {
 	if m.ready && m.page == 1 {
 		b.WriteString(m.text("  + Add outbound with suggested values\n"))
 		b.WriteString(m.text("  c Connect   d Disconnect   v Verify   n Register   l WARP+ license key\n"))
-		b.WriteString(fmt.Sprintf(m.text("  p Auto refresh: %s   r Refresh now\n"), m.refreshLabel()))
+		fmt.Fprintf(&b, m.text("  p Auto refresh: %s   r Refresh now\n"), m.refreshLabel())
 	}
 	if m.ready && m.page == 2 {
 		b.WriteString(m.text("  v Toggle Clients / Rules view\n"))

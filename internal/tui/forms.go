@@ -361,12 +361,13 @@ func (m model) fieldsView() string {
 		}
 		fmt.Fprintf(&b, "  %s %s\n    %s\n", marker, m.text(label), cell(value, max(20, m.width-6)))
 	}
-	if m.form == "warp_log" {
+	switch m.form {
+	case "warp_log":
 		b.WriteString(m.text("\n  Notice: Applying this setting restarts WARP and briefly interrupts WARP-routed connections.\n"))
 		b.WriteString(m.text("  Left/Right/Space Choose level   Enter Save   Esc Cancel\n"))
-	} else if m.form == "source_rule" {
+	case "source_rule":
 		b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save   Esc Cancel\n"))
-	} else {
+	default:
 		b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save / Connect   Esc Cancel\n"))
 	}
 	if m.form == "outbound" {
