@@ -8,6 +8,64 @@ const web = path.join(__dirname, '..', 'web');
 const catalog = JSON.parse(fs.readFileSync(path.join(web, 'locales.json'), 'utf8'));
 const helper = fs.readFileSync(path.join(web, 'i18n.js'), 'utf8');
 const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
+const resourceMessages = [
+  [
+    "Resource control did not respond. Read current settings before retrying.",
+    "資源控制未回應。請先讀取目前設定再重試。"
+  ],
+  [
+    "WARP logging control is unavailable. Upgrade the installed service to enable it.",
+    "WARP 記錄控制無法使用。請升級已安裝的服務以啟用。"
+  ],
+  [
+    "Could not read WARP logging settings.",
+    "無法讀取 WARP 記錄設定。"
+  ],
+  [
+    "Invalid WARP log level. Allowed values: inherit, warning, info, debug.",
+    "WARP 記錄層級無效。允許的值為 inherit、warning、info、debug。"
+  ],
+  [
+    "Could not apply WARP logging settings. Refresh settings before retrying.",
+    "無法套用 WARP 記錄設定。請重新整理設定後再重試。"
+  ],
+  [
+    "WARP logging control requires a Linux systemd installation.",
+    "WARP 記錄控制需要 Linux systemd 安裝環境。"
+  ],
+  [
+    "Invalid WARP log level.",
+    "WARP 記錄層級無效。"
+  ],
+  [
+    "Could not read saved WARP log settings. Current settings are unchanged.",
+    "無法讀取已儲存的 WARP 記錄設定。目前設定未變更。"
+  ],
+  [
+    "Could not save WARP log settings. Current settings are unchanged.",
+    "無法儲存 WARP 記錄設定。目前設定未變更。"
+  ],
+  [
+    "Could not apply WARP log settings. The previous settings were restored.",
+    "無法套用 WARP 記錄設定。已還原先前的設定。"
+  ],
+  [
+    "Invalid resource control request.",
+    "資源控制請求無效。"
+  ],
+  [
+    "Service resource control requires a Linux systemd installation.",
+    "服務資源控制需要 Linux systemd 安裝環境。"
+  ],
+  [
+    "WARP log settings could not be saved or restored. Read current settings before retrying.",
+    "無法儲存或還原 WARP 記錄設定。請先讀取目前設定再重試。"
+  ]
+];
+for(const [source,translation] of resourceMessages) {
+  assert.equal(catalog.en[source],source);
+  assert.equal(catalog["zh-Hant"][source],translation);
+}
 
 function element(id = '') {
   const el = {id, value:'', checked:false, hidden:false, open:false, disabled:false,
