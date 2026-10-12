@@ -71,6 +71,7 @@ type (
 
 type statusesMsg struct {
 	generation uint64
+	sequence   uint64
 	statuses   []outbound.Status
 	err        error
 }
@@ -131,6 +132,7 @@ type model struct {
 	rememberPending   bool
 	startCommand      func() *exec.Cmd
 	generation        uint64
+	statusSequence    uint64
 	field, outType    int
 	fields            []string
 	drafts            map[string][]string
@@ -172,7 +174,7 @@ func (m model) Init() tea.Cmd {
 	if m.client == nil {
 		return tick()
 	}
-	return tea.Batch(m.load(), m.loadStatuses(false), m.loadSources(), tick())
+	return tea.Batch(m.load(), m.loadStatuses(false, m.statusSequence), m.loadSources(), tick())
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -201,10 +203,10 @@ func (m model) load() tea.Cmd {
 	}
 }
 
-func (m model) loadStatuses(force bool) tea.Cmd {
+func (m model) loadStatuses(force bool, sequence uint64) tea.Cmd {
 	return func() tea.Msg {
 		statuses, err := m.client.Statuses(m.ctx, force)
-		return statusesMsg{statuses: statuses, err: err, generation: m.generation}
+		return statusesMsg{statuses: statuses, err: err, generation: m.generation, sequence: sequence}
 	}
 }
 
@@ -395,7 +397,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ready = false
 		}
 	case statusesMsg:
-		if msg.generation != m.generation {
+		if msg.generation != m.generation || msg.sequence != m.statusSequence {
 			return m, nil
 		}
 		m.statusLoading = false
@@ -476,7 +478,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		if !m.statusLoading {
 			m.statusLoading = true
-			return m, tea.Batch(m.load(), m.loadStatuses(false))
+			m.statusSequence++
+			return m, tea.Batch(m.load(), m.loadStatuses(false, m.statusSequence))
 		}
 		return m, m.load()
 	case tickMsg:
@@ -494,7 +497,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if statusDue {
 			m.statusLoading = true
 			m.nextStatus = now.Add(interval)
-			commands = append(commands, m.loadStatuses(false))
+			m.statusSequence++
+			commands = append(commands, m.loadStatuses(false, m.statusSequence))
 		}
 		if m.ready && m.page == 2 && m.form == "" && !m.sourceLoading && now.After(m.nextSource) {
 			m.sourceLoading = true
@@ -562,7 +566,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected--
 			m.clamp()
 		case "r":
-			if m.client != nil && !m.loading {
+			if m.client != nil && !m.loading && (m.page != 1 || !m.statusLoading) {
 				m.loading = true
 				if m.page == 1 {
 					m.statusLoading = true
@@ -573,7 +577,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if interval > 0 {
 						m.nextStatus = time.Now().Add(interval)
 					}
-					return m, tea.Batch(m.load(), m.loadStatuses(true))
+					m.statusSequence++
+					return m, tea.Batch(m.load(), m.loadStatuses(true, m.statusSequence))
 				}
 				if m.page == 3 {
 					var cmds []tea.Cmd

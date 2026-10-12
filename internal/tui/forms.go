@@ -189,13 +189,14 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.advancedVisible = false
 			m.serverInfo = control.Info{}
 			m.generation++
+			m.statusSequence++
 			m.ready = false
 			m.loading = true
 			m.statusLoading = true
 			m.err = nil
 			m.form = ""
 			m.rememberPending = true
-			return m, tea.Batch(m.load(), m.loadStatuses(false))
+			return m, tea.Batch(m.load(), m.loadStatuses(false, m.statusSequence))
 		}
 		if m.form == "source_rule" {
 			rule := config.SourceAccessRule{ID: strings.TrimSpace(m.fields[0]), Name: strings.TrimSpace(m.fields[1]), Action: m.fields[2], CIDRs: splitValues(m.fields[3]), Enabled: m.fields[4] == "true", Note: strings.TrimSpace(m.fields[5])}

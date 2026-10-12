@@ -59,6 +59,8 @@ var coreCatalog = map[string]string{
 	"Memory verification failed. Read current limits before retrying.":                         "記憶體限制驗證失敗；重試前請重新讀取目前限制。",
 	"Invalid memory control request.":                                                          "記憶體控制請求無效。",
 	"Memory control did not respond. Read current limits before retrying.":                     "記憶體控制未回應；重試前請重新讀取目前限制。",
+	"Resource control did not respond. Read current limits before retrying.":                   "資源控制未回應；重試前請重新讀取目前限制。",
+	"Invalid refresh query parameter.":                                                         "重新整理查詢參數無效。",
 	"Resource control is unavailable. Upgrade the installed service to enable it.":             "資源控制無法使用；請升級已安裝的服務以啟用此功能。",
 	"Resource control did not respond. Read current settings before retrying.":                 "資源控制未回應；重試前請重新讀取目前設定。",
 	"WARP service logging requires a Linux systemd installation.":                              "WARP 服務記錄功能需要 Linux systemd 安裝環境。",

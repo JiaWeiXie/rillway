@@ -308,6 +308,13 @@ async function browser(initialLocale, preferences = {}) {
   assert.equal(b.get('login-error').textContent,'未知 upstream 😀');
   assert.equal(b.get('login-error').dataset.errorSource,undefined);
 
+  // A failed logging refresh must keep a previously supported form disabled;
+  // otherwise its stale revision can be submitted after the failure.
+  b.context.fetch=async()=>({ok:false,status:503,json:async()=>({error:'Could not read WARP logging settings.'})});
+  vm.runInContext("active=true;errorIn=()=>{};warpLogStatus={supported:true,level:'info',effective_level:'info',revision:'stale'};renderWarpLog(true)",b.context);
+  await vm.runInContext('loadWarpLog(true)',b.context);
+  assert.equal(b.get('warp-log-fields').disabled,true,'failed WARP refresh must keep stale controls disabled');
+
   // Search should work across languages and full-width input, without
   // changing user text, credentials, or configuration.
   const configBeforeSearch=vm.runInContext('JSON.stringify(cfg)',b.context);

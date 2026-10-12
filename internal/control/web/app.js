@@ -33,7 +33,7 @@ const pacPresetNotes = {
   'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
 };
 let memoryStatus = null, memoryDraftRevision = "", memoryDirty = false, memorySaving = false, memoryLoading = false, memoryInputMode = "MiB";
-let warpLogStatus = null, warpLogDraftRevision = "", warpLogDirty = false, warpLogSaving = false, warpLogLoading = false;
+let warpLogStatus = null, warpLogDraftRevision = "", warpLogDirty = false, warpLogSaving = false, warpLogLoading = false, warpLogLoadFailed = false, warpLogGeneration = 0;
 let capacityDirty = false, capacityDraftRevision = null, capacitySaving = false;
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
 let outboundGeneration = 0;
@@ -722,23 +722,35 @@ function memoryPreview() {
 }
 async function loadWarpLog(explicit = false) {
   if(!active || warpLogLoading || warpLogSaving) return;
-  warpLogLoading = true; $('warp-log-refresh').disabled = true;
+  const generation = ++warpLogGeneration;
+  warpLogLoadFailed = false;
+  warpLogLoading = true; $('warp-log-refresh').disabled = true; renderWarpLog(false);
   try {
     const status = await api('/service/logging/warp');
+    if(generation !== warpLogGeneration) return;
+    warpLogLoadFailed = false;
     warpLogStatus = status;
     if(explicit || !warpLogDirty) warpLogDraftRevision = status.revision || '';
     renderWarpLog(!warpLogDirty);
     if(explicit) clearError($('warp-log-form'));
   } catch(error) {
+    if(generation !== warpLogGeneration) return;
     if(error.status === 501) {
       warpLogStatus = {supported:false, reason:t('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.')};
       renderWarpLog(false);
     } else {
+      warpLogLoadFailed = true;
       errorIn($('warp-log-form'),error);
       $('warp-log-fields').disabled = true;
     }
   }
-  finally { warpLogLoading = false; $('warp-log-refresh').disabled = false; }
+  finally {
+    if(generation === warpLogGeneration) {
+      warpLogLoading = false;
+      $('warp-log-refresh').disabled = false;
+      renderWarpLog(false);
+    }
+  }
 }
 function renderWarpLog(fill = false) {
   const s = warpLogStatus;
@@ -772,7 +784,7 @@ function renderWarpLog(fill = false) {
   }
   unsupported.hidden = true;
   statusCard.hidden = false;
-  fields.disabled = warpLogSaving;
+  fields.disabled = warpLogSaving || warpLogLoading || warpLogLoadFailed;
   const configuredLabel = levelNames[s.level] ? t(levelNames[s.level]) : (s.level || '—');
   const effectiveLabel = levelNames[s.effective_level] ? t(levelNames[s.effective_level]) : (s.effective_level || configuredLabel);
   currentLevel.textContent = configuredLabel;
@@ -791,7 +803,7 @@ function switchLocale(locale) {
   navigate(currentPage);
   connection(isOnline);
   if(cfg) {
-    renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds(); renderSourceAccess();
+    renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds(); renderSourceAccess(); renderDeleteOutbound();
     for(const id of ['default-outbound','rule-outbound']) {
       const select = $(id), selected = select.value;
       if(select.options.length) { select.innerHTML = options(selected,id === 'rule-outbound'); select.value = selected; }
@@ -863,9 +875,10 @@ if($('warp-log-refresh')) {
 }
 if($('warp-log-form')) {
   $('warp-log-form').addEventListener('submit',async e => {
-    e.preventDefault(); if(warpLogSaving || !warpLogStatus?.supported) return;
+    e.preventDefault(); if(warpLogSaving || warpLogLoading || !warpLogStatus?.supported) return;
     const level = $('warp-log-level').value;
     const body = {level, revision:warpLogDraftRevision};
+    ++warpLogGeneration;
     warpLogSaving = true; renderWarpLog(false); clearError(e.target);
     const saveBtn = $('warp-log-save');
     if(saveBtn) saveBtn.textContent = t('Saving logging level…');

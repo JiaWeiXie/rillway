@@ -13,7 +13,7 @@ import (
 func TestReconcileWarpEffectiveReadback(t *testing.T) {
 	for _, tc := range []struct {
 		name, configured, effective string
-		readError, fail             bool
+		readError, fail, managed    bool
 	}{
 		{name: "default-info", effective: "info"},
 		{name: "numeric-info", effective: "6"},
@@ -27,6 +27,7 @@ func TestReconcileWarpEffectiveReadback(t *testing.T) {
 		{name: "read-error", readError: true, fail: true},
 		{name: "empty-readback", fail: true},
 		{name: "unsafe-inherit-readback", configured: "inherit", effective: "private command output", fail: true},
+		{name: "already-managed-does-not-restart", configured: "info", effective: "info", managed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			paths := fixtureLinuxPaths(t.TempDir())
@@ -56,6 +57,15 @@ func TestReconcileWarpEffectiveReadback(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if tc.managed {
+				warpDropinDir := filepath.Join(unitDir, "warp-svc.service.d")
+				if err := os.MkdirAll(warpDropinDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(warpState, filepath.Join(warpDropinDir, "zzzz-rillway-log-level.conf")); err != nil {
+					t.Fatal(err)
+				}
+			}
 			var commands []string
 			run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 				command := name + " " + strings.Join(args, " ")
@@ -74,12 +84,19 @@ func TestReconcileWarpEffectiveReadback(t *testing.T) {
 				return nil, nil
 			}
 			err := reconcileResourceControl(t.Context(), paths, filepath.Join(paths.root, "config.json"), run)
-			want := []string{"systemctl show warp-svc.service --property=LoadState", "systemctl daemon-reload", "systemctl show warp-svc.service --property=LogLevelMax --value"}
+			want := []string{"systemctl show warp-svc.service --property=LoadState", "systemctl daemon-reload"}
+			if !tc.managed {
+				want = append(want, "systemctl restart warp-svc.service")
+			}
+			want = append(want, "systemctl show warp-svc.service --property=LogLevelMax --value")
 			if tc.fail {
 				if err == nil || err.Error() != "could not verify WARP service logging; the previous settings were restored" {
 					t.Fatalf("unexpected unsafe verification error: %v", err)
 				}
 				want = append(want, "systemctl daemon-reload")
+				if !tc.managed {
+					want = append(want, "systemctl restart warp-svc.service")
+				}
 				for _, name := range []string{"rillway-resource-control.socket", "rillway-resource-control.service", "warp-svc.service.d"} {
 					if _, err := os.Lstat(filepath.Join(unitDir, name)); !os.IsNotExist(err) {
 						t.Fatalf("rollback retained %s: %v", name, err)

@@ -119,3 +119,18 @@ func TestWarpLogAPIAuthValidationAndConflicts(t *testing.T) {
 		t.Fatalf("expected localized unsupported response, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestWarpLogAPIMapsUnsupportedApplyToNotImplemented(t *testing.T) {
+	b := &warpLogTestBackend{
+		fakeBackend: newBackend(),
+		state: resourcecontrol.WarpLogStatus{
+			Supported: false,
+			Reason:    "Cloudflare WARP service (warp-svc.service) is not installed or loaded.",
+		},
+		failure: errors.New("private helper details"),
+	}
+	w := request(New(b, "token"), "PUT", "/api/v1/service/logging/warp", `{"level":"info","revision":"rev-1"}`, "token", "")
+	if w.Code != 501 || strings.Contains(w.Body.String(), "private") {
+		t.Fatalf("expected sanitized 501 for unsupported helper result, got %d: %s", w.Code, w.Body.String())
+	}
+}

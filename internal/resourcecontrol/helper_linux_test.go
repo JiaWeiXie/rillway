@@ -10,10 +10,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"rillway/internal/config"
 	"strconv"
 	"strings"
 	"testing"
+
+	"rillway/internal/config"
 )
 
 type fakeSystem struct {
@@ -387,6 +388,14 @@ func TestWarpLogApplyRollsBackOnEffectiveLevelMismatch(t *testing.T) {
 
 	if f.warpRestarts != 2 {
 		t.Fatalf("expected 2 restarts (apply + rollback), got: %d", f.warpRestarts)
+	}
+}
+
+func TestNormalizeLogLevelMaxPreservesNoticePriority(t *testing.T) {
+	for _, input := range []string{"notice", "5"} {
+		if got := normalizeLogLevelMax(input); got != "notice" {
+			t.Fatalf("normalizeLogLevelMax(%q) = %q, want notice", input, got)
+		}
 	}
 }
 

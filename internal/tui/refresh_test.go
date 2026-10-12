@@ -7,6 +7,7 @@ import (
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/i18n"
+	"rillway/internal/outbound"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -225,7 +226,7 @@ func TestOutboundForcedRefreshViaR(t *testing.T) {
 	}
 
 	// Normal loadStatuses(false) on page switch or background
-	cmdNormal := m.loadStatuses(false)
+	cmdNormal := m.loadStatuses(false, m.statusSequence)
 	msgNormal := cmdNormal().(statusesMsg)
 	_ = msgNormal
 	if q, ok := queryReceived.Load().(string); ok && strings.Contains(q, "refresh=true") {
@@ -233,10 +234,26 @@ func TestOutboundForcedRefreshViaR(t *testing.T) {
 	}
 
 	// Forced loadStatuses(true) explicitly requests ?refresh=true
-	cmdForce := m.loadStatuses(true)
+	cmdForce := m.loadStatuses(true, m.statusSequence)
 	msgForce := cmdForce().(statusesMsg)
 	_ = msgForce
 	if q, ok := queryReceived.Load().(string); !ok || !strings.Contains(q, "refresh=true") {
 		t.Fatalf("loadStatuses(true) did not send refresh=true, got: %v", q)
+	}
+}
+
+func TestStatusesIgnoreOutOfOrderResponse(t *testing.T) {
+	m := model{generation: 4, statusSequence: 2, statusLoading: true, statuses: []outbound.Status{{ID: "new"}}}
+
+	next, _ := m.Update(statusesMsg{generation: 4, sequence: 1, statuses: []outbound.Status{{ID: "stale"}}})
+	result := next.(model)
+	if !result.statusLoading || len(result.statuses) != 1 || result.statuses[0].ID != "new" {
+		t.Fatalf("stale status response changed current state: %+v", result.statuses)
+	}
+
+	next, _ = result.Update(statusesMsg{generation: 4, sequence: 2, statuses: []outbound.Status{{ID: "fresh"}}})
+	result = next.(model)
+	if result.statusLoading || len(result.statuses) != 1 || result.statuses[0].ID != "fresh" {
+		t.Fatalf("fresh status response was not applied: %+v", result.statuses)
 	}
 }

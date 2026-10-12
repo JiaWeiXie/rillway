@@ -55,6 +55,15 @@ cleanup() {
   local exit_code=$?
   set +e
 
+  # Clean any legacy fixture before uninstalling its simulated update target.
+  if [ "$dummy_legacy_created" = 1 ]; then
+    sudo systemctl disable --now rillway-memory.socket >/dev/null 2>&1 || true
+    sudo systemctl stop rillway-memory.service >/dev/null 2>&1 || true
+    sudo rm -f /etc/systemd/system/rillway-memory.socket /etc/systemd/system/rillway-memory.service
+    sudo rm -rf /etc/systemd/system/rillway.service.d
+    sudo systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
   # Uninstall rillway if installed
   if [ "$task_installed" = 1 ] && [ -e /etc/systemd/system/rillway.service ]; then
     sudo "$task_binary" service uninstall >/dev/null 2>&1 || true
@@ -67,12 +76,6 @@ cleanup() {
     sudo rm -f /etc/systemd/system/warp-svc.service
     sudo rm -rf /etc/systemd/system/warp-svc.service.d
     sudo systemctl daemon-reload >/dev/null 2>&1 || true
-  fi
-
-  # Clean any leftover legacy units or state
-  if [ "$dummy_legacy_created" = 1 ]; then
-    sudo rm -f /etc/systemd/system/rillway-memory.socket /etc/systemd/system/rillway-memory.service
-    sudo rm -rf /etc/systemd/system/rillway.service.d
   fi
 
   # Remove resource control state directory and socket if remaining after test
@@ -103,7 +106,21 @@ sudo systemctl daemon-reload
 sudo systemctl start warp-svc.service
 sudo systemctl is-active --quiet warp-svc.service
 
-# 4. Simulate legacy memory units and state for migration verification
+# 4. Install Rillway on a clean host before simulating an upgraded legacy installation.
+task_installed=1
+"$task_binary" setup --yes --config "$task_temp/config.json"
+
+# Verify base service installation.
+sudo systemctl is-active --quiet rillway
+test "$(systemctl show -p User --value rillway)" = rillway
+test "$(readlink /usr/local/bin/rillway)" = /usr/local/lib/rillway/rillway
+sudo test -f /etc/rillway/config.json
+test "$(sudo stat -c %a /etc/rillway)" = 700
+test "$(sudo stat -c %a /var/lib/rillway)" = 700
+test "$(sudo stat -c %a /etc/rillway/config.json)" = 600
+
+# 5. Simulate the legacy memory control left by the previous release, then
+# reconcile it through the root restart path used for an in-place upgrade.
 sudo mkdir -p /var/lib/rillway-resource-control
 printf '[Service]\nMemoryMax=512M\n' | sudo tee /var/lib/rillway-resource-control/memory-limit.conf > /dev/null
 sudo chmod 0600 /var/lib/rillway-resource-control/memory-limit.conf
@@ -131,21 +148,9 @@ EOF
 dummy_legacy_created=1
 sudo systemctl daemon-reload
 sudo systemctl enable --now rillway-memory.socket
+sudo "$task_binary" service restart --config /etc/rillway/config.json
 
-# 5. Install Rillway using setup --yes (which runs service install and reconciles resource control)
-task_installed=1
-"$task_binary" setup --yes --config "$task_temp/config.json"
-
-# Verify base service installation
-sudo systemctl is-active --quiet rillway
-test "$(systemctl show -p User --value rillway)" = rillway
-test "$(readlink /usr/local/bin/rillway)" = /usr/local/lib/rillway/rillway
-sudo test -f /etc/rillway/config.json
-test "$(sudo stat -c %a /etc/rillway)" = 700
-test "$(sudo stat -c %a /var/lib/rillway)" = 700
-test "$(sudo stat -c %a /etc/rillway/config.json)" = 600
-
-# 6. Verify legacy memory migration and resource-control socket
+# 6. Verify legacy memory migration and resource-control socket.
 sudo systemctl is-active --quiet rillway-resource-control.socket
 test -S /run/rillway-resource-control.sock
 
@@ -271,7 +276,7 @@ test -n "$debug_revision"
 test "$debug_revision" != "$initial_revision"
 
 # Verify systemd state and effective LogLevelMax
-test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '[Service]\nLogLevelMax=debug')"
+test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
 test "$(systemctl show -p LogLevelMax --value warp-svc)" = debug
 
 # Verify that warp-svc was restarted (Main PID changed)
@@ -290,7 +295,7 @@ rollback_code=$(echo "$rollback_resp" | tail -n 1)
 test "$rollback_code" != "200"
 
 # Managed state file must have been restored to debug (NOT warning)
-test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '[Service]\nLogLevelMax=debug')"
+test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
 
 # Restore warp-svc.service unit
 sudo sed -i 's|ExecStart=/bin/false|ExecStart=/bin/sleep infinity|' /etc/systemd/system/warp-svc.service
@@ -305,8 +310,9 @@ test "$inherit_code" = "200"
 echo "$inherit_body" | grep -q '"level":"inherit"'
 
 # Managed state file must contain empty LogLevelMax=
-test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '[Service]\nLogLevelMax=')"
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = ""
+test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=')"
+inherit_effective=$(systemctl show -p LogLevelMax --value warp-svc)
+test "$inherit_effective" = "" || test "$inherit_effective" = "-1"
 
 # 16. Verify Root CLI service restart reconciles and restarts
 sudo "$task_binary" service restart --config /etc/rillway/config.json

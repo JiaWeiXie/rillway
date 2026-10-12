@@ -510,6 +510,7 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 		_, dirErr := os.Lstat(warpDropinDir)
 		warpLinkMissing, warpDirMissing = os.IsNotExist(linkErr), os.IsNotExist(dirErr)
 	}
+	warpLogApplied := warpLoaded && (warpStateMissing || warpLinkMissing)
 
 	// =========================================================================
 	// PASS 2: Mutation pass.
@@ -572,10 +573,12 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 	}
 
 	rollbackNewUnits := func(activationAttempted bool) error {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
 		var cleanupErr error
 		if activationAttempted {
 			// enable --now may partially succeed even when systemctl returns an error.
-			_, cleanupErr = run(ctx, "systemctl", "disable", "--now", "rillway-resource-control.socket")
+			_, cleanupErr = run(rollbackCtx, "systemctl", "disable", "--now", "rillway-resource-control.socket")
 		}
 		socketErr := restoreUnitFile(newSocket, prevSocket, socketReadErr == nil)
 		serviceErr := restoreUnitFile(newService, prevService, serviceReadErr == nil)
@@ -594,9 +597,10 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 				}
 			}
 		}
-		_, reloadErr := run(ctx, "systemctl", "daemon-reload")
-		if socketErr != nil || serviceErr != nil || reloadErr != nil {
-			return errors.Join(cleanupErr, socketErr, serviceErr, reloadErr)
+		_, reloadErr := run(rollbackCtx, "systemctl", "daemon-reload")
+		if warpLogApplied {
+			_, warpErr := run(rollbackCtx, "systemctl", "restart", "warp-svc.service")
+			cleanupErr = errors.Join(cleanupErr, warpErr)
 		}
 		if activationAttempted && socketReadErr == nil {
 			if prior.enabled {
@@ -605,19 +609,24 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 					args = append(args, "--runtime")
 				}
 				args = append(args, "rillway-resource-control.socket")
-				_, enableErr := run(ctx, "systemctl", args...)
+				_, enableErr := run(rollbackCtx, "systemctl", args...)
 				cleanupErr = errors.Join(cleanupErr, enableErr)
 			}
 			if prior.active {
-				_, startErr := run(ctx, "systemctl", "start", "rillway-resource-control.socket")
+				_, startErr := run(rollbackCtx, "systemctl", "start", "rillway-resource-control.socket")
 				cleanupErr = errors.Join(cleanupErr, startErr)
 			}
 		}
-		return cleanupErr
+		return errors.Join(cleanupErr, socketErr, serviceErr, reloadErr)
 	}
 
 	if _, err = run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return errors.Join(err, rollbackNewUnits(false))
+	}
+	if warpLogApplied {
+		if _, err = run(ctx, "systemctl", "restart", "warp-svc.service"); err != nil {
+			return errors.Join(err, rollbackNewUnits(false))
+		}
 	}
 	if warpLoaded && !verifyManagedWarpLog(ctx, run, warpLevel) {
 		if rollbackErr := rollbackNewUnits(false); rollbackErr != nil {

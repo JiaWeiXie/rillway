@@ -51,20 +51,20 @@ func (h *handler) putWarpLog(w http.ResponseWriter, r *http.Request) {
 	h.applyMu.Lock()
 	defer h.applyMu.Unlock()
 	s, err := b.ApplyWarpLog(r.Context(), req)
-	if err != nil {
-		status := http.StatusUnprocessableEntity
-		if errors.Is(err, resourcecontrol.ErrWarpLogConflict) {
-			status = http.StatusConflict
-		}
-		writeError(w, r, status, publicMessage(err, "Could not apply WARP logging settings. Refresh settings before retrying."))
-		return
-	}
 	if !s.Supported {
 		reason := s.Reason
 		if reason == "" {
 			reason = "WARP logging control requires a Linux systemd installation."
 		}
 		writeError(w, r, http.StatusNotImplemented, reason)
+		return
+	}
+	if err != nil {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, resourcecontrol.ErrWarpLogConflict) {
+			status = http.StatusConflict
+		}
+		writeError(w, r, status, publicMessage(err, "Could not apply WARP logging settings. Refresh settings before retrying."))
 		return
 	}
 	writeJSON(w, http.StatusOK, s)

@@ -2,6 +2,8 @@
   "en": {
     "Resource control is unavailable. Upgrade the installed service to enable it.": "Resource control is unavailable. Upgrade the installed service to enable it.",
     "Resource control did not respond. Read current settings before retrying.": "Resource control did not respond. Read current settings before retrying.",
+    "Resource control did not respond. Read current limits before retrying.": "Resource control did not respond. Read current limits before retrying.",
+    "Invalid refresh query parameter.": "Invalid refresh query parameter.",
     "WARP logging control is unavailable. Upgrade the installed service to enable it.": "WARP logging control is unavailable. Upgrade the installed service to enable it.",
     "Could not read WARP logging settings.": "Could not read WARP logging settings.",
     "Invalid WARP log level. Allowed values: inherit, warning, info, debug.": "Invalid WARP log level. Allowed values: inherit, warning, info, debug.",
@@ -774,6 +776,8 @@
   "zh-Hant": {
     "Resource control is unavailable. Upgrade the installed service to enable it.": "資源控制無法使用；請升級已安裝的服務以啟用此功能。",
     "Resource control did not respond. Read current settings before retrying.": "資源控制未回應。請先讀取目前設定再重試。",
+    "Resource control did not respond. Read current limits before retrying.": "資源控制未回應；重試前請重新讀取目前限制。",
+    "Invalid refresh query parameter.": "重新整理查詢參數無效。",
     "WARP logging control is unavailable. Upgrade the installed service to enable it.": "WARP 記錄控制無法使用。請升級已安裝的服務以啟用。",
     "Could not read WARP logging settings.": "無法讀取 WARP 記錄設定。",
     "Invalid WARP log level. Allowed values: inherit, warning, info, debug.": "WARP 記錄層級無效。允許的值為 inherit、warning、info、debug。",

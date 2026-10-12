@@ -15,11 +15,12 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"rillway/internal/config"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"rillway/internal/config"
 )
 
 type metadata struct {
@@ -78,8 +79,10 @@ func normalizeLogLevelMax(val string) string {
 	switch strings.ToLower(strings.TrimSpace(val)) {
 	case "7", "debug":
 		return "debug"
-	case "6", "info", "5", "notice":
+	case "6", "info":
 		return "info"
+	case "5", "notice":
+		return "notice"
 	case "4", "warning", "warn":
 		return "warning"
 	case "3", "err", "error":
