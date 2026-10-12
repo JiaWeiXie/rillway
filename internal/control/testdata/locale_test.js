@@ -10,12 +10,14 @@ const helper = fs.readFileSync(path.join(web, 'i18n.js'), 'utf8');
 const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
 
 function element(id = '') {
-  return {id, value:'', checked:false, hidden:false, open:false, disabled:false,
+  const el = {id, value:'', checked:false, hidden:false, open:false, disabled:false,
     textContent:'', innerHTML:'', dataset:{}, options:[], isConnected:true,
-    attributes:{}, classList:{toggle(){}},
+    attributes:{}, classList:{toggle(){}}, events:{},
+    addEventListener(evt,cb){this.events[evt]=cb;},
     getAttribute(name){return this.attributes[name] ?? null;},
     setAttribute(name,value){this.attributes[name] = value;},
     showModal(){this.open=true;},close(){this.open=false;},contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
+  return el;
 }
 function storage(initial = {}) {
   const values = new Map(Object.entries(initial));
@@ -333,5 +335,40 @@ async function browser(initialLocale) {
   assert.equal(request.options.headers['Accept-Language'],'zh-Hant');
   assert.equal(request.options.headers.Authorization,'Bearer existing-management-token');
   assert.equal(request.options.credentials,'omit');
+  // WARP logging 409 conflict handler test:
+  // On 409, GET /service/logging/warp must be called immediately, revision updated,
+  // user's draft level preserved, form marked dirty, and conflict/retry guidance displayed.
+  vm.runInContext("switchLocale('en')", b.context);
+  const warpCalls = [];
+  b.context.fetch = async (url, options) => {
+    warpCalls.push({ url, method: options?.method || 'GET', body: options?.body });
+    if (options?.method === 'PUT') {
+      return { ok: false, status: 409, json: async () => ({ error: 'Conflict', error_source: 'WARP logging settings changed elsewhere. Refresh settings before saving.' }) };
+    }
+    return { ok: true, json: async () => ({ supported: true, level: 'warning', effective_level: 'warning', revision: 'rev-fresh' }) };
+  };
+  const warpForm = b.get('warp-log-form');
+  const warpError = b.get('warp-log-form-error');
+  warpForm.querySelector = () => warpError;
+  b.get('warp-log-level').value = 'debug';
+  vm.runInContext(`
+    active = true;
+    warpLogStatus = { supported: true, level: 'info', effective_level: 'info', revision: 'rev-stale' };
+    warpLogDraftRevision = 'rev-stale';
+    warpLogDirty = false;
+  `, b.context);
+  const submitListener = app.slice(app.indexOf("if($('warp-log-form')) {"), app.indexOf("$('flow-groups').addEventListener"));
+  vm.runInContext(submitListener, b.context);
+  await warpForm.events.submit({ preventDefault() {}, target: warpForm });
+  assert.equal(warpCalls.length, 2, '409 must trigger an immediate GET');
+  assert.equal(warpCalls[0].method, 'PUT');
+  assert.equal(warpCalls[1].method, 'GET');
+  assert.equal(warpCalls[1].url, '/api/v1/service/logging/warp');
+  assert.equal(b.get('warp-log-level').value, 'debug', 'selected draft level must be preserved on 409');
+  assert.equal(vm.runInContext('warpLogDraftRevision', b.context), 'rev-fresh', 'revision must be updated to fresh revision');
+  assert.equal(vm.runInContext('warpLogDirty', b.context), true, 'form must remain dirty');
+  assert.equal(warpError.textContent, 'WARP logging settings changed elsewhere. Refresh settings before saving.');
+  assert.equal(b.get('notice').textContent, 'Your selected level has been kept. Refresh status to review the current setting, then save again.');
+
   process.stdout.write('Browser locale contracts passed\n');
 })().catch(error=>{console.error(error);process.exitCode=1;});

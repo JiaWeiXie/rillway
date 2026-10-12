@@ -33,6 +33,7 @@ const pacPresetNotes = {
   'cidr.link-local-v6':'IPv6 link-local devices on the current network link.'
 };
 let memoryStatus = null, memoryDraftRevision = "", memoryDirty = false, memorySaving = false, memoryLoading = false, memoryInputMode = "MiB";
+let warpLogStatus = null, warpLogDraftRevision = "", warpLogDirty = false, warpLogSaving = false, warpLogLoading = false;
 let capacityDirty = false, capacityDraftRevision = null, capacitySaving = false;
 let dockerBundle = null, deletingOutbound = null, formDefaults = null, outboundType = null, outboundDrafts = {};
 let outboundGeneration = 0;
@@ -45,7 +46,9 @@ let sourceSnapshotGeneratedAt = null;
 const refreshChoices = [1,2,5,10,30];
 let flowPollTimer, refreshSeconds = 1, openFlowGroups = new Set();
 try { const saved = Number(localStorage.getItem('rillway-flow-refresh-seconds')); if(refreshChoices.includes(saved)) refreshSeconds = saved; } catch (_) {}
-
+const outboundRefreshChoices = [0,10,30,60,300];
+let outboundRefreshSeconds = 30, outboundPollTimer = null, outboundLastLoadedAt = 0;
+try { const saved = Number(localStorage.getItem('rillway-outbound-refresh-seconds')); if(outboundRefreshChoices.includes(saved)) outboundRefreshSeconds = saved; } catch (_) {}
 async function api(path, options = {}) {
   const headers = {'Authorization': `Bearer ${token}`, 'Accept-Language': i18n.locale, ...options.headers};
   if(options.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -91,7 +94,7 @@ async function load() {
   cfg = await api('/config');
   serverInfo = await loadInfo();
   active = true; $('login').hidden = true; $('app').hidden = false;
-  renderConfig(); await poll(); pollStatuses(); loadDocker(); loadMemory();
+  renderConfig(); await poll(); pollStatuses(); loadDocker(); loadMemory(); loadWarpLog();
   navigate(currentPage);
 }
 async function save(next) {
@@ -174,12 +177,42 @@ async function poll() {
   } catch (e) { connection(false); if(e.status !== 401) notice(e, true); }
   finally { polling = false; }
 }
-async function pollStatuses() {
+async function pollStatuses(force = false) {
   if(!active || statusPolling) return;
   statusPolling = true;
-  try { const state = await api('/outbounds'); statuses = Array.isArray(state) ? state : state.outbounds || []; renderOutbounds(); }
-  catch(e) { if(e.status !== 401) notice(e,true); }
-  finally { statusPolling = false; }
+  const refreshBtn = $('refresh-outbounds');
+  if(force && refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = t('Refreshing outbounds…'); }
+  try {
+    const state = await api(force ? '/outbounds?refresh=true' : '/outbounds');
+    statuses = Array.isArray(state) ? state : state.outbounds || [];
+    outboundLastLoadedAt = Date.now();
+    renderOutbounds();
+    if(force) notice('Outbound statuses refreshed.');
+  }
+  catch(e) {
+    if(e.status !== 401) {
+      if(force) notice('Could not refresh outbound statuses. Try again.', true);
+      else notice(e,true);
+    }
+  }
+  finally {
+    statusPolling = false;
+    if(refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = t('Refresh now'); }
+    scheduleOutboundPolling();
+  }
+}
+function stopOutboundPolling() {
+  if(outboundPollTimer) { clearTimeout(outboundPollTimer); outboundPollTimer = null; }
+}
+function scheduleOutboundPolling(delay = null) {
+  stopOutboundPolling();
+  if(!active || currentPage !== 'outbounds' || document.hidden || outboundRefreshSeconds === 0) return;
+  const ms = delay !== null ? delay : outboundRefreshSeconds * 1000;
+  outboundPollTimer = setTimeout(() => {
+    if(active && currentPage === 'outbounds' && !document.hidden && outboundRefreshSeconds !== 0) {
+      pollStatuses(false);
+    }
+  }, ms);
 }
 function flowActive(f) { return !f.closed || f.closed === '0001-01-01T00:00:00Z'; }
 function ipLiteral(value) {
@@ -506,7 +539,8 @@ function renderDeleteOutbound() {
   select.value = selected;
 }
 function navigate(page) {
-  if(page === 'settings' && active) loadMemory();
+  if(page === 'settings' && active) { loadMemory(); loadWarpLog(); }
+  if(page === 'outbounds' && active) { scheduleOutboundPolling(); } else { stopOutboundPolling(); }
   const names = {
     overview:['Connections','See your traffic. Choose its path.'],
     outbounds:['Outbounds','Manage your available connections.'],
@@ -541,7 +575,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); if($('warp-log-form')) clearError($('warp-log-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); stopOutboundPolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -684,11 +718,72 @@ function memoryPreview() {
   if(mode === 'percent') budget = Math.floor(budget/1048576)*1048576;
   $('memory-preview').textContent = t('Selected limit: {limit}. Allowed: {minimum}–{maximum} {unit}.',{limit:bytes(budget),minimum:input.min,maximum:input.max,unit:mode === 'percent' ? '%' : mode});
 }
+async function loadWarpLog(explicit = false) {
+  if(!active || warpLogLoading || warpLogSaving) return;
+  warpLogLoading = true; $('warp-log-refresh').disabled = true;
+  try {
+    const status = await api('/service/logging/warp');
+    warpLogStatus = status;
+    if(explicit || !warpLogDirty) warpLogDraftRevision = status.revision || '';
+    renderWarpLog(!warpLogDirty);
+    if(explicit) clearError($('warp-log-form'));
+  } catch(error) {
+    if(error.status === 501) {
+      warpLogStatus = {supported:false, reason:t('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.')};
+      renderWarpLog(false);
+    } else {
+      errorIn($('warp-log-form'),error);
+      $('warp-log-fields').disabled = true;
+    }
+  }
+  finally { warpLogLoading = false; $('warp-log-refresh').disabled = false; }
+}
+function renderWarpLog(fill = false) {
+  const s = warpLogStatus;
+  const form = $('warp-log-form');
+  if(!form) return;
+  const fields = $('warp-log-fields');
+  const statusCard = $('warp-log-status-card');
+  const unsupported = $('warp-log-unsupported');
+  const unsupportedReason = $('warp-log-unsupported-reason');
+  const currentLevel = $('warp-log-current-level');
+  const effectiveLevel = $('warp-log-effective-level');
+  const levelSelect = $('warp-log-level');
+  const levelNames = {
+    inherit: 'Use service default (inherit)',
+    warning: 'Warning',
+    info: 'Info',
+    debug: 'Debug'
+  };
+  if(!s) {
+    fields.disabled = true;
+    statusCard.hidden = true;
+    unsupported.hidden = true;
+    return;
+  }
+  if(!s.supported) {
+    fields.disabled = true;
+    statusCard.hidden = true;
+    unsupported.hidden = false;
+    unsupportedReason.textContent = s.reason ? t(s.reason) : t('WARP system logging is not supported in this environment.');
+    return;
+  }
+  unsupported.hidden = true;
+  statusCard.hidden = false;
+  fields.disabled = warpLogSaving;
+  const configuredLabel = levelNames[s.level] ? t(levelNames[s.level]) : (s.level || '—');
+  const effectiveLabel = levelNames[s.effective_level] ? t(levelNames[s.effective_level]) : (s.effective_level || configuredLabel);
+  currentLevel.textContent = configuredLabel;
+  effectiveLevel.textContent = effectiveLabel;
+  if(fill && s.level) {
+    levelSelect.value = s.level;
+  }
+}
 function switchLocale(locale) {
   i18n.setLocale(locale);
   filterGlossary();
   renderMemory(false);
-  renderDeleteOutbound();
+  renderWarpLog(false);
   renderDockerExport();
   if($('outbound-dialog').open) outboundFields();
   navigate(currentPage);
@@ -745,6 +840,64 @@ $('flow-refresh').addEventListener('change',e => {
   restartFlowPolling(true);
   restartSourcePolling();
 });
+if($('outbound-refresh')) {
+  $('outbound-refresh').value = String(outboundRefreshSeconds);
+  $('outbound-refresh').addEventListener('change',e => {
+    const seconds = Number(e.target.value);
+    if(!outboundRefreshChoices.includes(seconds)) return;
+    outboundRefreshSeconds = seconds;
+    try { localStorage.setItem('rillway-outbound-refresh-seconds',String(seconds)); } catch (_) {}
+    scheduleOutboundPolling();
+  });
+}
+if($('refresh-outbounds')) {
+  $('refresh-outbounds').addEventListener('click',() => pollStatuses(true));
+}
+if($('warp-log-level')) {
+  $('warp-log-level').addEventListener('change',() => { warpLogDirty = true; });
+}
+if($('warp-log-refresh')) {
+  $('warp-log-refresh').addEventListener('click',() => loadWarpLog(true));
+}
+if($('warp-log-form')) {
+  $('warp-log-form').addEventListener('submit',async e => {
+    e.preventDefault(); if(warpLogSaving || !warpLogStatus?.supported) return;
+    const level = $('warp-log-level').value;
+    const body = {level, revision:warpLogDraftRevision};
+    warpLogSaving = true; renderWarpLog(false); clearError(e.target);
+    const saveBtn = $('warp-log-save');
+    if(saveBtn) saveBtn.textContent = t('Saving logging level…');
+    try {
+      warpLogStatus = await api('/service/logging/warp',{method:'PUT',body:JSON.stringify(body)});
+      warpLogDraftRevision = warpLogStatus.revision || ''; warpLogDirty = false;
+      renderWarpLog(true); notice('WARP logging level applied. WARP service restarted.');
+    } catch(error) {
+      if(error.status === 409) {
+        const draftLevel = level;
+        try {
+          const latest = await api('/service/logging/warp');
+          warpLogStatus = latest;
+          warpLogDraftRevision = latest.revision || '';
+          renderWarpLog(false);
+          $('warp-log-level').value = draftLevel;
+          warpLogDirty = true;
+        } catch (_) {}
+        displayError(e.target.querySelector('.form-error'), sourceError('WARP logging settings changed elsewhere. Refresh settings before saving.'));
+        notice('Your selected level has been kept. Refresh status to review the current setting, then save again.', true);
+      } else if(error.status === 501) {
+        warpLogStatus = {supported:false, reason:t('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.')};
+        renderWarpLog(false);
+        displayError(e.target.querySelector('.form-error'), sourceError('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.'));
+      } else {
+        errorIn(e.target,error);
+      }
+    } finally {
+      warpLogSaving = false;
+      if(saveBtn) saveBtn.textContent = t('Save logging level');
+      renderWarpLog(false);
+    }
+  });
+}
 $('flow-groups').addEventListener('toggle',e => {
   if(!e.target.matches('.flow-group')) return;
   const key = decodeURIComponent(e.target.dataset.groupKey);
@@ -1018,9 +1171,19 @@ navigate(location.hash.slice(1));
 window.addEventListener('hashchange',() => navigate(location.hash.slice(1)));
 i18n.ready.then(() => switchLocale(i18n.locale));
 restartFlowPolling();
-setInterval(pollStatuses,10000);
 if(token) load().catch(e => { displayError($('login-error'),e); logout(); });
 document.addEventListener('visibilitychange',() => {
   restartSourcePolling();
   if(!document.hidden && currentPage === 'sources') loadSourceClients();
+  if(document.hidden) {
+    stopOutboundPolling();
+  } else if(active && currentPage === 'outbounds' && outboundRefreshSeconds !== 0) {
+    const elapsed = Date.now() - outboundLastLoadedAt;
+    const intervalMs = outboundRefreshSeconds * 1000;
+    if(elapsed >= intervalMs) {
+      pollStatuses(false);
+    } else {
+      scheduleOutboundPolling(intervalMs - elapsed);
+    }
+  }
 });
