@@ -19,6 +19,12 @@ type Controller interface {
 	Action(context.Context, string, string) error
 }
 
+// StatusRefresher allows an outbound provider to invalidate its cached status
+// before an explicit status inspection.
+type StatusRefresher interface {
+	InvalidateStatus()
+}
+
 type Status struct {
 	ID             string    `json:"id"`
 	Type           string    `json:"type"`

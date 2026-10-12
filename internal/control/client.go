@@ -172,9 +172,13 @@ func (c *Client) Snapshot(ctx context.Context) (json.RawMessage, error) {
 	return v, err
 }
 
-func (c *Client) Statuses(ctx context.Context) ([]outbound.Status, error) {
+func (c *Client) Statuses(ctx context.Context, force bool) ([]outbound.Status, error) {
+	path := "/api/v1/outbounds"
+	if force {
+		path = "/api/v1/outbounds?refresh=true"
+	}
 	var v []outbound.Status
-	err := c.request(ctx, "GET", "/api/v1/outbounds", nil, &v)
+	err := c.request(ctx, "GET", path, nil, &v)
 	return v, err
 }
 

@@ -367,3 +367,45 @@ func TestSaveFailureDoesNotApply(t *testing.T) {
 		t.Fatal("failed disk save changed active config")
 	}
 }
+
+type fakeRefresherProvider struct {
+	id          string
+	invalidated bool
+}
+
+func (p *fakeRefresherProvider) ID() string { return p.id }
+func (p *fakeRefresherProvider) DialContext(_ context.Context, _, _ string) (net.Conn, error) {
+	return nil, nil
+}
+
+func (p *fakeRefresherProvider) Status(_ context.Context) outbound.Status {
+	return outbound.Status{ID: p.id, State: "ready"}
+}
+func (p *fakeRefresherProvider) Close() error      { return nil }
+func (p *fakeRefresherProvider) InvalidateStatus() { p.invalidated = true }
+
+func TestRuntimeStatusesInvalidatesStatusRefresher(t *testing.T) {
+	c := config.Default(t.TempDir())
+	r, err := New(t.Context(), t.TempDir(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	p := &fakeRefresherProvider{id: "warp"}
+	r.mu.Lock()
+	r.providers["warp"] = p
+	r.mu.Unlock()
+
+	// 1. Statuses with force=false should NOT invalidate
+	_ = r.Statuses(t.Context(), false)
+	if p.invalidated {
+		t.Fatal("expected refresher not to be invalidated when force=false")
+	}
+
+	// 2. Statuses with force=true MUST invalidate
+	_ = r.Statuses(t.Context(), true)
+	if !p.invalidated {
+		t.Fatal("expected refresher to be invalidated when force=true")
+	}
+}

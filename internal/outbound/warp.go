@@ -27,18 +27,70 @@ var (
 
 type (
 	commandRunner func(context.Context, string, ...string) ([]byte, error)
-	warp          struct {
-		cfg        config.Outbound
-		run        commandRunner
-		mu         sync.RWMutex
-		actionMu   sync.Mutex
-		statusMu   sync.Mutex
-		cached     Status
-		cachedAt   time.Time
+	warpMetadata  struct {
+		version string
+		mode    string
+		account string
+		hasGood bool
+	}
+	warpDynamic struct {
+		state    string
+		detail   string
+		listener bool
+	}
+	flight[T any] struct {
+		mu sync.Mutex
+		in *flightCall[T]
+	}
+	flightCall[T any] struct {
+		done chan struct{}
+		val  T
+		err  error
+	}
+	warp struct {
+		cfg         config.Outbound
+		run         commandRunner
+		now         func() time.Time
+		dialContext func(context.Context, string, string) (net.Conn, error)
+		mu          sync.RWMutex
+		actionMu    sync.Mutex
+
+		dynamicMu     sync.Mutex
+		dynamicFlight flight[warpDynamic]
+		cachedDynamic warpDynamic
+		dynamicAt     time.Time
+
+		metadataMu       sync.Mutex
+		metadataFlight   flight[warpMetadata]
+		cachedMetadata   warpMetadata
+		lastGoodMetadata warpMetadata
+		metadataAt       time.Time
+
 		verified   time.Time
 		manualStop bool
 	}
 )
+
+func (f *flight[T]) Do(fn func() (T, error)) (T, error) {
+	f.mu.Lock()
+	if c := f.in; c != nil {
+		f.mu.Unlock()
+		<-c.done
+		return c.val, c.err
+	}
+	c := &flightCall[T]{done: make(chan struct{})}
+	f.in = c
+	f.mu.Unlock()
+
+	c.val, c.err = fn()
+	close(c.done)
+
+	f.mu.Lock()
+	f.in = nil
+	f.mu.Unlock()
+
+	return c.val, c.err
+}
 
 func newWARP(cfg config.Outbound) *warp {
 	if cfg.WARPBinary == "" {
@@ -47,9 +99,14 @@ func newWARP(cfg config.Outbound) *warp {
 	if cfg.ProxyAddress == "" {
 		cfg.ProxyAddress = "127.0.0.1:40000"
 	}
-	return &warp{cfg: cfg, run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).CombinedOutput()
-	}}
+	return &warp{
+		cfg: cfg,
+		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+		},
+		now:         time.Now,
+		dialContext: (&net.Dialer{Timeout: time.Second}).DialContext,
+	}
 }
 func (w *warp) ID() string   { return w.cfg.ID }
 func (w *warp) Close() error { return nil }
@@ -86,62 +143,171 @@ func (w *warp) DialContext(ctx context.Context, network, address string) (net.Co
 	return dialSOCKS(ctx, w.cfg.ProxyAddress, network, address)
 }
 
-func (w *warp) Status(ctx context.Context) Status {
-	w.statusMu.Lock()
-	defer w.statusMu.Unlock()
-	if !w.cachedAt.IsZero() && time.Since(w.cachedAt) < 5*time.Second {
-		return w.cached
+func (w *warp) clock() time.Time {
+	if w.now != nil {
+		return w.now()
 	}
-	s := w.readStatus(ctx)
-	w.cached, w.cachedAt = s, time.Now()
-	return s
+	return time.Now()
 }
 
-func (w *warp) readStatus(ctx context.Context) Status {
+func (w *warp) InvalidateStatus() {
+	w.dynamicMu.Lock()
+	w.dynamicAt = time.Time{}
+	w.dynamicMu.Unlock()
+
+	w.metadataMu.Lock()
+	w.metadataAt = time.Time{}
+	w.metadataMu.Unlock()
+}
+
+func (w *warp) Status(ctx context.Context) Status {
 	s := Status{ID: w.ID(), Type: "warp", State: "unavailable", PublicInternet: true}
 	w.mu.RLock()
 	s.VerifiedAt = w.verified
 	stopped := w.manualStop
 	w.mu.RUnlock()
+
 	if stopped {
 		s.State = "stopped"
 		return s
 	}
-	if version, err := w.cli(ctx, "--version"); err == nil {
-		s.Version = warpVersionPattern.FindString(version)
+
+	dyn := w.getDynamic(ctx)
+	meta := w.getMetadata(ctx)
+
+	s.State = dyn.state
+	s.Detail = dyn.detail
+	s.Listener = dyn.listener
+
+	s.Version = meta.version
+	s.Mode = meta.mode
+	s.Account = meta.account
+
+	return s
+}
+
+func (w *warp) getDynamic(ctx context.Context) warpDynamic {
+	now := w.clock()
+	w.dynamicMu.Lock()
+	if !w.dynamicAt.IsZero() && now.Sub(w.dynamicAt) < 30*time.Second {
+		d := w.cachedDynamic
+		w.dynamicMu.Unlock()
+		return d
 	}
-	if settings, err := w.cli(ctx, "settings"); err == nil {
-		s.Mode = warpMode(settings)
-	}
+	w.dynamicMu.Unlock()
+
+	dyn, _ := w.dynamicFlight.Do(func() (warpDynamic, error) {
+		now := w.clock()
+		w.dynamicMu.Lock()
+		if !w.dynamicAt.IsZero() && now.Sub(w.dynamicAt) < 30*time.Second {
+			d := w.cachedDynamic
+			w.dynamicMu.Unlock()
+			return d, nil
+		}
+		w.dynamicMu.Unlock()
+
+		d := w.readDynamic(ctx)
+		w.dynamicMu.Lock()
+		w.cachedDynamic = d
+		w.dynamicAt = w.clock()
+		w.dynamicMu.Unlock()
+		return d, nil
+	})
+	return dyn
+}
+
+func (w *warp) readDynamic(ctx context.Context) warpDynamic {
 	raw, err := w.cli(ctx, "status")
 	if err != nil {
-		s.Detail = err.Error()
-		return s
-	}
-	if strings.Contains(strings.ToLower(raw), "disconnected") {
-		s.State = "disconnected"
-	} else if strings.Contains(strings.ToLower(raw), "connected") {
-		s.State = "connected"
-	} else {
-		s.State = "not-ready"
-	}
-	if registration, e := w.cli(ctx, "registration", "show"); e == nil {
-		if warpUnlimited(registration) {
-			s.Account = "Unlimited"
-		} else {
-			s.Account = "registered (Unlimited not confirmed)"
+		return warpDynamic{
+			state:  "unavailable",
+			detail: err.Error(),
 		}
 	}
-	d := net.Dialer{Timeout: time.Second}
-	conn, e := d.DialContext(ctx, "tcp", w.cfg.ProxyAddress)
+	var d warpDynamic
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "disconnected") {
+		d.state = "disconnected"
+	} else if strings.Contains(lower, "connected") {
+		d.state = "connected"
+	} else {
+		d.state = "not-ready"
+	}
+	dial := w.dialContext
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: time.Second}).DialContext
+	}
+	conn, e := dial(ctx, "tcp", w.cfg.ProxyAddress)
 	if e != nil {
-		s.Detail = "Local Proxy listener unavailable"
+		d.detail = "Local Proxy listener unavailable"
 	} else {
 		_ = conn.Close()
-		s.Listener = true
-		s.Detail = "Local Proxy listener reachable; end-to-end verification is separate"
+		d.listener = true
+		d.detail = "Local Proxy listener reachable; end-to-end verification is separate"
 	}
-	return s
+	return d
+}
+
+func (w *warp) getMetadata(ctx context.Context) warpMetadata {
+	now := w.clock()
+	w.metadataMu.Lock()
+	if !w.metadataAt.IsZero() && now.Sub(w.metadataAt) < 5*time.Minute {
+		m := w.cachedMetadata
+		w.metadataMu.Unlock()
+		return m
+	}
+	w.metadataMu.Unlock()
+
+	meta, _ := w.metadataFlight.Do(func() (warpMetadata, error) {
+		now := w.clock()
+		w.metadataMu.Lock()
+		if !w.metadataAt.IsZero() && now.Sub(w.metadataAt) < 5*time.Minute {
+			m := w.cachedMetadata
+			w.metadataMu.Unlock()
+			return m, nil
+		}
+		w.metadataMu.Unlock()
+
+		m := w.readMetadata(ctx)
+		w.metadataMu.Lock()
+		if m.hasGood {
+			w.lastGoodMetadata = m
+			w.cachedMetadata = m
+		} else if w.lastGoodMetadata.hasGood {
+			m = w.lastGoodMetadata
+			w.cachedMetadata = m
+		} else {
+			w.cachedMetadata = m
+		}
+		w.metadataAt = w.clock()
+		w.metadataMu.Unlock()
+		return m, nil
+	})
+	return meta
+}
+
+func (w *warp) readMetadata(ctx context.Context) warpMetadata {
+	var m warpMetadata
+	version, errV := w.cli(ctx, "--version")
+	if errV == nil {
+		m.version = warpVersionPattern.FindString(version)
+	}
+	settings, errS := w.cli(ctx, "settings")
+	if errS == nil {
+		m.mode = warpMode(settings)
+	}
+	reg, errR := w.cli(ctx, "registration", "show")
+	if errR == nil {
+		if warpUnlimited(reg) {
+			m.account = "Unlimited"
+		} else {
+			m.account = "registered (Unlimited not confirmed)"
+		}
+	}
+	if errV == nil || errS == nil || errR == nil {
+		m.hasGood = true
+	}
+	return m
 }
 
 func warpUnlimited(s string) bool {
@@ -194,7 +360,7 @@ func warpMode(s string) string {
 func (w *warp) Action(ctx context.Context, action, value string) error {
 	w.actionMu.Lock()
 	defer w.actionMu.Unlock()
-	defer func() { w.statusMu.Lock(); w.cachedAt = time.Time{}; w.statusMu.Unlock() }()
+	defer w.InvalidateStatus()
 	switch action {
 	case "register":
 		// Registration belongs to the official client, including any WARP+

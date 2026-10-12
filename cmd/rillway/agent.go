@@ -151,7 +151,7 @@ func agentOperation(ctx context.Context, args []string, in io.Reader) (any, erro
 		if err != nil {
 			return nil, err
 		}
-		statuses, err := client.Statuses(ctx)
+		statuses, err := client.Statuses(ctx, false)
 		if err != nil {
 			return nil, err
 		}

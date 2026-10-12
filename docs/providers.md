@@ -41,7 +41,7 @@ warp-cli --accept-tos disconnect
 | `account` | 官方註冊資訊是否明確回報 `Unlimited` |
 | `verified_at` | 上次經代理取得 `warp=on` 或 `warp=plus` 的時間 |
 
-listener 存在、帳號為 Unlimited，都不能單獨證明 tunnel 正常。`verified_at` 是過去一次驗證成功時間，並非持續健康保證，也不是下載加速證明。狀態每五秒最多讀取一次，避免 UI 輪詢反覆啟動 CLI。
+listener 存在、帳號為 Unlimited，都不能單獨證明 tunnel 正常。`verified_at` 是過去一次驗證成功時間，並非持續健康保證，也不是下載加速證明。為避免頻繁 IPC 與日誌放大，狀態讀取採雙層快取：連線狀態與 Local Proxy probe 的動態快取有效期限為 30 秒；版本、模式與帳號註冊等 metadata 快取有效期限為 5 分鐘。呼叫端可透過 API 查詢參數 `?refresh=true`（或 UI/TUI 手動刷新）強制使兩層快取失效並立即重讀；任何出口操作（連線、斷線、註冊、授權、驗證）完成後亦會自動使快取失效。未指定 `refresh` 或傳入 `false` 時回傳快取；傳入其他非法參數值則直接回傳 400 Bad Request。
 
 Local Proxy 不支援目前帳號／版本時，Rillway 回報錯誤，不改成全機 tunnel，也不改用非官方 WARP 註冊服務。官方 WARP daemon 負責自身連線維持；Rillway 不在背景重複註冊或重新連線，手動斷線後也不會重啟它。
 

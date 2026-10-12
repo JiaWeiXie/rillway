@@ -30,6 +30,7 @@ type fakeBackend struct {
 	failApply, errorAction error
 	lastAction, lastValue  string
 	statuses               []outbound.Status
+	lastForce              bool
 }
 
 func newBackend() *fakeBackend {
@@ -54,7 +55,10 @@ func (b *fakeBackend) Snapshot() any {
 	return map[string]any{"flows": []map[string]any{{"host": "internal.example", "upload_bytes_per_second": 128}}}
 }
 
-func (b *fakeBackend) Statuses(context.Context) []outbound.Status {
+func (b *fakeBackend) Statuses(_ context.Context, force bool) []outbound.Status {
+	b.mu.Lock()
+	b.lastForce = force
+	b.mu.Unlock()
 	if b.statuses != nil {
 		return b.statuses
 	}
@@ -432,5 +436,60 @@ func TestDaemonInfoContainsOnlyVersion(t *testing.T) {
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("daemon metadata may be cached")
+	}
+}
+
+func TestGetOutboundsRefreshQueryValidationAndForce(t *testing.T) {
+	b := newBackend()
+	h := New(b, "test-token")
+
+	// 1. absent query -> force=false
+	w := request(h, "GET", "/api/v1/outbounds", "", "test-token", "")
+	if w.Code != 200 || b.lastForce {
+		t.Fatalf("expected 200 with lastForce=false, got %d, lastForce=%v", w.Code, b.lastForce)
+	}
+
+	// 2. refresh=false -> force=false
+	w = request(h, "GET", "/api/v1/outbounds?refresh=false", "", "test-token", "")
+	if w.Code != 200 || b.lastForce {
+		t.Fatalf("expected 200 with lastForce=false, got %d, lastForce=%v", w.Code, b.lastForce)
+	}
+
+	// 3. refresh= (empty) -> force=false
+	w = request(h, "GET", "/api/v1/outbounds?refresh=", "", "test-token", "")
+	if w.Code != 200 || b.lastForce {
+		t.Fatalf("expected 200 with lastForce=false, got %d, lastForce=%v", w.Code, b.lastForce)
+	}
+
+	// 4. refresh=true -> force=true
+	w = request(h, "GET", "/api/v1/outbounds?refresh=true", "", "test-token", "")
+	if w.Code != 200 || !b.lastForce {
+		t.Fatalf("expected 200 with lastForce=true, got %d, lastForce=%v", w.Code, b.lastForce)
+	}
+
+	// 5. invalid values -> 400 Bad Request
+	for _, val := range []string{"bad", "1", "0", "TRUE", "yes", "no"} {
+		w = request(h, "GET", "/api/v1/outbounds?refresh="+val, "", "test-token", "")
+		if w.Code != 400 {
+			t.Fatalf("expected 400 for refresh=%q, got %d: %s", val, w.Code, w.Body.String())
+		}
+	}
+
+	// 6. Client.Statuses with force=false and force=true
+	server := httptest.NewServer(h)
+	defer server.Close()
+	client, err := NewClient(server.URL, "test-token", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Statuses(context.Background(), false)
+	if err != nil || b.lastForce {
+		t.Fatalf("client.Statuses(false) failed or lastForce=%v", b.lastForce)
+	}
+
+	_, err = client.Statuses(context.Background(), true)
+	if err != nil || !b.lastForce {
+		t.Fatalf("client.Statuses(true) failed or lastForce=%v", b.lastForce)
 	}
 }

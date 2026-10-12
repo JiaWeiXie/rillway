@@ -27,7 +27,7 @@ type Backend interface {
 	Config() config.Config
 	Apply(context.Context, config.Config) error
 	Snapshot() any
-	Statuses(context.Context) []outbound.Status
+	Statuses(context.Context, bool) []outbound.Status
 	Action(context.Context, string, string, string) error
 	SourceClients() access.SourceSnapshot
 	BlockSource(context.Context, uint64, string) (config.Config, int, error)
@@ -178,7 +178,18 @@ func (h *handler) getOutbounds(w http.ResponseWriter, r *http.Request) {
 		outbound.Status
 		DetailSource string `json:"detail_source,omitempty"`
 	}
-	originals := h.backend.Statuses(r.Context())
+	refreshQuery := r.URL.Query().Get("refresh")
+	var force bool
+	switch refreshQuery {
+	case "", "false":
+		force = false
+	case "true":
+		force = true
+	default:
+		writeError(w, r, http.StatusBadRequest, "Invalid refresh query parameter.")
+		return
+	}
+	originals := h.backend.Statuses(r.Context(), force)
 	statuses := make([]localizedStatus, 0, len(originals))
 	locale := i18n.FromAcceptLanguage(r.Header.Get("Accept-Language"))
 	for _, original := range originals {

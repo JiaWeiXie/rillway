@@ -415,7 +415,7 @@ func (r *Runtime) applyLocked(ctx context.Context, c config.Config, policy *acce
 	return nil
 }
 
-func (r *Runtime) Statuses(ctx context.Context) []outbound.Status {
+func (r *Runtime) Statuses(ctx context.Context, force bool) []outbound.Status {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	r.mu.Lock()
@@ -424,6 +424,13 @@ func (r *Runtime) Statuses(ctx context.Context) []outbound.Status {
 		ps = append(ps, r.providers[o.ID])
 	}
 	r.mu.Unlock()
+	if force {
+		for _, p := range ps {
+			if refresher, ok := p.(outbound.StatusRefresher); ok {
+				refresher.InvalidateStatus()
+			}
+		}
+	}
 	out := make([]outbound.Status, len(ps))
 	var wg sync.WaitGroup
 	for i, p := range ps {
