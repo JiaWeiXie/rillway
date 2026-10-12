@@ -1,5 +1,6 @@
 {
   "en": {
+    "Resource control is unavailable. Upgrade the installed service to enable it.": "Resource control is unavailable. Upgrade the installed service to enable it.",
     "Resource control did not respond. Read current settings before retrying.": "Resource control did not respond. Read current settings before retrying.",
     "WARP logging control is unavailable. Upgrade the installed service to enable it.": "WARP logging control is unavailable. Upgrade the installed service to enable it.",
     "Could not read WARP logging settings.": "Could not read WARP logging settings.",
@@ -771,6 +772,7 @@
     "WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.": "WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart."
   },
   "zh-Hant": {
+    "Resource control is unavailable. Upgrade the installed service to enable it.": "資源控制無法使用；請升級已安裝的服務以啟用此功能。",
     "Resource control did not respond. Read current settings before retrying.": "資源控制未回應。請先讀取目前設定再重試。",
     "WARP logging control is unavailable. Upgrade the installed service to enable it.": "WARP 記錄控制無法使用。請升級已安裝的服務以啟用。",
     "Could not read WARP logging settings.": "無法讀取 WARP 記錄設定。",

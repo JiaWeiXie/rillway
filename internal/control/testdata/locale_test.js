@@ -9,6 +9,7 @@ const catalog = JSON.parse(fs.readFileSync(path.join(web, 'locales.json'), 'utf8
 const helper = fs.readFileSync(path.join(web, 'i18n.js'), 'utf8');
 const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
 const resourceMessages = [
+  ["Resource control is unavailable. Upgrade the installed service to enable it.", "資源控制無法使用；請升級已安裝的服務以啟用此功能。"],
   [
     "Resource control did not respond. Read current settings before retrying.",
     "資源控制未回應。請先讀取目前設定再重試。"
