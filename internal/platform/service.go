@@ -157,6 +157,10 @@ func linuxService(ctx context.Context, action, source string) (string, error) {
 				return "", err
 			}
 		}
+		warpLink := "/etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf"
+		if target, err := os.Readlink(warpLink); err == nil && target == "/var/lib/rillway-resource-control/warp-log-level.conf" {
+			_ = os.Remove(warpLink)
+		}
 		out, err := Run(ctx, "systemctl", "daemon-reload")
 		return string(out) + "\n" + i18n.Message(i18n.FromContext(ctx), "Service removed; account, /etc/rillway and /var/lib/rillway retained."), err
 	default:

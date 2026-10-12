@@ -441,3 +441,178 @@ func TestReconcileResourceControlRejectsInsecureDropinTarget(t *testing.T) {
 		t.Fatalf("expected rejection of hijacked symlink target: %v", err)
 	}
 }
+
+func TestReconcileResourceControlWarpDetection(t *testing.T) {
+	root := t.TempDir()
+	paths := fixtureLinuxPaths(root)
+	if err := os.MkdirAll(filepath.Dir(paths.binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.binary, []byte("mock-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitDir := filepath.Dir(paths.unit)
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(root, "config.json")
+	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
+
+	// Case 1: WARP is loaded
+	warpLoaded := true
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "systemctl" && len(args) > 0 {
+			if args[0] == "is-active" {
+				return []byte("active\n"), nil
+			}
+			if args[0] == "show" && len(args) > 1 && args[1] == "warp-svc.service" {
+				if warpLoaded {
+					return []byte("LoadState=loaded\n"), nil
+				}
+				return []byte("LoadState=not-found\n"), nil
+			}
+		}
+		return nil, nil
+	}
+
+	if err := reconcileResourceControl(t.Context(), paths, cfgPath, run); err != nil {
+		t.Fatalf("reconcile with warp loaded failed: %v", err)
+	}
+
+	// Verify warp-log-level.conf created with default info
+	warpState := filepath.Join(resourceDir, "warp-log-level.conf")
+	data, err := os.ReadFile(warpState)
+	if err != nil || !strings.Contains(string(data), "LogLevelMax=info") {
+		t.Fatalf("warp log state file not created with default info: %s, err=%v", string(data), err)
+	}
+
+	// Verify symlink created
+	warpDropin := filepath.Join(unitDir, "warp-svc.service.d", "zzzz-rillway-log-level.conf")
+	target, err := os.Readlink(warpDropin)
+	if err != nil || target != warpState {
+		t.Fatalf("warp symlink error: target=%s, want=%s, err=%v", target, warpState, err)
+	}
+
+	// Case 2: WARP absent on fresh root
+	root2 := t.TempDir()
+	paths2 := fixtureLinuxPaths(root2)
+	_ = os.MkdirAll(filepath.Dir(paths2.binary), 0o755)
+	_ = os.WriteFile(paths2.binary, []byte("mock-binary"), 0o755)
+	_ = os.MkdirAll(filepath.Dir(paths2.unit), 0o755)
+
+	warpLoaded = false
+	if err := reconcileResourceControl(t.Context(), paths2, filepath.Join(root2, "config.json"), run); err != nil {
+		t.Fatalf("reconcile with warp absent failed: %v", err)
+	}
+
+	warpState2 := filepath.Join(filepath.Dir(paths2.state), "rillway-resource-control", "warp-log-level.conf")
+	if _, err := os.Stat(warpState2); !os.IsNotExist(err) {
+		t.Fatalf("warp state file should not be created when warp is absent: %v", err)
+	}
+}
+
+func TestReconcileResourceControlLateWarpConflictLeavesNoAssetsCreated(t *testing.T) {
+	root := t.TempDir()
+	paths := fixtureLinuxPaths(root)
+	if err := os.MkdirAll(filepath.Dir(paths.binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.binary, []byte("mock-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitDir := filepath.Dir(paths.unit)
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create conflicting WARP drop-in symlink
+	warpDropinDir := filepath.Join(unitDir, "warp-svc.service.d")
+	if err := os.MkdirAll(warpDropinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conflictingWarpLink := filepath.Join(warpDropinDir, "zzzz-rillway-log-level.conf")
+	if err := os.Symlink("/etc/shadow", conflictingWarpLink); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(root, "config.json")
+	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
+
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "systemctl" && len(args) > 1 && args[0] == "show" && args[1] == "warp-svc.service" {
+			return []byte("LoadState=loaded\n"), nil
+		}
+		return nil, nil
+	}
+
+	err := reconcileResourceControl(t.Context(), paths, cfgPath, run)
+	if err == nil || !strings.Contains(err.Error(), "another target") {
+		t.Fatalf("expected rejection of conflicting warp symlink, got: %v", err)
+	}
+
+	// Assert that NONE of the previously absent memory/resource assets were created
+	if _, err := os.Stat(resourceDir); !os.IsNotExist(err) {
+		t.Errorf("resourceDir was created despite preflight conflict: %s", resourceDir)
+	}
+	memState := filepath.Join(resourceDir, "memory-limit.conf")
+	if _, err := os.Stat(memState); !os.IsNotExist(err) {
+		t.Errorf("memoryState was created despite preflight conflict: %s", memState)
+	}
+	memDropinDir := filepath.Join(unitDir, "rillway.service.d")
+	if _, err := os.Stat(memDropinDir); !os.IsNotExist(err) {
+		t.Errorf("memDropinDir was created despite preflight conflict: %s", memDropinDir)
+	}
+	memLink := filepath.Join(memDropinDir, "zzzz-rillway-memory.conf")
+	if _, err := os.Lstat(memLink); !os.IsNotExist(err) {
+		t.Errorf("memLink was created despite preflight conflict: %s", memLink)
+	}
+	warpState := filepath.Join(resourceDir, "warp-log-level.conf")
+	if _, err := os.Stat(warpState); !os.IsNotExist(err) {
+		t.Errorf("warpState was created despite preflight conflict: %s", warpState)
+	}
+	newSocket := filepath.Join(unitDir, "rillway-resource-control.socket")
+	if _, err := os.Stat(newSocket); !os.IsNotExist(err) {
+		t.Errorf("newSocket was created despite preflight conflict: %s", newSocket)
+	}
+	newService := filepath.Join(unitDir, "rillway-resource-control.service")
+	if _, err := os.Stat(newService); !os.IsNotExist(err) {
+		t.Errorf("newService was created despite preflight conflict: %s", newService)
+	}
+}
+
+func TestReconcileResourceControlRejectsExistingStateDirUnderUnsafeAncestor(t *testing.T) {
+	root := t.TempDir()
+	paths := fixtureLinuxPaths(root)
+	if err := os.MkdirAll(filepath.Dir(paths.binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.binary, []byte("mock-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitDir := filepath.Dir(paths.unit)
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ancestorDir := filepath.Dir(paths.state)
+	if err := os.MkdirAll(ancestorDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ancestorDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+
+	resourceDir := filepath.Join(ancestorDir, "rillway-resource-control")
+	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(root, "config.json")
+	run := func(_ context.Context, _ string, _ ...string) ([]byte, error) { return nil, nil }
+
+	err := reconcileResourceControl(t.Context(), paths, cfgPath, run)
+	if err == nil || !strings.Contains(err.Error(), "unsafe parent directory") {
+		t.Fatalf("expected rejection of existing state dir under unsafe ancestor, got: %v", err)
+	}
+}

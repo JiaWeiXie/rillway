@@ -28,7 +28,10 @@ type metadata struct {
 	Updated int64  `json:"updated"`
 }
 
-const memoryFilename = "memory-limit.conf"
+const (
+	memoryFilename  = "memory-limit.conf"
+	warpLogFilename = "warp-log-level.conf"
+)
 
 func formatMetadata(m metadata) []byte {
 	b, _ := json.Marshal(m)
@@ -41,13 +44,61 @@ func formatMetadata(m metadata) []byte {
 	return []byte("# rillway-memory " + string(b) + "\n[Service]\nMemoryMax=" + format(m.Bytes) + "\nMemoryHigh=" + format(m.Bytes*3/4) + "\n")
 }
 
+func formatWarpLogLevel(level WarpLogLevel) []byte {
+	if level == WarpLogLevelInherit {
+		return []byte("# rillway-resource-control\n[Service]\nLogLevelMax=\n")
+	}
+	return []byte("# rillway-resource-control\n[Service]\nLogLevelMax=" + string(level) + "\n")
+}
+
+func parseWarpLogLevelFile(data []byte) WarpLogLevel {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "LogLevelMax=") {
+			val := strings.TrimPrefix(line, "LogLevelMax=")
+			switch val {
+			case "":
+				return WarpLogLevelInherit
+			case "warning":
+				return WarpLogLevelWarning
+			case "info":
+				return WarpLogLevelInfo
+			case "debug":
+				return WarpLogLevelDebug
+			default:
+				return WarpLogLevel(val)
+			}
+		}
+	}
+	return WarpLogLevelInfo
+}
+
+func normalizeLogLevelMax(val string) string {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "7", "debug":
+		return "debug"
+	case "6", "info", "5", "notice":
+		return "info"
+	case "4", "warning", "warn":
+		return "warning"
+	case "3", "err", "error":
+		return "err"
+	default:
+		return strings.TrimSpace(val)
+	}
+}
+
 type controller struct {
-	configPath string
-	stateDir   string
-	command    func(context.Context, ...string) ([]byte, error)
-	capacity   func(string) (uint64, error)
-	save       func(metadata) error
-	restore    func([]byte) error
+	configPath     string
+	stateDir       string
+	warpDropinLink string
+	command        func(context.Context, ...string) ([]byte, error)
+	capacity       func(string) (uint64, error)
+	save           func(metadata) error
+	restore        func([]byte) error
+	saveWarpLog    func([]byte) error
+	restoreWarpLog func([]byte) error
 }
 
 func systemctl(ctx context.Context, args ...string) ([]byte, error) {
@@ -178,6 +229,108 @@ func (c *controller) apply(ctx context.Context, req MemoryRequest) (MemoryStatus
 	return after, nil
 }
 
+func (c *controller) warpProperties(ctx context.Context) (map[string]string, error) {
+	b, err := c.command(ctx, "show", "warp-svc.service", "--property=LoadState,LogLevelMax")
+	if err != nil {
+		return nil, messageError("Could not read Cloudflare WARP service status.")
+	}
+	p := map[string]string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			p[k] = strings.TrimSpace(v)
+		}
+	}
+	return p, nil
+}
+
+func (c *controller) warpLogStatus(ctx context.Context) (WarpLogStatus, error) {
+	p, err := c.warpProperties(ctx)
+	if err != nil {
+		return WarpLogStatus{}, err
+	}
+	if p["LoadState"] != "loaded" {
+		return WarpLogStatus{Supported: false, Reason: "Cloudflare WARP service (warp-svc.service) is not installed or loaded."}, nil
+	}
+	dropinLink := c.warpDropinLink
+	if dropinLink == "" {
+		dropinLink = "/etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf"
+	}
+	expectedTarget := filepath.Join(c.stateDir, warpLogFilename)
+	target, err := os.Readlink(dropinLink)
+	if err != nil || target != expectedTarget {
+		return WarpLogStatus{Supported: false, Reason: "WARP logging control is unavailable. Run sudo rillway service restart to enable it."}, nil
+	}
+
+	stateFile := filepath.Join(c.stateDir, warpLogFilename)
+	data, readErr := os.ReadFile(stateFile)
+	level := WarpLogLevelInfo
+	if readErr == nil {
+		level = parseWarpLogLevelFile(data)
+	}
+	effective := normalizeLogLevelMax(p["LogLevelMax"])
+
+	identity, _ := json.Marshal([]any{string(level), effective, string(data)})
+	digest := sha256.Sum256(identity)
+	revision := hex.EncodeToString(digest[:])
+
+	return WarpLogStatus{
+		Supported:      true,
+		Level:          level,
+		EffectiveLevel: effective,
+		Revision:       revision,
+	}, nil
+}
+
+func (c *controller) warpLogApply(ctx context.Context, req WarpLogRequest) (WarpLogStatus, error) {
+	current, err := c.warpLogStatus(ctx)
+	if err != nil {
+		return current, err
+	}
+	if !current.Supported {
+		return current, messageError(current.Reason)
+	}
+	if req.Revision == "" || req.Revision != current.Revision {
+		return current, ErrWarpLogConflict
+	}
+	if !IsValidWarpLogLevel(req.Level) {
+		return current, messageError("Invalid WARP log level.")
+	}
+
+	stateFile := filepath.Join(c.stateDir, warpLogFilename)
+	previous, readErr := os.ReadFile(stateFile)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return current, messageError("Could not read saved WARP log settings. Current settings are unchanged.")
+	}
+
+	newBytes := formatWarpLogLevel(req.Level)
+	if err = c.saveWarpLog(newBytes); err != nil {
+		return current, messageError("Could not save WARP log settings. Current settings are unchanged.")
+	}
+	rollback := func() (WarpLogStatus, error) {
+		restoreErr := c.restoreWarpLog(previous)
+		_, reloadErr := c.command(ctx, "daemon-reload")
+		_, restartErr := c.command(ctx, "restart", "warp-svc.service")
+		if restoreErr != nil || reloadErr != nil || restartErr != nil {
+			return current, messageError("WARP log settings could not be saved or restored. Read current settings before retrying.")
+		}
+		return current, messageError("Could not apply WARP log settings. The previous settings were restored.")
+	}
+
+	_, err = c.command(ctx, "daemon-reload")
+	if err == nil {
+		_, err = c.command(ctx, "restart", "warp-svc.service")
+	}
+	if err != nil {
+		return rollback()
+	}
+
+	after, err := c.warpLogStatus(ctx)
+	if err != nil || after.Level != req.Level || (req.Level != WarpLogLevelInherit && after.EffectiveLevel != string(req.Level)) {
+		return rollback()
+	}
+	return after, nil
+}
+
 // Host capacity is physical RAM capped by parent cgroups, excluding the
 // service's own current memory.max. Do not parse another process's mount paths.
 func hostCapacity(group string) (uint64, error) {
@@ -213,10 +366,22 @@ func hostCapacity(group string) (uint64, error) {
 }
 
 func saveMetadata(m metadata) error {
-	return writeMemoryState(formatMetadata(m))
+	return writeResourceState(memoryFilename, formatMetadata(m))
 }
 
 func writeMemoryState(b []byte) error {
+	return writeResourceState(memoryFilename, b)
+}
+
+func saveWarpLogState(b []byte) error {
+	return writeResourceState(warpLogFilename, b)
+}
+
+func restoreWarpLogState(b []byte) error {
+	return writeResourceState(warpLogFilename, b)
+}
+
+func writeResourceState(filename string, b []byte) error {
 	info, err := os.Lstat(StateDirectory)
 	if err != nil {
 		return err
@@ -225,14 +390,15 @@ func writeMemoryState(b []byte) error {
 	if !ok || !info.IsDir() || stat.Uid != 0 || info.Mode().Perm()&0o022 != 0 {
 		return messageError("unsafe resource state directory")
 	}
+	target := filepath.Join(StateDirectory, filename)
 	if b == nil {
-		err = os.Remove(filepath.Join(StateDirectory, memoryFilename))
+		err = os.Remove(target)
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	f, err := os.CreateTemp(StateDirectory, ".memory-*")
+	f, err := os.CreateTemp(StateDirectory, "."+filename+"-*")
 	if err != nil {
 		return err
 	}
@@ -251,7 +417,7 @@ func writeMemoryState(b []byte) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Rename(tmp, filepath.Join(StateDirectory, memoryFilename))
+	return os.Rename(tmp, target)
 }
 
 func peerAllowed(conn *net.UnixConn, uid uint32, group string) bool {
@@ -302,16 +468,20 @@ func handleControl(ctx context.Context, conn io.ReadWriter, c *controller) {
 	} else {
 		var err error
 		switch {
-		case req.Action == "memory.status" && req.Memory == nil:
+		case req.Action == "memory.status" && req.Memory == nil && req.WarpLog == nil:
 			reply.Memory, err = c.status(ctx)
-		case req.Action == "memory.apply" && req.Memory != nil:
+		case req.Action == "memory.apply" && req.Memory != nil && req.WarpLog == nil:
 			reply.Memory, err = c.apply(ctx, *req.Memory)
+		case req.Action == "warp-log.status" && req.Memory == nil && req.WarpLog == nil:
+			reply.WarpLog, err = c.warpLogStatus(ctx)
+		case req.Action == "warp-log.apply" && req.Memory == nil && req.WarpLog != nil:
+			reply.WarpLog, err = c.warpLogApply(ctx, *req.WarpLog)
 		default:
 			err = messageError("Invalid resource control request.")
 		}
 		if err != nil {
 			reply.Error = err.Error()
-			reply.Conflict = errors.Is(err, ErrMemoryConflict)
+			reply.Conflict = errors.Is(err, ErrMemoryConflict) || errors.Is(err, ErrWarpLogConflict)
 		}
 	}
 	_ = json.NewEncoder(conn).Encode(reply)
@@ -340,7 +510,16 @@ func ServeHelper(ctx context.Context, configPath string) error {
 	if err != nil {
 		return messageError("Resource control service account is unavailable.")
 	}
-	c := &controller{configPath: configPath, stateDir: StateDirectory, command: systemctl, capacity: hostCapacity, save: saveMetadata, restore: writeMemoryState}
+	c := &controller{
+		configPath:     configPath,
+		stateDir:       StateDirectory,
+		command:        systemctl,
+		capacity:       hostCapacity,
+		save:           saveMetadata,
+		restore:        writeMemoryState,
+		saveWarpLog:    saveWarpLogState,
+		restoreWarpLog: restoreWarpLogState,
+	}
 	stop := context.AfterFunc(ctx, func() { _ = unix.Close() })
 	defer stop()
 	for {

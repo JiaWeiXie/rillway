@@ -266,6 +266,12 @@ func restoreUnitFile(dst string, prev []byte, existed bool) error {
 }
 
 func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath string, run Runner) error {
+	// =========================================================================
+	// PASS 1: Strict read-only validation/planning pass.
+	// NO files, directories, or symlinks may be created or modified in this pass.
+	// If any preflight check fails, fail closed immediately.
+	// =========================================================================
+
 	// 1. Validate installed binary and parent directories.
 	bInfo, err := os.Lstat(paths.binary)
 	if err != nil || !bInfo.Mode().IsRegular() {
@@ -284,39 +290,40 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 		if uInfo.Mode()&os.ModeSymlink != 0 || uInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(uInfo) {
 			return errors.New("resource control requires secure rillway.service unit file")
 		}
-	}
-
-	// 3. Resource state directory.
-	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
-	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	rInfo, err := os.Lstat(resourceDir)
-	if err != nil || !rInfo.IsDir() || rInfo.Mode()&os.ModeSymlink != 0 || rInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(rInfo) {
-		return errors.New("unsafe resource control state directory")
+
+	// 3. Resource state directory and parent hierarchy.
+	resourceDir := filepath.Join(filepath.Dir(paths.state), "rillway-resource-control")
+	if err := validateSecureHierarchy(filepath.Dir(resourceDir), paths.root); err != nil {
+		return fmt.Errorf("unsafe parent directory for resource state: %w", err)
+	}
+	if rInfo, err := os.Lstat(resourceDir); err == nil {
+		if !rInfo.IsDir() || rInfo.Mode()&os.ModeSymlink != 0 || rInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(rInfo) {
+			return errors.New("unsafe resource control state directory")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
-	// 4. Memory drop-in and state file preservation.
+	// 4. Memory drop-in and state file preflight.
 	memoryTarget := filepath.Join(resourceDir, "memory-limit.conf")
-	mInfo, err := os.Lstat(memoryTarget)
-	if os.IsNotExist(err) {
-		if err = config.WritePrivate(memoryTarget, []byte("# Rillway memory limits are unchanged until saved.\n[Service]\n")); err != nil {
-			return err
+	if mInfo, err := os.Lstat(memoryTarget); err == nil {
+		if !mInfo.Mode().IsRegular() || mInfo.Mode()&os.ModeSymlink != 0 || mInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(mInfo) {
+			return errors.New("unsafe memory control state file")
 		}
-		if err = os.Chmod(memoryTarget, 0o644); err != nil {
-			return err
-		}
-	} else if err != nil || !mInfo.Mode().IsRegular() || mInfo.Mode()&os.ModeSymlink != 0 || mInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(mInfo) {
-		return errors.New("unsafe memory control state file")
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
 	dropinDir := filepath.Join(unitDir, "rillway.service.d")
-	if err = os.MkdirAll(dropinDir, 0o755); err != nil {
+	if dInfo, err := os.Lstat(dropinDir); err == nil {
+		if !dInfo.IsDir() || dInfo.Mode()&os.ModeSymlink != 0 || dInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(dInfo) {
+			return errors.New("unsafe rillway.service.d directory")
+		}
+	} else if !os.IsNotExist(err) {
 		return err
-	}
-	dInfo, err := os.Lstat(dropinDir)
-	if err != nil || !dInfo.IsDir() || dInfo.Mode()&os.ModeSymlink != 0 || dInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(dInfo) {
-		return errors.New("unsafe rillway.service.d directory")
 	}
 
 	memoryLink := filepath.Join(dropinDir, "zzzz-rillway-memory.conf")
@@ -324,22 +331,113 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 		if current != memoryTarget {
 			return errors.New("memory control drop-in already exists with another target")
 		}
-	} else if os.IsNotExist(readErr) {
-		if err = os.Symlink(memoryTarget, memoryLink); err != nil {
-			return err
-		}
-	} else {
+	} else if !os.IsNotExist(readErr) {
 		return errors.New("memory control drop-in already exists with another target")
 	}
 
-	// 5. Units generation and atomic activation.
+	// 5. Cloudflare WARP drop-in preflight if warp-svc.service is loaded.
+	warpLoaded := false
+	warpTarget := filepath.Join(resourceDir, "warp-log-level.conf")
+	warpDropinDir := filepath.Join(unitDir, "warp-svc.service.d")
+	warpLink := filepath.Join(warpDropinDir, "zzzz-rillway-log-level.conf")
+
+	warpOut, err := run(ctx, "systemctl", "show", "warp-svc.service", "--property=LoadState")
+	if err == nil && strings.Contains(string(warpOut), "LoadState=loaded") {
+		warpLoaded = true
+
+		if wInfo, err := os.Lstat(warpTarget); err == nil {
+			if !wInfo.Mode().IsRegular() || wInfo.Mode()&os.ModeSymlink != 0 || wInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(wInfo) {
+				return errors.New("unsafe warp log level state file")
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+
+		if wdInfo, err := os.Lstat(warpDropinDir); err == nil {
+			if !wdInfo.IsDir() || wdInfo.Mode()&os.ModeSymlink != 0 || wdInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(wdInfo) {
+				return errors.New("unsafe warp-svc.service.d directory")
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+
+		if current, readErr := os.Readlink(warpLink); readErr == nil {
+			if current != warpTarget {
+				return errors.New("warp log level drop-in already exists with another target")
+			}
+		} else if !os.IsNotExist(readErr) {
+			return errors.New("warp log level drop-in already exists with another target")
+		}
+	}
+
+	// 6. Units generation preflight.
 	socketContent, serviceContent, err := resourcecontrol.Units(paths.binary, configPath)
 	if err != nil {
 		return err
 	}
 	newSocket := filepath.Join(unitDir, "rillway-resource-control.socket")
 	newService := filepath.Join(unitDir, "rillway-resource-control.service")
+	for _, unitPath := range []string{newSocket, newService} {
+		if uInfo, err := os.Lstat(unitPath); err == nil {
+			if !uInfo.Mode().IsRegular() || uInfo.Mode()&os.ModeSymlink != 0 || uInfo.Mode().Perm()&0o022 != 0 || !checkSecureOwnership(uInfo) {
+				return errors.New("unsafe existing resource control unit file")
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
 
+	// =========================================================================
+	// PASS 2: Mutation pass.
+	// Executed only after all read-only preflight checks succeed.
+	// =========================================================================
+
+	// 1. Create resource state directory.
+	if err := os.MkdirAll(resourceDir, 0o755); err != nil {
+		return err
+	}
+
+	// 2. Write initial memory-limit.conf if absent.
+	if _, err := os.Stat(memoryTarget); os.IsNotExist(err) {
+		if err = config.WritePrivate(memoryTarget, []byte("# Rillway memory limits are unchanged until saved.\n[Service]\n")); err != nil {
+			return err
+		}
+		if err = os.Chmod(memoryTarget, 0o644); err != nil {
+			return err
+		}
+	}
+
+	// 3. Ensure memory drop-in link.
+	if err := os.MkdirAll(dropinDir, 0o755); err != nil {
+		return err
+	}
+	if _, readErr := os.Readlink(memoryLink); os.IsNotExist(readErr) {
+		if err := os.Symlink(memoryTarget, memoryLink); err != nil {
+			return err
+		}
+	}
+
+	// 4. Ensure WARP drop-in if loaded.
+	if warpLoaded {
+		if _, err := os.Stat(warpTarget); os.IsNotExist(err) {
+			if err = config.WritePrivate(warpTarget, []byte("[Service]\nLogLevelMax=info\n")); err != nil {
+				return err
+			}
+			if err = os.Chmod(warpTarget, 0o644); err != nil {
+				return err
+			}
+		}
+		if err := os.MkdirAll(warpDropinDir, 0o755); err != nil {
+			return err
+		}
+		if _, readErr := os.Readlink(warpLink); os.IsNotExist(readErr) {
+			if err := os.Symlink(warpTarget, warpLink); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 5. Units atomic writing and activation.
 	prevSocket, hadPrevSocket := os.ReadFile(newSocket)
 	prevService, hadPrevService := os.ReadFile(newService)
 
@@ -374,7 +472,7 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 		return errors.New("resource control socket is not active")
 	}
 
-	// 6. Socket is active; clean up legacy memory units if present.
+	// 6. Clean up legacy memory units if present.
 	oldSocket := filepath.Join(unitDir, "rillway-memory.socket")
 	oldService := filepath.Join(unitDir, "rillway-memory.service")
 	oldFound := false
