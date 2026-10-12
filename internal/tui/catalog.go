@@ -172,6 +172,11 @@ var catalog = map[string]string{
 	"WARP logging is unsupported on this host. Run sudo rillway service restart to update.":             "此主機不支援 WARP 日誌設定；請執行 sudo rillway service restart 更新服務。",
 	"WARP service logging is unsupported on this host.":                                                 "此主機不支援 WARP 服務日誌設定。",
 	"invalid WARP log level": "無效的 WARP 日誌層級",
+	"WARP service logging requires a Linux systemd installation.":                              "WARP 服務記錄功能需要 Linux systemd 安裝環境。",
+	"Cloudflare WARP service (warp-svc.service) is not installed or loaded.":                   "Cloudflare WARP 服務（warp-svc.service）尚未安裝或載入。",
+	"WARP logging control is unavailable. Run sudo rillway service restart to enable it.":      "WARP 記錄控制無法使用。請執行 sudo rillway service restart 啟用。",
+	"Could not read Cloudflare WARP service status.":                                           "無法讀取 Cloudflare WARP 服務狀態。",
+	"WARP log settings could not be saved or restored. Read current settings before retrying.": "無法儲存或還原 WARP 記錄設定。請先讀取目前設定再重試。",
 	"\n  How to use Rillway\n\n  1. Press o to connect to a running service. A VM uses its own HTTPS address.\n  2. Tab to Outbounds. Press + to add; common values are filled in.\n     Select WARP, then n Register, c Connect and v Verify.\n  3. Set your browser HTTP proxy to %s, or use the PAC URL below.\n     http://%s/proxy.pac\n  4. Connections shows only traffic sent through this proxy.\n     Select a connection and press Enter to choose its future route.\n\n  Company services should bypass Rillway on your Mac.\n  Enter / Esc Close   Ctrl+L Language\n": "\n  Rillway 使用方式\n\n  1. 按 o 連到已啟動的服務，VM 使用自己的 HTTPS 網址。\n  2. 按 Tab 切到出口頁，按 + 新增，常用值已填好。\n     選取 WARP，再按 n 註冊、c 連線、v 驗證。\n  3. 瀏覽器的 HTTP Proxy 設為 %s，或使用下方 PAC 網址。\n     http://%s/proxy.pac\n  4. 連線總覽只顯示經過這個 Proxy 的流量。\n     選取連線後按 Enter，選擇它之後使用的出口。\n\n  Mac 的公司服務應略過 Rillway。\n  Enter／Esc 關閉   Ctrl+L 切換語言\n",
 }
 
