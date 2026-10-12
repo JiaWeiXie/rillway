@@ -43,6 +43,8 @@ warp-cli --accept-tos disconnect
 
 listener 存在、帳號為 Unlimited，都不能單獨證明 tunnel 正常。`verified_at` 是過去一次驗證成功時間，並非持續健康保證，也不是下載加速證明。為避免頻繁 IPC 與日誌放大，狀態讀取採雙層快取：連線狀態與 Local Proxy probe 的動態快取有效期限為 30 秒；版本、模式與帳號註冊等 metadata 快取有效期限為 5 分鐘。呼叫端可透過 API 查詢參數 `?refresh=true`（或 UI/TUI 手動刷新）強制使兩層快取失效並立即重讀；任何出口操作（連線、斷線、註冊、授權、驗證）完成後亦會自動使快取失效。未指定 `refresh` 或傳入 `false` 時回傳快取；傳入其他非法參數值則直接回傳 400 Bad Request。
 
+手動刷新使用新的快取世代，不會沿用刷新前尚未完成的查詢結果。Metadata 任一子命令失敗時保留上一份完整且成功的 metadata；沒有成功紀錄時僅呈現已取得的欄位，不公開 CLI 原始輸出。
+
 Local Proxy 不支援目前帳號／版本時，Rillway 回報錯誤，不改成全機 tunnel，也不改用非官方 WARP 註冊服務。官方 WARP daemon 負責自身連線維持；Rillway 不在背景重複註冊或重新連線，手動斷線後也不會重啟它。
 
 SOCKS5 以網域發起連線時，由 WARP 解析 DNS，Rillway 不會猜測目的 IP。SOCKS5 協定無法同時指定網域與強制 IP 類型，因此 WARP 的網域規則請使用 `auto`；`ipv4`／`ipv6` 只有在目的地是相符的 literal IP 時可用。使用者傳入網址 hostname 的連線，目的 IP 顯示為未知。

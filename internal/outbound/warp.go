@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -43,9 +44,10 @@ type (
 		in *flightCall[T]
 	}
 	flightCall[T any] struct {
-		done chan struct{}
-		val  T
-		err  error
+		done  chan struct{}
+		epoch uint64
+		val   T
+		err   error
 	}
 	warp struct {
 		cfg         config.Outbound
@@ -54,39 +56,43 @@ type (
 		dialContext func(context.Context, string, string) (net.Conn, error)
 		mu          sync.RWMutex
 		actionMu    sync.Mutex
+		statusEpoch atomic.Uint64
 
 		dynamicMu     sync.Mutex
 		dynamicFlight flight[warpDynamic]
 		cachedDynamic warpDynamic
 		dynamicAt     time.Time
+		dynamicEpoch  uint64
 
 		metadataMu       sync.Mutex
 		metadataFlight   flight[warpMetadata]
 		cachedMetadata   warpMetadata
 		lastGoodMetadata warpMetadata
 		metadataAt       time.Time
+		metadataEpoch    uint64
 
 		verified   time.Time
 		manualStop bool
 	}
 )
 
-func (f *flight[T]) Do(fn func() (T, error)) (T, error) {
+func (f *flight[T]) Do(epoch uint64, fn func() (T, error)) (T, error) {
 	f.mu.Lock()
-	if c := f.in; c != nil {
+	if c := f.in; c != nil && c.epoch >= epoch {
 		f.mu.Unlock()
 		<-c.done
 		return c.val, c.err
 	}
-	c := &flightCall[T]{done: make(chan struct{})}
+	c := &flightCall[T]{done: make(chan struct{}), epoch: epoch}
 	f.in = c
 	f.mu.Unlock()
 
 	c.val, c.err = fn()
-	close(c.done)
-
 	f.mu.Lock()
-	f.in = nil
+	if f.in == c {
+		f.in = nil
+	}
+	close(c.done)
 	f.mu.Unlock()
 
 	return c.val, c.err
@@ -151,13 +157,9 @@ func (w *warp) clock() time.Time {
 }
 
 func (w *warp) InvalidateStatus() {
-	w.dynamicMu.Lock()
-	w.dynamicAt = time.Time{}
-	w.dynamicMu.Unlock()
-
-	w.metadataMu.Lock()
-	w.metadataAt = time.Time{}
-	w.metadataMu.Unlock()
+	// Both cache layers and their flights use the epoch captured by Status.
+	// A late result from a prior epoch cannot satisfy a forced inspection.
+	w.statusEpoch.Add(1)
 }
 
 func (w *warp) Status(ctx context.Context) Status {
@@ -172,8 +174,9 @@ func (w *warp) Status(ctx context.Context) Status {
 		return s
 	}
 
-	dyn := w.getDynamic(ctx)
-	meta := w.getMetadata(ctx)
+	epoch := w.statusEpoch.Load()
+	dyn := w.getDynamic(ctx, epoch)
+	meta := w.getMetadata(ctx, epoch)
 
 	s.State = dyn.state
 	s.Detail = dyn.detail
@@ -186,20 +189,20 @@ func (w *warp) Status(ctx context.Context) Status {
 	return s
 }
 
-func (w *warp) getDynamic(ctx context.Context) warpDynamic {
+func (w *warp) getDynamic(ctx context.Context, epoch uint64) warpDynamic {
 	now := w.clock()
 	w.dynamicMu.Lock()
-	if !w.dynamicAt.IsZero() && now.Sub(w.dynamicAt) < 30*time.Second {
+	if w.dynamicEpoch == epoch && !w.dynamicAt.IsZero() && now.Sub(w.dynamicAt) < 30*time.Second {
 		d := w.cachedDynamic
 		w.dynamicMu.Unlock()
 		return d
 	}
 	w.dynamicMu.Unlock()
 
-	dyn, _ := w.dynamicFlight.Do(func() (warpDynamic, error) {
+	dyn, _ := w.dynamicFlight.Do(epoch, func() (warpDynamic, error) {
 		now := w.clock()
 		w.dynamicMu.Lock()
-		if !w.dynamicAt.IsZero() && now.Sub(w.dynamicAt) < 30*time.Second {
+		if w.dynamicEpoch == epoch && !w.dynamicAt.IsZero() && now.Sub(w.dynamicAt) < 30*time.Second {
 			d := w.cachedDynamic
 			w.dynamicMu.Unlock()
 			return d, nil
@@ -208,8 +211,11 @@ func (w *warp) getDynamic(ctx context.Context) warpDynamic {
 
 		d := w.readDynamic(ctx)
 		w.dynamicMu.Lock()
-		w.cachedDynamic = d
-		w.dynamicAt = w.clock()
+		if w.statusEpoch.Load() == epoch {
+			w.cachedDynamic = d
+			w.dynamicAt = w.clock()
+			w.dynamicEpoch = epoch
+		}
 		w.dynamicMu.Unlock()
 		return d, nil
 	})
@@ -248,20 +254,20 @@ func (w *warp) readDynamic(ctx context.Context) warpDynamic {
 	return d
 }
 
-func (w *warp) getMetadata(ctx context.Context) warpMetadata {
+func (w *warp) getMetadata(ctx context.Context, epoch uint64) warpMetadata {
 	now := w.clock()
 	w.metadataMu.Lock()
-	if !w.metadataAt.IsZero() && now.Sub(w.metadataAt) < 5*time.Minute {
+	if w.metadataEpoch == epoch && !w.metadataAt.IsZero() && now.Sub(w.metadataAt) < 5*time.Minute {
 		m := w.cachedMetadata
 		w.metadataMu.Unlock()
 		return m
 	}
 	w.metadataMu.Unlock()
 
-	meta, _ := w.metadataFlight.Do(func() (warpMetadata, error) {
+	meta, _ := w.metadataFlight.Do(epoch, func() (warpMetadata, error) {
 		now := w.clock()
 		w.metadataMu.Lock()
-		if !w.metadataAt.IsZero() && now.Sub(w.metadataAt) < 5*time.Minute {
+		if w.metadataEpoch == epoch && !w.metadataAt.IsZero() && now.Sub(w.metadataAt) < 5*time.Minute {
 			m := w.cachedMetadata
 			w.metadataMu.Unlock()
 			return m, nil
@@ -270,16 +276,17 @@ func (w *warp) getMetadata(ctx context.Context) warpMetadata {
 
 		m := w.readMetadata(ctx)
 		w.metadataMu.Lock()
-		if m.hasGood {
-			w.lastGoodMetadata = m
-			w.cachedMetadata = m
-		} else if w.lastGoodMetadata.hasGood {
+		if !m.hasGood && w.lastGoodMetadata.hasGood {
 			m = w.lastGoodMetadata
-			w.cachedMetadata = m
-		} else {
-			w.cachedMetadata = m
 		}
-		w.metadataAt = w.clock()
+		if w.statusEpoch.Load() == epoch {
+			if m.hasGood {
+				w.lastGoodMetadata = m
+			}
+			w.cachedMetadata = m
+			w.metadataAt = w.clock()
+			w.metadataEpoch = epoch
+		}
 		w.metadataMu.Unlock()
 		return m, nil
 	})
@@ -304,9 +311,7 @@ func (w *warp) readMetadata(ctx context.Context) warpMetadata {
 			m.account = "registered (Unlimited not confirmed)"
 		}
 	}
-	if errV == nil || errS == nil || errR == nil {
-		m.hasGood = true
-	}
+	m.hasGood = errV == nil && errS == nil && errR == nil
 	return m
 }
 

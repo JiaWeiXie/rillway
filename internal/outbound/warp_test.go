@@ -314,3 +314,158 @@ func TestWARPActionInvalidatesCaches(t *testing.T) {
 		t.Fatalf("expected 4 commands after action invalidation, got %d", afterStatus-beforeStatus)
 	}
 }
+
+func TestWARPPartialMetadataFailurePreservesCompleteSnapshot(t *testing.T) {
+	for _, failed := range []string{"--version", "settings", "registration show"} {
+		t.Run(failed, func(t *testing.T) {
+			w := newWARP(config.Outbound{ID: "warp"})
+			w.dialContext = func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("test listener unavailable")
+			}
+			refresh := false
+			w.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				cmd := strings.Join(args[1:], " ")
+				if refresh && cmd == failed {
+					return []byte("private-license"), errors.New("private systemctl output")
+				}
+				switch cmd {
+				case "status":
+					return []byte("Connected"), nil
+				case "--version":
+					if refresh {
+						return []byte("2026.10.2.0"), nil
+					}
+					return []byte("2026.9.1.0"), nil
+				case "settings":
+					if refresh {
+						return []byte("Mode: Warp"), nil
+					}
+					return []byte("Mode: Proxy"), nil
+				case "registration show":
+					if refresh {
+						return []byte("Account type: Free"), nil
+					}
+					return []byte("Account type: Unlimited"), nil
+				default:
+					return nil, errors.New("unexpected command")
+				}
+			}
+			before := w.Status(t.Context())
+			refresh = true
+			w.InvalidateStatus()
+			after := w.Status(t.Context())
+			if after.Version != before.Version || after.Mode != before.Mode || after.Account != before.Account {
+				t.Fatalf("partial refresh replaced complete metadata: before=%+v after=%+v", before, after)
+			}
+			if after.State != "connected" || strings.Contains(after.Detail, "private") {
+				t.Fatalf("unsafe or incorrect status: %+v", after)
+			}
+		})
+	}
+}
+
+func TestWARPInvalidationDuringInflightStatus(t *testing.T) {
+	for _, blocked := range []string{"status", "--version"} {
+		for _, finishOldFirst := range []bool{true, false} {
+			name := blocked + "/refresh-before-completion"
+			if finishOldFirst {
+				name = blocked + "/completion-before-refresh"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				w := newWARP(config.Outbound{ID: "warp"})
+				w.dialContext = func(context.Context, string, string) (net.Conn, error) {
+					return nil, errors.New("test listener unavailable")
+				}
+				started, release := make(chan struct{}), make(chan struct{})
+				var mu sync.Mutex
+				calls := map[string]int{}
+				w.run = func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+					cmd := strings.Join(args[1:], " ")
+					mu.Lock()
+					calls[cmd]++
+					call := calls[cmd]
+					mu.Unlock()
+					if cmd == blocked && call == 1 {
+						close(started)
+						select {
+						case <-release:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+					switch cmd {
+					case "status":
+						return []byte("Connected"), nil
+					case "--version":
+						if call == 1 {
+							return []byte("2026.9.1.0"), nil
+						}
+						return []byte("2026.10.2.0"), nil
+					case "settings":
+						return []byte("Mode: Proxy"), nil
+					case "registration show":
+						return []byte("Account type: Unlimited"), nil
+					default:
+						return nil, errors.New("unexpected command")
+					}
+				}
+				oldDone := make(chan struct{})
+				go func() {
+					defer close(oldDone)
+					_ = w.Status(ctx)
+				}()
+				await := func(ch <-chan struct{}) {
+					t.Helper()
+					select {
+					case <-ch:
+					case <-ctx.Done():
+						t.Fatal("timed out waiting for blocked status")
+					}
+				}
+				await(started)
+				w.InvalidateStatus()
+				if finishOldFirst {
+					close(release)
+					await(oldDone)
+				}
+				mu.Lock()
+				before := make(map[string]int, len(calls))
+				for cmd, n := range calls {
+					before[cmd] = n
+				}
+				mu.Unlock()
+				fresh := w.Status(ctx)
+				mu.Lock()
+				for _, cmd := range []string{"status", "--version", "settings", "registration show"} {
+					if calls[cmd] != before[cmd]+1 {
+						t.Errorf("forced refresh did not execute %q: before=%d after=%d", cmd, before[cmd], calls[cmd])
+					}
+				}
+				mu.Unlock()
+				expectedVersion := "2026.10.2.0"
+				if before["--version"] == 0 {
+					expectedVersion = "2026.9.1.0"
+				}
+				if fresh.Version != expectedVersion || fresh.State != "connected" {
+					t.Fatalf("forced refresh returned stale status: %+v", fresh)
+				}
+				if !finishOldFirst {
+					close(release)
+					await(oldDone)
+				}
+				mu.Lock()
+				beforeCached := calls["status"] + calls["--version"] + calls["settings"] + calls["registration show"]
+				mu.Unlock()
+				cached := w.Status(ctx)
+				mu.Lock()
+				afterCached := calls["status"] + calls["--version"] + calls["settings"] + calls["registration show"]
+				mu.Unlock()
+				if cached.Version != fresh.Version || afterCached != beforeCached {
+					t.Fatalf("late completion overwrote current epoch: cached=%+v commands=%d->%d", cached, beforeCached, afterCached)
+				}
+			})
+		}
+	}
+}
