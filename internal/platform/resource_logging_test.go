@@ -76,7 +76,7 @@ func TestReconcileWarpEffectiveReadback(t *testing.T) {
 			err := reconcileResourceControl(t.Context(), paths, filepath.Join(paths.root, "config.json"), run)
 			want := []string{"systemctl show warp-svc.service --property=LoadState", "systemctl daemon-reload", "systemctl show warp-svc.service --property=LogLevelMax --value"}
 			if tc.fail {
-				if err == nil || err.Error() != "Could not verify WARP service logging. The previous settings were restored." {
+				if err == nil || err.Error() != "could not verify WARP service logging; the previous settings were restored" {
 					t.Fatalf("unexpected unsafe verification error: %v", err)
 				}
 				want = append(want, "systemctl daemon-reload")

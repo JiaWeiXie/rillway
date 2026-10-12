@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync/atomic"
-	"testing"
-	"time"
-
 	"rillway/internal/config"
 	"rillway/internal/control"
 	"rillway/internal/i18n"
 	"rillway/internal/resourcecontrol"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

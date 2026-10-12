@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-
 	"rillway/internal/control"
 	"rillway/internal/i18n"
 )

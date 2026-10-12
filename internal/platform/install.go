@@ -621,9 +621,9 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 	}
 	if warpLoaded && !verifyManagedWarpLog(ctx, run, warpLevel) {
 		if rollbackErr := rollbackNewUnits(false); rollbackErr != nil {
-			return errors.New("Could not verify WARP service logging or restore the previous service state. Read the installed service state before retrying.")
+			return errors.New("could not verify WARP service logging or restore the previous service state; read the installed service state before retrying")
 		}
-		return errors.New("Could not verify WARP service logging. The previous settings were restored.")
+		return errors.New("could not verify WARP service logging; the previous settings were restored")
 	}
 	if _, err = run(ctx, "systemctl", "enable", "--now", "rillway-resource-control.socket"); err != nil {
 		return errors.Join(err, rollbackNewUnits(true))
