@@ -177,6 +177,18 @@ var catalog = map[string]string{
 	"WARP logging control is unavailable. Run sudo rillway service restart to enable it.":      "WARP 記錄控制無法使用。請執行 sudo rillway service restart 啟用。",
 	"Could not read Cloudflare WARP service status.":                                           "無法讀取 Cloudflare WARP 服務狀態。",
 	"WARP log settings could not be saved or restored. Read current settings before retrying.": "無法儲存或還原 WARP 記錄設定。請先讀取目前設定再重試。",
+	"Resource control did not respond. Read current settings before retrying.":                 "資源控制未回應。請先讀取目前設定再重試。",
+	"WARP logging control is unavailable. Upgrade the installed service to enable it.":         "WARP 記錄控制無法使用。請升級已安裝的服務以啟用此功能。",
+	"Could not read WARP logging settings.":                                                    "無法讀取 WARP 記錄設定。",
+	"Invalid WARP log level. Allowed values: inherit, warning, info, debug.":                   "WARP 記錄層級無效。允許的值為 inherit、warning、info、debug。",
+	"Could not apply WARP logging settings. Refresh settings before retrying.":                 "無法套用 WARP 記錄設定。請重新整理設定後再重試。",
+	"WARP logging control requires a Linux systemd installation.":                              "WARP 記錄控制需要 Linux systemd 安裝環境。",
+	"Invalid WARP log level.": "WARP 記錄層級無效。",
+	"Could not read saved WARP log settings. Current settings are unchanged.": "無法讀取已儲存的 WARP 記錄設定。目前設定未變更。",
+	"Could not save WARP log settings. Current settings are unchanged.":       "無法儲存 WARP 記錄設定。目前設定未變更。",
+	"Could not apply WARP log settings. The previous settings were restored.": "無法套用 WARP 記錄設定。已還原先前的設定。",
+	"Invalid resource control request.":                                       "資源控制請求無效。",
+	"Service resource control requires a Linux systemd installation.":         "服務資源控制需要 Linux systemd 安裝環境。",
 	"\n  How to use Rillway\n\n  1. Press o to connect to a running service. A VM uses its own HTTPS address.\n  2. Tab to Outbounds. Press + to add; common values are filled in.\n     Select WARP, then n Register, c Connect and v Verify.\n  3. Set your browser HTTP proxy to %s, or use the PAC URL below.\n     http://%s/proxy.pac\n  4. Connections shows only traffic sent through this proxy.\n     Select a connection and press Enter to choose its future route.\n\n  Company services should bypass Rillway on your Mac.\n  Enter / Esc Close   Ctrl+L Language\n": "\n  Rillway 使用方式\n\n  1. 按 o 連到已啟動的服務，VM 使用自己的 HTTPS 網址。\n  2. 按 Tab 切到出口頁，按 + 新增，常用值已填好。\n     選取 WARP，再按 n 註冊、c 連線、v 驗證。\n  3. 瀏覽器的 HTTP Proxy 設為 %s，或使用下方 PAC 網址。\n     http://%s/proxy.pac\n  4. 連線總覽只顯示經過這個 Proxy 的流量。\n     選取連線後按 Enter，選擇它之後使用的出口。\n\n  Mac 的公司服務應略過 Rillway。\n  Enter／Esc 關閉   Ctrl+L 切換語言\n",
 }
 
