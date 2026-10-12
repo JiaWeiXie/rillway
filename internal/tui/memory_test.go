@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"rillway/internal/control"
 	"rillway/internal/i18n"
-	"rillway/internal/memorylimit"
+	"rillway/internal/resourcecontrol"
 	"strings"
 	"testing"
 
@@ -15,8 +15,8 @@ import (
 )
 
 func TestMemoryEditorUsesAPIAndPreservesRevision(t *testing.T) {
-	s := memorylimit.Status{Supported: true, HostBytes: 4 * memorylimit.GiB, MinimumBytes: 256 * memorylimit.MiB, MaximumBytes: memorylimit.Maximum(4 * memorylimit.GiB), LimitBytes: 512 * memorylimit.MiB, Mode: "MiB", Value: "512", Revision: "old", MinimumReason: "Direct and WARP safety floor"}
-	var captured memorylimit.Request
+	s := resourcecontrol.MemoryStatus{Supported: true, HostBytes: 4 * resourcecontrol.GiB, MinimumBytes: 256 * resourcecontrol.MiB, MaximumBytes: resourcecontrol.MemoryMaximum(4 * resourcecontrol.GiB), LimitBytes: 512 * resourcecontrol.MiB, Mode: "MiB", Value: "512", Revision: "old", MinimumReason: "Direct and WARP safety floor"}
+	var captured resourcecontrol.MemoryRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/service/memory" || r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("wrong API or authentication")
@@ -79,7 +79,7 @@ func TestMemoryEditorUsesAPIAndPreservesRevision(t *testing.T) {
 }
 
 func TestMemoryUnitConversionKeepsCommonValues(t *testing.T) {
-	s := memorylimit.Status{HostBytes: 4 * memorylimit.GiB}
+	s := resourcecontrol.MemoryStatus{HostBytes: 4 * resourcecontrol.GiB}
 	if mode, value := nextMemoryUnit("MiB", "512", s, false); mode != "GiB" || value != "0.500" {
 		t.Fatal(mode, value)
 	}
@@ -89,11 +89,11 @@ func TestMemoryUnitConversionKeepsCommonValues(t *testing.T) {
 	if mode, value := nextMemoryUnit("percent", "12.5", s, false); mode != "MiB" || value != "512.000" {
 		t.Fatal(mode, value)
 	}
-	s.HostBytes = 5*memorylimit.GiB + 128*memorylimit.MiB
-	s.MinimumBytes = memorylimit.GiB
-	s.MaximumBytes = memorylimit.Maximum(s.HostBytes)
+	s.HostBytes = 5*resourcecontrol.GiB + 128*resourcecontrol.MiB
+	s.MinimumBytes = resourcecontrol.GiB
+	s.MaximumBytes = resourcecontrol.MemoryMaximum(s.HostBytes)
 	mode, value := nextMemoryUnit("GiB", "1", s, false)
-	if _, err := memorylimit.Calculate(memorylimit.Request{Mode: mode, Value: value}, s); err != nil {
+	if _, err := resourcecontrol.CalculateMemory(resourcecontrol.MemoryRequest{Mode: mode, Value: value}, s); err != nil {
 		t.Fatal("conversion crossed the minimum", mode, value, err)
 	}
 }
