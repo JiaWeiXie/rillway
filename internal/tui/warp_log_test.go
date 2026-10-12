@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"rillway/internal/config"
-	"rillway/internal/control"
-	"rillway/internal/i18n"
-	"rillway/internal/resourcecontrol"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"rillway/internal/config"
+	"rillway/internal/control"
+	"rillway/internal/i18n"
+	"rillway/internal/resourcecontrol"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -312,6 +313,10 @@ func TestWarpLogConflictPreservesDraft(t *testing.T) {
 	}
 	if m.err == nil || !strings.Contains(m.err.Error(), "WARP logging settings changed elsewhere") {
 		t.Fatalf("expected conflict message in err, got %v", m.err)
+	}
+	m.locale = i18n.TraditionalChinese
+	if !strings.Contains(m.View(), "WARP 日誌設定已在其他地方變更；已更新修訂號，請按 Enter 重試。") {
+		t.Fatalf("expected localized conflict message, got:\n%s", m.View())
 	}
 
 	// Model dispatched background fetch to refresh revision

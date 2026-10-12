@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+
 	"rillway/internal/control"
 	"rillway/internal/i18n"
 )
@@ -168,7 +169,7 @@ var catalog = map[string]string{
 	"  Left/Right/Space Choose level   Enter Save   Esc Cancel\n":                                       "  左右鍵／空白鍵 選擇層級   Enter 儲存   Esc 取消\n",
 	"WARP log level saved. WARP service was restarted.":                                                 "WARP 日誌層級已儲存；WARP 服務已重啟。",
 	"WARP logging settings changed elsewhere. Refresh settings before saving.":                          "WARP 日誌設定已在其他地方變更，請重新整理後再儲存。",
-	"WARP logging settings changed elsewhere. Revision refreshed; press Enter to retry.":                "WARP 日誌設定已在其他地方變更；已更新修訂號，請按 Enter 重試。",
+	"WARP logging settings changed elsewhere. Revision refreshed; press Enter to retry":                 "WARP 日誌設定已在其他地方變更；已更新修訂號，請按 Enter 重試。",
 	"WARP logging is unsupported on this host. Run sudo rillway service restart to update.":             "此主機不支援 WARP 日誌設定；請執行 sudo rillway service restart 更新服務。",
 	"WARP service logging is unsupported on this host.":                                                 "此主機不支援 WARP 服務日誌設定。",
 	"invalid WARP log level": "無效的 WARP 日誌層級",
@@ -177,6 +178,7 @@ var catalog = map[string]string{
 	"WARP logging control is unavailable. Run sudo rillway service restart to enable it.":      "WARP 記錄控制無法使用。請執行 sudo rillway service restart 啟用。",
 	"Could not read Cloudflare WARP service status.":                                           "無法讀取 Cloudflare WARP 服務狀態。",
 	"WARP log settings could not be saved or restored. Read current settings before retrying.": "無法儲存或還原 WARP 記錄設定。請先讀取目前設定再重試。",
+	"Resource control is unavailable. Upgrade the installed service to enable it.":             "資源控制無法使用；請升級已安裝的服務以啟用此功能。",
 	"Resource control did not respond. Read current settings before retrying.":                 "資源控制未回應。請先讀取目前設定再重試。",
 	"WARP logging control is unavailable. Upgrade the installed service to enable it.":         "WARP 記錄控制無法使用。請升級已安裝的服務以啟用此功能。",
 	"Could not read WARP logging settings.":                                                    "無法讀取 WARP 記錄設定。",
