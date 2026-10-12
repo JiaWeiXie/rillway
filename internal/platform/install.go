@@ -265,6 +265,95 @@ func restoreUnitFile(dst string, prev []byte, existed bool) error {
 	return err
 }
 
+type resourceSocketState struct {
+	enabled bool
+	runtime bool
+	active  bool
+}
+
+// Nonzero exit codes are expected only for the documented negative states.
+// A transport/spawn error, empty output, or transitional state fails closed.
+func readResourceSocketState(ctx context.Context, run Runner) (resourceSocketState, error) {
+	state := resourceSocketState{}
+	for _, query := range []string{"is-enabled", "is-active"} {
+		out, err := run(ctx, "systemctl", query, "rillway-resource-control.socket")
+		value := strings.TrimSpace(string(out))
+		code := 0
+		if err != nil {
+			var exit interface{ ExitCode() int }
+			if !errors.As(err, &exit) {
+				return state, fmt.Errorf("could not inspect resource control socket %s: %w", query, err)
+			}
+			code = exit.ExitCode()
+		}
+		valid := false
+		if query == "is-enabled" {
+			switch value {
+			case "enabled", "enabled-runtime":
+				valid = code == 0
+				state.enabled, state.runtime = true, value == "enabled-runtime"
+			case "disabled":
+				valid = code == 1
+			case "static", "indirect":
+				valid = code == 0
+			}
+		} else {
+			switch value {
+			case "active":
+				valid, state.active = code == 0, true
+			case "inactive", "failed":
+				valid = code == 3
+			case "unknown":
+				valid = code == 4
+			}
+		}
+		if !valid {
+			return state, fmt.Errorf("could not determine resource control socket %s state", query)
+		}
+	}
+	return state, nil
+}
+
+func managedWarpLogLevel(data []byte) (resourcecontrol.WarpLogLevel, error) {
+	var level resourcecontrol.WarpLogLevel
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "LogLevelMax="); ok {
+			found = true
+			level = resourcecontrol.WarpLogLevel(strings.TrimSpace(value))
+			if level == "" {
+				level = resourcecontrol.WarpLogLevelInherit
+			}
+		}
+	}
+	if !found || !resourcecontrol.IsValidWarpLogLevel(level) {
+		return "", errors.New("unsafe WARP log level state file")
+	}
+	return level, nil
+}
+
+func verifyManagedWarpLog(ctx context.Context, run Runner, level resourcecontrol.WarpLogLevel) bool {
+	out, err := run(ctx, "systemctl", "show", "warp-svc.service", "--property=LogLevelMax", "--value")
+	if err != nil {
+		return false
+	}
+	effective := strings.TrimSpace(string(out))
+	// Inherit can expose the unset D-Bus sentinel or an empty systemctl value.
+	if level == resourcecontrol.WarpLogLevelInherit && (effective == "-1" || effective == "") {
+		return true
+	}
+	priorities := [...]string{"emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"}
+	if number, err := strconv.Atoi(effective); err == nil && number >= 0 && number < len(priorities) {
+		effective = priorities[number]
+	}
+	for _, priority := range priorities {
+		if effective == priority {
+			return level == resourcecontrol.WarpLogLevelInherit || effective == string(level)
+		}
+	}
+	return false
+}
+
 func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath string, run Runner) error {
 	// =========================================================================
 	// PASS 1: Strict read-only validation/planning pass.
@@ -387,6 +476,41 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 		}
 	}
 
+	// Snapshot the previous generation before creating or modifying any assets.
+	prevSocket, socketReadErr := os.ReadFile(newSocket)
+	prevService, serviceReadErr := os.ReadFile(newService)
+	if socketReadErr != nil && !os.IsNotExist(socketReadErr) {
+		return socketReadErr
+	}
+	if serviceReadErr != nil && !os.IsNotExist(serviceReadErr) {
+		return serviceReadErr
+	}
+	prior := resourceSocketState{}
+	if socketReadErr == nil {
+		prior, err = readResourceSocketState(ctx, run)
+		if err != nil {
+			return err
+		}
+	}
+	warpStateMissing, warpLinkMissing, warpDirMissing := false, false, false
+	warpLevel := resourcecontrol.WarpLogLevelInfo
+	if warpLoaded {
+		data, readErr := os.ReadFile(warpTarget)
+		warpStateMissing = os.IsNotExist(readErr)
+		if readErr != nil && !warpStateMissing {
+			return readErr
+		}
+		if !warpStateMissing {
+			warpLevel, err = managedWarpLogLevel(data)
+			if err != nil {
+				return err
+			}
+		}
+		_, linkErr := os.Lstat(warpLink)
+		_, dirErr := os.Lstat(warpDropinDir)
+		warpLinkMissing, warpDirMissing = os.IsNotExist(linkErr), os.IsNotExist(dirErr)
+	}
+
 	// =========================================================================
 	// PASS 2: Mutation pass.
 	// Executed only after all read-only preflight checks succeed.
@@ -438,38 +562,78 @@ func reconcileResourceControl(ctx context.Context, paths linuxPaths, configPath 
 	}
 
 	// 5. Units atomic writing and activation.
-	prevSocket, hadPrevSocket := os.ReadFile(newSocket)
-	prevService, hadPrevService := os.ReadFile(newService)
 
 	if err = writeUnitFile(newSocket, socketContent); err != nil {
 		return err
 	}
 	if err = writeUnitFile(newService, serviceContent); err != nil {
-		_ = restoreUnitFile(newSocket, prevSocket, hadPrevSocket == nil)
+		_ = restoreUnitFile(newSocket, prevSocket, socketReadErr == nil)
 		return err
 	}
 
-	rollbackNewUnits := func() {
-		_ = restoreUnitFile(newSocket, prevSocket, hadPrevSocket == nil)
-		_ = restoreUnitFile(newService, prevService, hadPrevService == nil)
-		_, _ = run(ctx, "systemctl", "daemon-reload")
+	rollbackNewUnits := func(activationAttempted bool) error {
+		var cleanupErr error
+		if activationAttempted {
+			// enable --now may partially succeed even when systemctl returns an error.
+			_, cleanupErr = run(ctx, "systemctl", "disable", "--now", "rillway-resource-control.socket")
+		}
+		socketErr := restoreUnitFile(newSocket, prevSocket, socketReadErr == nil)
+		serviceErr := restoreUnitFile(newService, prevService, serviceReadErr == nil)
+		// Only undo WARP assets created by this reconcile; existing managed values stay intact.
+		for _, asset := range []struct {
+			path    string
+			created bool
+		}{
+			{warpLink, warpLoaded && warpLinkMissing},
+			{warpTarget, warpLoaded && warpStateMissing},
+			{warpDropinDir, warpLoaded && warpDirMissing},
+		} {
+			if asset.created {
+				if removeErr := os.Remove(asset.path); removeErr != nil && !os.IsNotExist(removeErr) {
+					cleanupErr = errors.Join(cleanupErr, removeErr)
+				}
+			}
+		}
+		_, reloadErr := run(ctx, "systemctl", "daemon-reload")
+		if socketErr != nil || serviceErr != nil || reloadErr != nil {
+			return errors.Join(cleanupErr, socketErr, serviceErr, reloadErr)
+		}
+		if activationAttempted && socketReadErr == nil {
+			if prior.enabled {
+				args := []string{"enable"}
+				if prior.runtime {
+					args = append(args, "--runtime")
+				}
+				args = append(args, "rillway-resource-control.socket")
+				_, enableErr := run(ctx, "systemctl", args...)
+				cleanupErr = errors.Join(cleanupErr, enableErr)
+			}
+			if prior.active {
+				_, startErr := run(ctx, "systemctl", "start", "rillway-resource-control.socket")
+				cleanupErr = errors.Join(cleanupErr, startErr)
+			}
+		}
+		return cleanupErr
 	}
 
 	if _, err = run(ctx, "systemctl", "daemon-reload"); err != nil {
-		rollbackNewUnits()
-		return err
+		return errors.Join(err, rollbackNewUnits(false))
+	}
+	if warpLoaded && !verifyManagedWarpLog(ctx, run, warpLevel) {
+		if rollbackErr := rollbackNewUnits(false); rollbackErr != nil {
+			return errors.New("Could not verify WARP service logging or restore the previous service state. Read the installed service state before retrying.")
+		}
+		return errors.New("Could not verify WARP service logging. The previous settings were restored.")
 	}
 	if _, err = run(ctx, "systemctl", "enable", "--now", "rillway-resource-control.socket"); err != nil {
-		rollbackNewUnits()
-		return err
+		return errors.Join(err, rollbackNewUnits(true))
 	}
 	activeOut, err := run(ctx, "systemctl", "is-active", "rillway-resource-control.socket")
 	if err != nil || strings.TrimSpace(string(activeOut)) != "active" {
-		rollbackNewUnits()
-		if err != nil {
-			return fmt.Errorf("resource control socket activation failed: %w", err)
+		if err == nil {
+			err = errors.New("resource control socket is not active")
 		}
-		return errors.New("resource control socket is not active")
+		return errors.Join(err, rollbackNewUnits(true))
 	}
 
 	// 6. Clean up legacy memory units if present.

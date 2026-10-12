@@ -324,6 +324,9 @@ func TestReconcileResourceControlMigratesLegacyUnitsAndPreservesMemoryState(t *t
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
 		cmd := strings.Join(append([]string{name}, args...), " ")
 		commands = append(commands, cmd)
+		if name == "systemctl" && len(args) > 0 && args[0] == "is-enabled" {
+			return []byte("enabled\n"), nil
+		}
 		if name == "systemctl" && len(args) > 0 && args[0] == "is-active" {
 			return []byte("active\n"), nil
 		}
@@ -467,6 +470,9 @@ func TestReconcileResourceControlWarpDetection(t *testing.T) {
 				return []byte("active\n"), nil
 			}
 			if args[0] == "show" && len(args) > 1 && args[1] == "warp-svc.service" {
+				if len(args) > 2 && args[2] == "--property=LogLevelMax" {
+					return []byte("info\n"), nil
+				}
 				if warpLoaded {
 					return []byte("LoadState=loaded\n"), nil
 				}

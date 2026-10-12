@@ -123,6 +123,8 @@ unit 則加上實際 `--config FILE`；會自動遷移 helper，若 WARP 存在�
 啟動政策。Web「設定 → 服務記憶體限制」與 TUI「服務設定 → m」可即時修改百分比、
 MiB／GiB。詳見[中文 CLI 說明](cli.zh-Hant.md#服務記憶體限制)。
 
+若新 resource-control socket 的啟用或 active 檢查失敗，更新流程會先嘗試停用並停止失敗的新 socket，再還原原有 unit 檔、重新載入 systemd，並恢復更新前既有 socket 的啟用與執行狀態。首次安裝失敗不會重新啟動新 socket。WARP 存在時，重新載入 systemd 後會確認有效 LogLevelMax 與儲存值一致；inherit 接受有效的 vendor 預設值。驗證失敗會撤回此次新增的 WARP 受管檔案。舊 memory helper units 在全部驗證成功前都不會停用或刪除。
+
 回退到不支援此功能的舊 binary 前，停用並停止 `rillway-resource-control.socket` 及
 `rillway-resource-control.service`，還原備份的舊 units，保留 root 擁有的 `/var/lib/rillway-resource-control` 備份。
 systemd 的記憶體屬性會保留；若也要回退限制，請另還原先前的 MemoryMax／MemoryHigh。

@@ -234,6 +234,22 @@ func TestWarpLogLifecycleAndRollback(t *testing.T) {
 	if err := os.Symlink(stateFile, c.warpDropinLink); err != nil {
 		t.Fatal(err)
 	}
+	// Effective properties change on restart, not before the CAS check.
+	c.command = func(ctx context.Context, args ...string) ([]byte, error) {
+		out, err := f.run(ctx, args...)
+		if err == nil && args[0] == "restart" && args[1] == "warp-svc.service" {
+			data, readErr := os.ReadFile(stateFile)
+			if readErr != nil {
+				return nil, readErr
+			}
+			level := parseWarpLogLevelFile(data)
+			f.warpLogLevel = string(level)
+			if level == WarpLogLevelInherit {
+				f.warpLogLevel = "6"
+			}
+		}
+		return out, err
+	}
 
 	ctx := context.Background()
 	s, err := c.warpLogStatus(ctx)
@@ -256,7 +272,6 @@ func TestWarpLogLifecycleAndRollback(t *testing.T) {
 	}
 
 	// Apply debug successfully
-	f.warpLogLevel = "debug"
 	s, err = c.warpLogApply(ctx, WarpLogRequest{Level: WarpLogLevelDebug, Revision: initialRev})
 	if err != nil || s.Level != WarpLogLevelDebug || s.Revision == initialRev || f.warpRestarts != 1 {
 		t.Fatalf("apply debug failed: %+v %v restarts=%d", s, err, f.warpRestarts)
@@ -269,7 +284,6 @@ func TestWarpLogLifecycleAndRollback(t *testing.T) {
 
 	// Apply inherit
 	prevRev := s.Revision
-	f.warpLogLevel = "6"
 	s, err = c.warpLogApply(ctx, WarpLogRequest{Level: WarpLogLevelInherit, Revision: prevRev})
 	if err != nil || s.Level != WarpLogLevelInherit || s.EffectiveLevel != "info" {
 		t.Fatalf("apply inherit failed: %+v %v", s, err)
@@ -299,14 +313,15 @@ func TestWarpLogApplyRollsBackOnReadbackError(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	initialData := []byte("# rillway-resource-control\n[Service]\nLogLevelMax=info\n")
+	if err := os.WriteFile(stateFile, initialData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	s, err := c.warpLogStatus(ctx)
 	if err != nil || !s.Supported {
 		t.Fatal(err)
 	}
-
-	initialData := []byte("# rillway-resource-control\n[Service]\nLogLevelMax=info\n")
-	_ = os.WriteFile(stateFile, initialData, 0o600)
 
 	originalCommand := c.command
 	restarted := false
@@ -347,14 +362,15 @@ func TestWarpLogApplyRollsBackOnEffectiveLevelMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	initialData := []byte("# rillway-resource-control\n[Service]\nLogLevelMax=info\n")
+	if err := os.WriteFile(stateFile, initialData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	s, err := c.warpLogStatus(ctx)
 	if err != nil || !s.Supported {
 		t.Fatal(err)
 	}
-
-	initialData := []byte("# rillway-resource-control\n[Service]\nLogLevelMax=info\n")
-	_ = os.WriteFile(stateFile, initialData, 0o600)
 
 	// Requested level is debug, but systemd returns info (mismatch)
 	f.warpLogLevel = "info"
