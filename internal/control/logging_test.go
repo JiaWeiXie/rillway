@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
-	"rillway/internal/config"
-	"rillway/internal/resourcecontrol"
 	"strings"
 	"testing"
+
+	"rillway/internal/config"
+	"rillway/internal/resourcecontrol"
 )
 
 type warpLogTestBackend struct {
@@ -99,13 +100,23 @@ func TestWarpLogAPIAuthValidationAndConflicts(t *testing.T) {
 		t.Fatalf("expected 503 with masked error, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// 5. Unsupported backend returns 501 on PUT and 200 with supported:false on GET
+	// 5. Unsupported backend returns a localized upgrade error on PUT and an
+	// English source reason on GET for clients to translate at their surface.
 	rawBackend := newBackend()
 	rawHandler := New(rawBackend, "token")
-	if w := request(rawHandler, "GET", "/api/v1/service/logging/warp", "", "token", ""); w.Code != 200 || strings.Contains(w.Body.String(), `"supported":true`) {
+	if w := request(rawHandler, "GET", "/api/v1/service/logging/warp", "", "token", ""); w.Code != 200 || strings.Contains(w.Body.String(), "\"supported\":true") {
 		t.Fatalf("expected 200 supported:false for un-supported backend, got %d: %s", w.Code, w.Body.String())
 	}
-	if w := request(rawHandler, "PUT", "/api/v1/service/logging/warp", `{"level":"info","revision":"rev-1"}`, "token", ""); w.Code != 501 {
-		t.Fatalf("expected 501 for un-supported backend, got %d: %s", w.Code, w.Body.String())
+	const source = "WARP logging control is unavailable. Upgrade the installed service to enable it."
+	const translated = "WARP 記錄控制無法使用；請升級已安裝的服務以啟用此功能。"
+	r := httptest.NewRequest("PUT", "http://rillway.test/api/v1/service/logging/warp", strings.NewReader("{\"level\":\"info\",\"revision\":\"rev-1\"}"))
+	r.Header.Set("Authorization", "Bearer token")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://rillway.test")
+	r.Header.Set("Accept-Language", "zh-Hant")
+	w := httptest.NewRecorder()
+	rawHandler.ServeHTTP(w, r)
+	if w.Code != 501 || !strings.Contains(w.Body.String(), "\"error_source\":\""+source+"\"") || !strings.Contains(w.Body.String(), "\"error\":\""+translated+"\"") {
+		t.Fatalf("expected localized unsupported response, got %d: %s", w.Code, w.Body.String())
 	}
 }
