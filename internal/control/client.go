@@ -15,8 +15,8 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/i18n"
-	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
+	"rillway/internal/resourcecontrol"
 	"strings"
 	"time"
 )
@@ -37,15 +37,27 @@ type Info struct {
 	Version string `json:"version"`
 }
 
-func (c *Client) Memory(ctx context.Context) (memorylimit.Status, error) {
-	var s memorylimit.Status
+func (c *Client) Memory(ctx context.Context) (resourcecontrol.MemoryStatus, error) {
+	var s resourcecontrol.MemoryStatus
 	err := c.request(ctx, http.MethodGet, "/api/v1/service/memory", nil, &s)
 	return s, err
 }
 
-func (c *Client) ApplyMemory(ctx context.Context, req memorylimit.Request) (memorylimit.Status, error) {
-	var s memorylimit.Status
+func (c *Client) ApplyMemory(ctx context.Context, req resourcecontrol.MemoryRequest) (resourcecontrol.MemoryStatus, error) {
+	var s resourcecontrol.MemoryStatus
 	err := c.request(ctx, http.MethodPut, "/api/v1/service/memory", req, &s)
+	return s, err
+}
+
+func (c *Client) WarpLog(ctx context.Context) (resourcecontrol.WarpLogStatus, error) {
+	var s resourcecontrol.WarpLogStatus
+	err := c.request(ctx, http.MethodGet, "/api/v1/service/logging/warp", nil, &s)
+	return s, err
+}
+
+func (c *Client) ApplyWarpLog(ctx context.Context, req resourcecontrol.WarpLogRequest) (resourcecontrol.WarpLogStatus, error) {
+	var s resourcecontrol.WarpLogStatus
+	err := c.request(ctx, http.MethodPut, "/api/v1/service/logging/warp", req, &s)
 	return s, err
 }
 

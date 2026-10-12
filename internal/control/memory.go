@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"rillway/internal/memorylimit"
+	"rillway/internal/resourcecontrol"
 )
 
 type memoryBackend interface {
-	MemoryStatus(context.Context) (memorylimit.Status, error)
-	ApplyMemory(context.Context, memorylimit.Request) (memorylimit.Status, error)
+	MemoryStatus(context.Context) (resourcecontrol.MemoryStatus, error)
+	ApplyMemory(context.Context, resourcecontrol.MemoryRequest) (resourcecontrol.MemoryStatus, error)
 }
 
 func (h *handler) getMemory(w http.ResponseWriter, r *http.Request) {
 	b, ok := h.backend.(memoryBackend)
 	if !ok {
-		writeJSON(w, 200, memorylimit.Status{Reason: "Memory control is unavailable. Upgrade the installed service to enable it."})
+		writeJSON(w, 200, resourcecontrol.MemoryStatus{Reason: "Memory control is unavailable. Upgrade the installed service to enable it."})
 		return
 	}
 	s, err := b.MemoryStatus(r.Context())
@@ -27,7 +27,7 @@ func (h *handler) getMemory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) putMemory(w http.ResponseWriter, r *http.Request) {
-	var req memorylimit.Request
+	var req resourcecontrol.MemoryRequest
 	if !decodeBody(w, r, &req, 2048) {
 		return
 	}
@@ -41,7 +41,7 @@ func (h *handler) putMemory(w http.ResponseWriter, r *http.Request) {
 	s, err := b.ApplyMemory(r.Context(), req)
 	if err != nil {
 		status := http.StatusUnprocessableEntity
-		if errors.Is(err, memorylimit.ErrConflict) {
+		if errors.Is(err, resourcecontrol.ErrMemoryConflict) {
 			status = http.StatusConflict
 		}
 		writeError(w, r, status, publicMessage(err, "Could not apply service memory limits. Refresh limits before retrying."))

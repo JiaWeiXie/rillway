@@ -5,30 +5,30 @@ import (
 	"errors"
 	"net/http/httptest"
 	"rillway/internal/config"
-	"rillway/internal/memorylimit"
+	"rillway/internal/resourcecontrol"
 	"strings"
 	"testing"
 )
 
 type resourceBackend struct {
 	*fakeBackend
-	state   memorylimit.Status
+	state   resourcecontrol.MemoryStatus
 	failure error
 	writes  int
 }
 
-func (b *resourceBackend) MemoryStatus(context.Context) (memorylimit.Status, error) {
+func (b *resourceBackend) MemoryStatus(context.Context) (resourcecontrol.MemoryStatus, error) {
 	return b.state, b.failure
 }
 
-func (b *resourceBackend) ApplyMemory(_ context.Context, r memorylimit.Request) (memorylimit.Status, error) {
+func (b *resourceBackend) ApplyMemory(_ context.Context, r resourcecontrol.MemoryRequest) (resourcecontrol.MemoryStatus, error) {
 	if b.failure != nil {
 		return b.state, b.failure
 	}
 	if r.Revision != b.state.Revision {
-		return b.state, config.PublicError{Message: memorylimit.ErrConflict.Error(), Err: memorylimit.ErrConflict}
+		return b.state, config.PublicError{Message: resourcecontrol.ErrMemoryConflict.Error(), Err: resourcecontrol.ErrMemoryConflict}
 	}
-	n, err := memorylimit.Calculate(r, b.state)
+	n, err := resourcecontrol.CalculateMemory(r, b.state)
 	if err != nil {
 		return b.state, config.PublicError{Message: err.Error()}
 	}
@@ -38,7 +38,7 @@ func (b *resourceBackend) ApplyMemory(_ context.Context, r memorylimit.Request) 
 }
 
 func TestMemoryAPIAuthValidationAndConflicts(t *testing.T) {
-	b := &resourceBackend{fakeBackend: newBackend(), state: memorylimit.Status{Supported: true, HostBytes: 4 * memorylimit.GiB, MinimumBytes: 256 * memorylimit.MiB, MaximumBytes: memorylimit.Maximum(4 * memorylimit.GiB), Revision: "one"}}
+	b := &resourceBackend{fakeBackend: newBackend(), state: resourcecontrol.MemoryStatus{Supported: true, HostBytes: 4 * resourcecontrol.GiB, MinimumBytes: 256 * resourcecontrol.MiB, MaximumBytes: resourcecontrol.MemoryMaximum(4 * resourcecontrol.GiB), Revision: "one"}}
 	h := New(b, "token")
 	for _, method := range []string{"GET", "PUT"} {
 		if w := request(h, method, "/api/v1/service/memory", `{"mode":"MiB","value":"512","revision":"one"}`, "", ""); w.Code != 401 {
@@ -63,8 +63,8 @@ func TestMemoryAPIAuthValidationAndConflicts(t *testing.T) {
 	if err != nil || !s.Supported {
 		t.Fatal(s, err)
 	}
-	s, err = client.ApplyMemory(context.Background(), memorylimit.Request{Mode: "GiB", Value: "0.5", Revision: "one"})
-	if err != nil || s.LimitBytes != 512*memorylimit.MiB || b.writes != 1 {
+	s, err = client.ApplyMemory(context.Background(), resourcecontrol.MemoryRequest{Mode: "GiB", Value: "0.5", Revision: "one"})
+	if err != nil || s.LimitBytes != 512*resourcecontrol.MiB || b.writes != 1 {
 		t.Fatal(s, err)
 	}
 	b.failure = errors.New("private key and command output")

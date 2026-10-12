@@ -63,6 +63,8 @@ func New(backend Backend, adminToken string) http.Handler {
 	mux.HandleFunc("POST /api/v1/service/restart", h.protect(h.restartService))
 	mux.HandleFunc("GET /api/v1/service/memory", h.protect(h.getMemory))
 	mux.HandleFunc("PUT /api/v1/service/memory", h.protect(h.putMemory))
+	mux.HandleFunc("GET /api/v1/service/logging/warp", h.protect(h.getWarpLog))
+	mux.HandleFunc("PUT /api/v1/service/logging/warp", h.protect(h.putWarpLog))
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
 	mux.HandleFunc("GET /api/v1/source-clients", h.protect(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, h.backend.SourceClients()) }))
 	mux.HandleFunc("POST /api/v1/source-clients/block", h.protect(h.blockSource))
