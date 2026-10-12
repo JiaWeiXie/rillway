@@ -24,7 +24,7 @@ function storage(initial = {}) {
   return {values,getItem(key){return values.get(key) ?? null;},
     setItem(key,value){values.set(key,String(value));},removeItem(key){values.delete(key);}};
 }
-async function browser(initialLocale) {
+async function browser(initialLocale, preferences = {}) {
   const elements = new Map();
   const get = id => {
     if(!elements.has(id)) elements.set(id,element(id));
@@ -59,15 +59,20 @@ async function browser(initialLocale) {
       return [];
     }
   };
-  const localStorage=storage(initialLocale ? {'rillway-locale':initialLocale} : {});
+  const localStorage=storage({...preferences,...(initialLocale ? {'rillway-locale':initialLocale} : {})});
   const sessionStorage=storage({'rillway-token':'existing-management-token'});
+  let now = 0, nextTimer = 1;
+  const timers = new Map();
+  const setTimeout = (callback, delay) => { const id = nextTimer++; timers.set(id,{callback,at:now+delay}); return id; };
+  const clearTimeout = id => timers.delete(id);
+  const clock = {async advance(ms) { now += ms; for(const [id,timer] of [...timers]) { if(timer.at <= now) { timers.delete(id); timer.callback(); } } await new Promise(resolve => setImmediate(resolve)); }};
   const context=vm.createContext({document,localStorage,sessionStorage,
     navigator:{language:'zh-TW'},NodeFilter:{SHOW_TEXT:4},
-    fetch:async()=>({ok:true,json:async()=>catalog}),structuredClone});
+    fetch:async()=>({ok:true,json:async()=>catalog}),structuredClone,setTimeout,clearTimeout,Date:class extends Date { static now(){return now;} }});
   vm.runInContext(helper,context);
   await context.RillwayI18n.ready;
   vm.runInContext(app.slice(0,app.indexOf("document.querySelectorAll('[data-locale]').forEach")),context);
-  return {context,get,label,userText,localStorage,sessionStorage,document,glossaryTerms,glossarySections};
+  return {context,get,label,userText,localStorage,sessionStorage,document,glossaryTerms,glossarySections,clock,timers};
 }
 
 (async()=>{
@@ -370,5 +375,36 @@ async function browser(initialLocale) {
   assert.equal(warpError.textContent, 'WARP logging settings changed elsewhere. Refresh settings before saving.');
   assert.equal(b.get('notice').textContent, 'Your selected level has been kept. Refresh status to review the current setting, then save again.');
 
+  for(const [raw,expected] of [[undefined,30],['',30],['nonsense',30],['0',0],['10',10]]) {
+    const prefs = raw === undefined ? {} : {'rillway-outbound-refresh-seconds':raw};
+    const fixture = await browser('en',prefs);
+    assert.equal(vm.runInContext('outboundRefreshSeconds',fixture.context),expected);
+  }
+  const scheduler = await browser('en',{'rillway-outbound-refresh-seconds':'10'});
+  const requests = [];
+  scheduler.context.fetch = async url => { requests.push(url); return {ok:true,json:async()=>[]}; };
+  vm.runInContext("active=true; navigate('outbounds')",scheduler.context);
+  await scheduler.clock.advance(0);
+  assert.deepEqual(requests,['/api/v1/outbounds'],'entering Outbounds loads cached status');
+  await scheduler.clock.advance(9999); assert.equal(requests.length,1);
+  await scheduler.clock.advance(1); assert.equal(requests.length,2);
+  vm.runInContext("navigate('overview')",scheduler.context);
+  await scheduler.clock.advance(10000); assert.equal(requests.length,2);
+  scheduler.document.hidden=true;
+  vm.runInContext("navigate('outbounds')",scheduler.context);
+  await scheduler.clock.advance(10000); assert.equal(requests.length,2);
+  scheduler.document.hidden=false;
+  vm.runInContext('outboundRefreshSeconds=0; scheduleOutboundPolling()',scheduler.context);
+  await scheduler.clock.advance(10000); assert.equal(requests.length,2);
+  await vm.runInContext('pollStatuses(true)',scheduler.context);
+  assert.equal(requests.at(-1),'/api/v1/outbounds?refresh=true');
+  b.context.fetch=async()=>({ok:false,status:501,json:async()=>({error:'unsupported'})});
+  await warpForm.events.submit({preventDefault(){},target:warpForm});
+  assert.equal(b.get('warp-log-fields').disabled,true);
+  assert.match(b.get('warp-log-unsupported-reason').textContent,/sudo rillway service restart/);
+  b.context.fetch=async()=>({ok:true,json:async()=>({supported:false,reason:'fixture unsupported reason'})});
+  await vm.runInContext('loadWarpLog()',b.context);
+  assert.equal(b.get('warp-log-unsupported').hidden,false);
+  assert.equal(b.get('warp-log-unsupported-reason').textContent,'fixture unsupported reason');
   process.stdout.write('Browser locale contracts passed\n');
 })().catch(error=>{console.error(error);process.exitCode=1;});

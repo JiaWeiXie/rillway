@@ -48,7 +48,7 @@ let flowPollTimer, refreshSeconds = 1, openFlowGroups = new Set();
 try { const saved = Number(localStorage.getItem('rillway-flow-refresh-seconds')); if(refreshChoices.includes(saved)) refreshSeconds = saved; } catch (_) {}
 const outboundRefreshChoices = [0,10,30,60,300];
 let outboundRefreshSeconds = 30, outboundPollTimer = null, outboundLastLoadedAt = 0;
-try { const saved = Number(localStorage.getItem('rillway-outbound-refresh-seconds')); if(outboundRefreshChoices.includes(saved)) outboundRefreshSeconds = saved; } catch (_) {}
+try { const saved = localStorage.getItem('rillway-outbound-refresh-seconds'); if(['0','10','30','60','300'].includes(saved)) outboundRefreshSeconds = Number(saved); } catch (_) {}
 async function api(path, options = {}) {
   const headers = {'Authorization': `Bearer ${token}`, 'Accept-Language': i18n.locale, ...options.headers};
   if(options.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -181,7 +181,8 @@ async function pollStatuses(force = false) {
   if(!active || statusPolling) return;
   statusPolling = true;
   const refreshBtn = $('refresh-outbounds');
-  if(force && refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = t('Refreshing outbounds…'); }
+  stopOutboundPolling();
+  if(refreshBtn) { refreshBtn.disabled = true; if(force) refreshBtn.textContent = t('Refreshing outbounds…'); }
   try {
     const state = await api(force ? '/outbounds?refresh=true' : '/outbounds');
     statuses = Array.isArray(state) ? state : state.outbounds || [];
@@ -206,7 +207,7 @@ function stopOutboundPolling() {
 }
 function scheduleOutboundPolling(delay = null) {
   stopOutboundPolling();
-  if(!active || currentPage !== 'outbounds' || document.hidden || outboundRefreshSeconds === 0) return;
+  if(!active || currentPage !== 'outbounds' || document.hidden || statusPolling || outboundRefreshSeconds === 0) return;
   const ms = delay !== null ? delay : outboundRefreshSeconds * 1000;
   outboundPollTimer = setTimeout(() => {
     if(active && currentPage === 'outbounds' && !document.hidden && outboundRefreshSeconds !== 0) {
@@ -539,8 +540,7 @@ function renderDeleteOutbound() {
   select.value = selected;
 }
 function navigate(page) {
-  if(page === 'settings' && active) { loadMemory(); loadWarpLog(); }
-  if(page === 'outbounds' && active) { scheduleOutboundPolling(); } else { stopOutboundPolling(); }
+  const previousPage = currentPage;
   const names = {
     overview:['Connections','See your traffic. Choose its path.'],
     outbounds:['Outbounds','Manage your available connections.'],
@@ -550,6 +550,8 @@ function navigate(page) {
     glossary:['Glossary','We explain the words used in Rillway.']
   };
   if(!names[page]) page = 'overview'; currentPage = page;
+  if(page === 'settings' && active) { loadMemory(); loadWarpLog(); }
+  if(page === 'outbounds' && active) { if(previousPage !== page && !document.hidden) pollStatuses(); scheduleOutboundPolling(); } else { stopOutboundPolling(); }
   if(page === 'sources' && active) { loadSourceClients(); restartSourcePolling(); } else { stopSourcePolling(); }
   for(const el of document.querySelectorAll('.page')) el.hidden = el.id !== `page-${page}`;
   for(const el of document.querySelectorAll('[data-page]')) {
