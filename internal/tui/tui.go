@@ -13,8 +13,8 @@ import (
 	"rillway/internal/control"
 	"rillway/internal/engine"
 	"rillway/internal/i18n"
-	"rillway/internal/memorylimit"
 	"rillway/internal/outbound"
+	"rillway/internal/resourcecontrol"
 	"strings"
 	"time"
 	"unicode"
@@ -42,7 +42,7 @@ func Run(ctx context.Context, options Options) error {
 	if options.InitialError != nil {
 		err = options.InitialError
 	}
-	m := model{ctx: ctx, locale: options.Locale, client: client, install: options.InstallService, installCommand: options.InstallCommand, width: 100, height: 30, loading: true, statusLoading: true, nextStatus: time.Now().Add(10 * time.Second), connection: ConnectionSettings{BaseURL: options.BaseURL, TokenFile: options.TokenFile, CAFile: options.CAFile}, managementToken: strings.TrimSpace(options.Token), remember: options.RememberConnection, startCommand: options.StartCommand, rememberPending: options.RememberConnection != nil}
+	m := model{ctx: ctx, locale: options.Locale, client: client, install: options.InstallService, installCommand: options.InstallCommand, width: 100, height: 30, loading: true, statusLoading: true, outboundRefresh: 30 * time.Second, refreshConfigured: true, nextStatus: time.Now().Add(30 * time.Second), connection: ConnectionSettings{BaseURL: options.BaseURL, TokenFile: options.TokenFile, CAFile: options.CAFile}, managementToken: strings.TrimSpace(options.Token), remember: options.RememberConnection, startCommand: options.StartCommand, rememberPending: options.RememberConnection != nil}
 	if options.StartCommand != nil || options.InstallCommand != nil || options.InstallService != nil {
 		m.localBaseURL = options.BaseURL
 	}
@@ -96,8 +96,21 @@ type blockSourceMsg struct {
 }
 type memoryMsg struct {
 	generation uint64
-	status     memorylimit.Status
+	status     resourcecontrol.MemoryStatus
 	open       bool
+	err        error
+}
+
+type warpLogMsg struct {
+	generation uint64
+	status     resourcecontrol.WarpLogStatus
+	open       bool
+	err        error
+}
+
+type warpLogResultMsg struct {
+	generation uint64
+	status     resourcecontrol.WarpLogStatus
 	err        error
 }
 
@@ -107,8 +120,12 @@ type model struct {
 	tokenVisible      bool
 	advancedVisible   bool
 	serverInfo        control.Info
-	memoryStatus      memorylimit.Status
+	memoryStatus      resourcecontrol.MemoryStatus
 	memoryLoading     bool
+	warpLogStatus     resourcecontrol.WarpLogStatus
+	warpLogLoading    bool
+	outboundRefresh   time.Duration
+	refreshConfigured bool
 	localBaseURL      string
 	remember          func(ConnectionSettings) error
 	rememberPending   bool
@@ -155,7 +172,7 @@ func (m model) Init() tea.Cmd {
 	if m.client == nil {
 		return tick()
 	}
-	return tea.Batch(m.load(), m.loadStatuses(), m.loadSources(), tick())
+	return tea.Batch(m.load(), m.loadStatuses(false), m.loadSources(), tick())
 }
 
 func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -184,9 +201,9 @@ func (m model) load() tea.Cmd {
 	}
 }
 
-func (m model) loadStatuses() tea.Cmd {
+func (m model) loadStatuses(force bool) tea.Cmd {
 	return func() tea.Msg {
-		statuses, err := m.client.Statuses(m.ctx)
+		statuses, err := m.client.Statuses(m.ctx, force)
 		return statusesMsg{statuses: statuses, err: err, generation: m.generation}
 	}
 }
@@ -242,6 +259,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.form, m.field, m.err = "memory", 0, nil
 			m.fields = []string{msg.status.Mode, msg.status.Value}
 		}
+	case warpLogMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.warpLogLoading = false
+		if m.form == "warp_log" {
+			if msg.err == nil {
+				m.warpLogStatus = msg.status
+			}
+			return m, nil
+		}
+		m.warpLogStatus = msg.status
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		if msg.open {
+			if !msg.status.Supported {
+				reason := msg.status.Reason
+				if reason == "" {
+					reason = "WARP service logging is unsupported on this host."
+				}
+				m.err = errors.New(reason)
+				return m, nil
+			}
+			m.form, m.field, m.err = "warp_log", 0, nil
+			initialLevel := string(msg.status.Level)
+			if initialLevel == "" {
+				initialLevel = "info"
+			}
+			m.fields = []string{initialLevel}
+		}
+	case warpLogResultMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.saving = false
+		if msg.err != nil {
+			var apiErr *control.APIError
+			isConflict := errors.Is(msg.err, resourcecontrol.ErrWarpLogConflict) ||
+				(errors.As(msg.err, &apiErr) && apiErr.Status == 409) ||
+				strings.Contains(strings.ToLower(msg.err.Error()), "conflict") ||
+				strings.Contains(strings.ToLower(msg.err.Error()), "changed elsewhere")
+			if isConflict {
+				m.err = errors.New("WARP logging settings changed elsewhere. Revision refreshed; press Enter to retry.")
+				m.warpLogLoading = true
+				return m, m.loadWarpLog(false)
+			}
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
+		m.form = ""
+		m.fields = nil
+		m.warpLogStatus = msg.status
+		m.message = "WARP log level saved. WARP service was restarted."
+		m.messageArgs = nil
+		m.warpLogLoading = true
+		return m, m.loadWarpLog(false)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case loadedMsg:
@@ -251,7 +327,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		// A refresh already in flight must not replace the revision or choices behind
 		// an open editor or confirmation dialog.
-		if m.form == "rule" || m.form == "outbound" || m.form == "source_rule" || m.form == "block_source" || m.form == "delete_source_rule" {
+		if m.form == "rule" || m.form == "outbound" || m.form == "source_rule" || m.form == "block_source" || m.form == "delete_source_rule" || m.form == "memory" || m.form == "warp_log" {
 			return m, nil
 		}
 		m.err = msg.err
@@ -400,7 +476,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		if !m.statusLoading {
 			m.statusLoading = true
-			return m, tea.Batch(m.load(), m.loadStatuses())
+			return m, tea.Batch(m.load(), m.loadStatuses(false))
 		}
 		return m, m.load()
 	case tickMsg:
@@ -409,10 +485,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			commands = append(commands, m.load())
 		}
-		if m.ready && m.form == "" && !m.statusLoading && time.Now().After(m.nextStatus) {
+		interval := m.outboundRefresh
+		if !m.refreshConfigured && interval == 0 {
+			interval = 30 * time.Second
+		}
+		if m.ready && m.page == 1 && m.form == "" && !m.statusLoading && interval > 0 && time.Now().After(m.nextStatus) {
 			m.statusLoading = true
-			m.nextStatus = time.Now().Add(10 * time.Second)
-			commands = append(commands, m.loadStatuses())
+			m.nextStatus = time.Now().Add(interval)
+			commands = append(commands, m.loadStatuses(false))
 		}
 		if m.ready && m.page == 2 && m.form == "" && !m.sourceLoading && time.Now().After(m.nextSource) {
 			m.sourceLoading = true
@@ -425,7 +505,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input = ""
 			return m, tea.Quit
 		}
-		if msg.String() == "ctrl+l" || msg.String() == "L" && m.form != "license" && m.form != "connection" && m.form != "outbound" && m.form != "source_rule" {
+		if msg.String() == "ctrl+l" || msg.String() == "L" && m.form != "license" && m.form != "connection" && m.form != "outbound" && m.form != "source_rule" && m.form != "warp_log" {
 			if m.locale == i18n.TraditionalChinese {
 				m.locale = i18n.English
 			} else {
@@ -444,15 +524,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "esc":
 			return m, tea.Quit
 		case "tab", "right":
+			prevPage := m.page
 			m.page = (m.page + 1) % 4
 			m.selected = 0
 			m.tokenVisible = false
 			m.advancedVisible = false
+			if m.page == 1 && prevPage != 1 {
+				interval := m.outboundRefresh
+				if !m.refreshConfigured && interval == 0 {
+					interval = 30 * time.Second
+				}
+				if interval > 0 {
+					m.nextStatus = time.Now().Add(interval)
+				}
+			}
 		case "shift+tab", "left":
+			prevPage := m.page
 			m.page = (m.page + 3) % 4
 			m.selected = 0
 			m.tokenVisible = false
 			m.advancedVisible = false
+			if m.page == 1 && prevPage != 1 {
+				interval := m.outboundRefresh
+				if !m.refreshConfigured && interval == 0 {
+					interval = 30 * time.Second
+				}
+				if interval > 0 {
+					m.nextStatus = time.Now().Add(interval)
+				}
+			}
 		case "j", "down":
 			m.selected++
 			m.clamp()
@@ -462,15 +562,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if m.client != nil && !m.loading {
 				m.loading = true
-				if m.page == 3 && !m.memoryLoading {
-					m.memoryLoading = true
-					return m, tea.Batch(m.load(), m.loadMemory(false))
+				if m.page == 1 {
+					m.statusLoading = true
+					interval := m.outboundRefresh
+					if !m.refreshConfigured && interval == 0 {
+						interval = 30 * time.Second
+					}
+					if interval > 0 {
+						m.nextStatus = time.Now().Add(interval)
+					}
+					return m, tea.Batch(m.load(), m.loadStatuses(true))
+				}
+				if m.page == 3 {
+					var cmds []tea.Cmd
+					cmds = append(cmds, m.load())
+					if !m.memoryLoading {
+						m.memoryLoading = true
+						cmds = append(cmds, m.loadMemory(false))
+					}
+					if !m.warpLogLoading {
+						m.warpLogLoading = true
+						cmds = append(cmds, m.loadWarpLog(false))
+					}
+					return m, tea.Batch(cmds...)
 				}
 				if m.page == 2 {
 					m.sourceLoading = true
 					return m, tea.Batch(m.load(), m.loadSources())
 				}
 				return m, m.load()
+			}
+		case "p":
+			if m.ready && m.page == 1 {
+				m.cycleRefresh()
 			}
 		case "a":
 			if m.ready {
@@ -561,15 +685,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.form = "license"
 				m.licenseID = m.cfg.Outbounds[m.selected].ID
 				m.input = ""
+			} else if m.ready && m.page == 3 && !m.warpLogLoading {
+				m.warpLogLoading = true
+				return m, m.loadWarpLog(true)
 			}
 		case "i":
 			if m.localTarget() && (m.install != nil || m.installCommand != nil) {
 				m.form = "install"
 			}
 		}
-		if m.ready && m.page == 3 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") && !m.memoryLoading {
-			m.memoryLoading = true
-			return m, m.loadMemory(false)
+		if m.ready && m.page == 3 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") {
+			var cmds []tea.Cmd
+			if !m.memoryLoading {
+				m.memoryLoading = true
+				cmds = append(cmds, m.loadMemory(false))
+			}
+			if !m.warpLogLoading {
+				m.warpLogLoading = true
+				cmds = append(cmds, m.loadWarpLog(false))
+			}
+			if len(cmds) > 0 {
+				return m, tea.Batch(cmds...)
+			}
 		}
 		if m.ready && m.page == 2 && (msg.String() == "tab" || msg.String() == "right" || msg.String() == "shift+tab" || msg.String() == "left") && !m.sourceLoading {
 			m.sourceLoading = true
@@ -589,7 +726,7 @@ func (m model) updateForm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch m.form {
-	case "connection", "outbound", "memory", "source_rule":
+	case "connection", "outbound", "memory", "source_rule", "warp_log":
 		return m.updateFields(key)
 	case "block_source":
 		if key.String() == "enter" {
@@ -896,6 +1033,7 @@ func (m model) View() string {
 			fmt.Fprintf(&b, m.text("\n  HTTP proxy    %s\n  SOCKS5        %s\n  Management UI %s\n  PAC           %s\n\n  Use PAC bypass for company services on Mac to keep using local Tailscale.\n  Edit PAC and all routing rules in the Web UI.\n"), m.cfg.Listeners.HTTP, m.cfg.Listeners.SOCKS5, m.cfg.Listeners.Admin, m.cfg.Listeners.PAC)
 			b.WriteString(m.managementTokenView())
 			b.WriteString(m.memoryView())
+			b.WriteString(m.warpLogView())
 			if m.advancedVisible {
 				fmt.Fprintf(&b, m.text("\n  Advanced information\n  Configuration revision: %d\n  Tracks settings changes and prevents conflicting edits. Separate from the program version.\n"), m.cfg.Revision)
 			}
@@ -924,6 +1062,7 @@ func (m model) View() string {
 	if m.ready && m.page == 1 {
 		b.WriteString(m.text("  + Add outbound with suggested values\n"))
 		b.WriteString(m.text("  c Connect   d Disconnect   v Verify   n Register   l WARP+ license key\n"))
+		b.WriteString(fmt.Sprintf(m.text("  p Auto refresh: %s   r Refresh now\n"), m.refreshLabel()))
 	}
 	if m.ready && m.page == 2 {
 		b.WriteString(m.text("  v Toggle Clients / Rules view\n"))
@@ -935,6 +1074,7 @@ func (m model) View() string {
 	}
 	if m.ready && m.page == 3 {
 		b.WriteString(m.text("  m Edit service memory limit (percent / MiB / GiB)\n"))
+		b.WriteString(m.text("  l Edit WARP service log level\n"))
 		b.WriteString(m.text("  t Show / hide Web UI token\n"))
 		b.WriteString(m.text("  x Show / hide advanced information\n"))
 	}
@@ -988,7 +1128,7 @@ func (m model) outboundsView() string {
 		return m.text("\n  No outbounds configured. Add one in the Web UI.\n")
 	}
 	var b strings.Builder
-	b.WriteString("\n")
+	fmt.Fprintf(&b, m.text("\n  Auto refresh: %s\n\n"), m.refreshLabel())
 	start, end := m.visible(len(m.cfg.Outbounds))
 	for i := start; i < end; i++ {
 		o := m.cfg.Outbounds[i]
@@ -1039,7 +1179,7 @@ func (m model) visible(count int) (int, int) {
 }
 
 func (m model) formView() string {
-	if m.form == "connection" || m.form == "outbound" || m.form == "memory" || m.form == "source_rule" {
+	if m.form == "connection" || m.form == "outbound" || m.form == "memory" || m.form == "source_rule" || m.form == "warp_log" {
 		return m.fieldsView()
 	}
 	if m.form == "block_source" {
@@ -1134,4 +1274,57 @@ func cell(s string, width int) string {
 		b.WriteString(strings.Repeat(" ", width-used))
 	}
 	return b.String()
+}
+
+var refreshIntervals = []time.Duration{
+	0,
+	10 * time.Second,
+	30 * time.Second,
+	time.Minute,
+	5 * time.Minute,
+}
+
+func (m *model) initRefresh() {
+	if !m.refreshConfigured && m.outboundRefresh == 0 {
+		m.outboundRefresh = 30 * time.Second
+	}
+}
+
+func (m *model) cycleRefresh() {
+	m.initRefresh()
+	var current int
+	for i, d := range refreshIntervals {
+		if d == m.outboundRefresh {
+			current = i
+			break
+		}
+	}
+	m.outboundRefresh = refreshIntervals[(current+1)%len(refreshIntervals)]
+	m.refreshConfigured = true
+	if m.outboundRefresh > 0 {
+		m.nextStatus = time.Now().Add(m.outboundRefresh)
+	} else {
+		m.nextStatus = time.Time{}
+	}
+}
+
+func (m model) refreshLabel() string {
+	interval := m.outboundRefresh
+	if !m.refreshConfigured && interval == 0 {
+		interval = 30 * time.Second
+	}
+	switch interval {
+	case 0:
+		return m.text("Off")
+	case 10 * time.Second:
+		return m.text("10s")
+	case 30 * time.Second:
+		return m.text("30s")
+	case time.Minute:
+		return m.text("1m")
+	case 5 * time.Minute:
+		return m.text("5m")
+	default:
+		return fmt.Sprintf("%ds", int(interval.Seconds()))
+	}
 }

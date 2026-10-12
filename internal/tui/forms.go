@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -8,7 +9,7 @@ import (
 	"path/filepath"
 	"rillway/internal/config"
 	"rillway/internal/control"
-	"rillway/internal/memorylimit"
+	"rillway/internal/resourcecontrol"
 	"strings"
 	"unicode"
 
@@ -54,6 +55,9 @@ func (m *model) fillOutboundFields() {
 }
 
 func (m model) fieldLabels() []string {
+	if m.form == "warp_log" {
+		return []string{"Log level (Left/Right/Space to choose)"}
+	}
 	if m.form == "memory" {
 		return []string{"Unit (Left/Right to choose)", "Memory value"}
 	}
@@ -126,9 +130,27 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up":
 		m.field = (m.field + len(m.fields) - 1) % len(m.fields)
 	case "enter":
+		if m.form == "warp_log" {
+			level := resourcecontrol.WarpLogLevel(strings.TrimSpace(m.fields[0]))
+			switch level {
+			case resourcecontrol.WarpLogLevelInherit, resourcecontrol.WarpLogLevelWarning, resourcecontrol.WarpLogLevelInfo, resourcecontrol.WarpLogLevelDebug:
+			default:
+				m.err = errors.New("invalid WARP log level")
+				return m, nil
+			}
+			req := resourcecontrol.WarpLogRequest{
+				Level:    level,
+				Revision: m.warpLogStatus.Revision,
+			}
+			m.saving, m.err = true, nil
+			return m, func() tea.Msg {
+				status, err := m.client.ApplyWarpLog(m.ctx, req)
+				return warpLogResultMsg{generation: m.generation, status: status, err: err}
+			}
+		}
 		if m.form == "memory" {
-			req := memorylimit.Request{Mode: m.fields[0], Value: strings.TrimSpace(m.fields[1]), Revision: m.memoryStatus.Revision}
-			if _, err := memorylimit.Calculate(req, m.memoryStatus); err != nil {
+			req := resourcecontrol.MemoryRequest{Mode: m.fields[0], Value: strings.TrimSpace(m.fields[1]), Revision: m.memoryStatus.Revision}
+			if _, err := resourcecontrol.CalculateMemory(req, m.memoryStatus); err != nil {
 				m.err = err
 				return m, nil
 			}
@@ -173,7 +195,7 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			m.form = ""
 			m.rememberPending = true
-			return m, tea.Batch(m.load(), m.loadStatuses())
+			return m, tea.Batch(m.load(), m.loadStatuses(false))
 		}
 		if m.form == "source_rule" {
 			rule := config.SourceAccessRule{ID: strings.TrimSpace(m.fields[0]), Name: strings.TrimSpace(m.fields[1]), Action: m.fields[2], CIDRs: splitValues(m.fields[3]), Enabled: m.fields[4] == "true", Note: strings.TrimSpace(m.fields[5])}
@@ -229,7 +251,9 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, m.applyForm(cfg)
 	case "left", "right", " ":
-		if m.form == "memory" && m.field == 0 {
+		if m.form == "warp_log" && m.field == 0 {
+			m.fields[0] = string(nextWarpLogLevel(resourcecontrol.WarpLogLevel(m.fields[0]), key.String() == "left"))
+		} else if m.form == "memory" && m.field == 0 {
 			m.fields[0], m.fields[1] = nextMemoryUnit(m.fields[0], m.fields[1], m.memoryStatus, key.String() == "left")
 		} else if m.form == "outbound" && m.field == 0 {
 			m.drafts[m.outDraft.Type] = append([]string(nil), m.fields...)
@@ -292,6 +316,9 @@ func (m model) fieldsView() string {
 	case "memory":
 		b.WriteString(m.text("\n  Service memory limit · applies without restarting\n  Left/Right chooses percent, MiB or GiB. Enter saves.\n"))
 		b.WriteString(m.memoryView())
+	case "warp_log":
+		b.WriteString(m.text("\n  WARP service system logging · restarts WARP\n  Left/Right/Space chooses log level. Enter saves.\n"))
+		b.WriteString(m.warpLogView())
 	case "source_rule":
 		if m.editingSourceRule != "" {
 			b.WriteString(m.text("\n  Edit source access rule\n\n"))
@@ -312,6 +339,9 @@ func (m model) fieldsView() string {
 			marker = "›"
 		}
 		value := m.fields[i]
+		if m.form == "warp_log" && i == 0 {
+			value = m.text(warpLogLevelDisplay(value))
+		}
 		if value == "true" {
 			value = m.text("Enabled")
 		}
@@ -331,7 +361,10 @@ func (m model) fieldsView() string {
 		}
 		fmt.Fprintf(&b, "  %s %s\n    %s\n", marker, m.text(label), cell(value, max(20, m.width-6)))
 	}
-	if m.form == "source_rule" {
+	if m.form == "warp_log" {
+		b.WriteString(m.text("\n  Notice: Applying this setting restarts WARP and briefly interrupts WARP-routed connections.\n"))
+		b.WriteString(m.text("  Left/Right/Space Choose level   Enter Save   Esc Cancel\n"))
+	} else if m.form == "source_rule" {
 		b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save   Esc Cancel\n"))
 	} else {
 		b.WriteString(m.text("\n  Tab / ↑↓ Next field   Ctrl+U Clear field   Enter Save / Connect   Esc Cancel\n"))
