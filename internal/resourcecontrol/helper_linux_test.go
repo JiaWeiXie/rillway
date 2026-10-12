@@ -10,11 +10,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"rillway/internal/config"
 	"strconv"
 	"strings"
 	"testing"
-
-	"rillway/internal/config"
 )
 
 type fakeSystem struct {

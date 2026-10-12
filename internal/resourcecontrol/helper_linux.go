@@ -15,12 +15,11 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"rillway/internal/config"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
-
-	"rillway/internal/config"
 )
 
 type metadata struct {
