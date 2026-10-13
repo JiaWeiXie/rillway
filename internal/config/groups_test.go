@@ -19,6 +19,7 @@ func phase1JSON(t *testing.T, v any) []byte {
 func phase1GroupConfig(t *testing.T) Config {
 	t.Helper()
 	c := Default(t.TempDir())
+	c.Rules = []Rule{{ID: "fixed-direct", Domains: []string{"direct.example"}, Outbound: "direct"}, {ID: "fixed-warp", Domains: []string{"warp.example"}, Outbound: "warp"}}
 	c.Outbounds[1].Enabled = true
 	c.Outbounds = append(
 		c.Outbounds,

@@ -171,14 +171,15 @@ async function reorderRule(id,destination,attribute = 'data-up-rule') {
   catch(error) { if(generation === sessionGeneration && !error.stale) { notice(error,true); if(error.status === 409) { rulesNeedReload = true; $('rules-reload').hidden = false; } } }
   finally { if(generation === sessionGeneration) { ruleMutationPending = false; renderRules(); restoreRuleFocus(id,attribute); } }
 }
-const busyButtons = new WeakSet();
+let busyButtons = new WeakSet();
 async function withBusy(button,action) {
-  if(busyButtons.has(button)) return;
-  busyButtons.add(button);
+  const locks = busyButtons;
+  if(locks.has(button)) return;
+  locks.add(button);
   const disabled = button.disabled, text = button.textContent;
   button.disabled = true; button.setAttribute('aria-busy','true');
   try { return await action(); }
-  finally { busyButtons.delete(button); button.disabled = disabled; button.textContent = text; button.removeAttribute('aria-busy'); }
+  finally { if(locks === busyButtons) { locks.delete(button); button.disabled = disabled; button.textContent = text; button.removeAttribute('aria-busy'); } }
 }
 const modalOpeners = new WeakMap();
 function openModal(dialog,trigger = document.activeElement,fallback = null) {
@@ -716,7 +717,7 @@ function renderDeleteOutbound() {
   const select = $('delete-replacement'), selected = select.value;
   select.required = referenced;
   const replacementTargets = [...c.outbounds,...(!adaptive && groups.length === 0 ? c.outbound_groups || [] : [])];
-  select.innerHTML = `<option value="">${et('Choose a replacement')}</option>` + replacementTargets.filter(o => o.id !== id && o.enabled && (!(adaptive || groups.length) || o.type !== 'direct') && (!adaptive || o.public_internet && o.type !== 'tailscale')).map(o => `<option value="${esc(o.id)}">${esc(o.id)}</option>`).join('');
+  select.innerHTML = `<option value="">${et('Choose a replacement')}</option>` + replacementTargets.filter(o => o.id !== id && o.enabled && (groups.length === 0 || o.type !== 'direct') && (!adaptive || o.public_internet && o.type !== 'tailscale')).map(o => `<option value="${esc(o.id)}">${esc(o.id)}</option>`).join('');
   select.value = selected;
 }
 function navigate(page) {
@@ -757,7 +758,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { sessionGeneration++; active = false; clearTimeout(noticeTimer); noticeTimer = null; lastNotice = null; clearSelections(); bulkContext = null; rulesNeedReload = false; sourceRulesNeedReload = false; ruleMutationPending = false; $('bulk-delete-dialog').close(); $('shortcuts-dialog').close(); loadedCollections.clear(); editors.reset(); ruleDraft = null; ruleOpening = false; $('rule-dialog').close(); $('rule-form').reset(); $('rule-latest').textContent = ''; $('rule-mine').textContent = ''; $('rule-review-panel').hidden = true; memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); if($('warp-log-form')) clearError($('warp-log-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); stopOutboundPolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { busyButtons = new WeakSet(); sessionGeneration++; active = false; clearTimeout(noticeTimer); noticeTimer = null; lastNotice = null; clearSelections(); bulkContext = null; rulesNeedReload = false; sourceRulesNeedReload = false; ruleMutationPending = false; $('bulk-delete-dialog').close(); $('shortcuts-dialog').close(); loadedCollections.clear(); editors.reset(); ruleDraft = null; ruleOpening = false; $('rule-dialog').close(); $('rule-form').reset(); $('rule-latest').textContent = ''; $('rule-mine').textContent = ''; $('rule-review-panel').hidden = true; memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); if($('warp-log-form')) clearError($('warp-log-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); stopOutboundPolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }

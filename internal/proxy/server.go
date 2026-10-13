@@ -264,7 +264,7 @@ func validAddress(address string) bool {
 func requestInfo(remoteAddr, inbound string) routeinfo.Info {
 	info := routeinfo.Info{Inbound: inbound}
 	if address, err := netip.ParseAddrPort(remoteAddr); err == nil {
-		info.SourceIP = address.Addr().Unmap()
+		info.SourceIP = address.Addr().WithZone("").Unmap()
 	}
 	return info
 }

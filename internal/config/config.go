@@ -206,7 +206,8 @@ func Default(stateDir string) Config {
 		RuleSets:       []RuleSet{},
 		Rules: []Rule{
 			{ID: "github-origin", Domains: []string{"github.com", "api.github.com", "codeload.github.com"}, Outbound: "direct", Family: "auto"},
-			{ID: "github-cdn", Domains: []string{"raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}, Suffixes: []string{"githubassets.com"}, Outbound: "warp", Family: "auto"},
+			{ID: "github-cdn", Domains: []string{"raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}, Outbound: "warp", Family: "auto"},
+			{ID: "github-assets", Suffixes: []string{"githubassets.com"}, Outbound: "warp", Family: "auto"},
 		}, DefaultOutbound: "direct",
 		Adaptive: Adaptive{Candidates: []string{"direct", "warp"}, WindowSeconds: 600, MinSamples: 3, ImprovementPercent: 25, ImprovementMillis: 50, CooldownSeconds: 600, ProbesPerMinute: 12, ProbeConcurrency: 2, ProbeTimeoutSeconds: 4},
 		PAC:      PAC{ProxyAddress: "127.0.0.1:17890", BypassDomains: defaultPACDomains(), BypassCIDRs: defaultPACCIDRs()},
@@ -240,6 +241,64 @@ type rawConfigV2 struct {
 	PAC              PAC              `json:"pac"`
 }
 
+func migrateLegacyRules(rules []Rule) []Rule {
+	used := make(map[string]bool, len(rules))
+	for _, rule := range rules {
+		used[rule.ID] = true
+	}
+
+	migrated := make([]Rule, 0, len(rules))
+	for _, rule := range rules {
+		groups := make([]string, 0, 3)
+		if len(rule.Domains) > 0 {
+			groups = append(groups, "domains")
+		}
+		if len(rule.Suffixes) > 0 {
+			groups = append(groups, "suffixes")
+		}
+		if len(rule.CIDRs) > 0 {
+			groups = append(groups, "cidrs")
+		}
+		if len(groups) <= 1 {
+			migrated = append(migrated, rule)
+			continue
+		}
+		for _, condition := range groups {
+			clone := rule
+			clone.Domains, clone.Suffixes, clone.CIDRs = nil, nil, nil
+			switch condition {
+			case "domains":
+				clone.Domains = rule.Domains
+			case "suffixes":
+				clone.Suffixes = rule.Suffixes
+			case "cidrs":
+				clone.CIDRs = rule.CIDRs
+			}
+			clone.ID = migratedRuleID(rule.ID, condition, used)
+			migrated = append(migrated, clone)
+		}
+	}
+	return migrated
+}
+
+func migratedRuleID(id, condition string, used map[string]bool) string {
+	for n := 1; ; n++ {
+		suffix := "-" + condition
+		if n > 1 {
+			suffix += "-" + strconv.Itoa(n)
+		}
+		base := id
+		if max := 64 - len(suffix); len(base) > max {
+			base = base[:max]
+		}
+		candidate := base + suffix
+		if !used[candidate] {
+			used[candidate] = true
+			return candidate
+		}
+	}
+}
+
 func migrateV1(v1 rawConfigV1) Config {
 	c := Config{
 		Version:          ConfigVersion,
@@ -251,7 +310,7 @@ func migrateV1(v1 rawConfigV1) Config {
 		Outbounds:        v1.Outbounds,
 		OutboundGroups:   []OutboundGroup{},
 		RuleSets:         []RuleSet{},
-		Rules:            v1.Rules,
+		Rules:            migrateLegacyRules(v1.Rules),
 		DefaultOutbound:  v1.DefaultOutbound,
 		Adaptive:         v1.Adaptive,
 		PAC:              v1.PAC,
@@ -311,7 +370,7 @@ func Decode(data []byte) (Config, error) {
 			Outbounds:        v2.Outbounds,
 			OutboundGroups:   []OutboundGroup{},
 			RuleSets:         []RuleSet{},
-			Rules:            v2.Rules,
+			Rules:            migrateLegacyRules(v2.Rules),
 			DefaultOutbound:  v2.DefaultOutbound,
 			Adaptive:         v2.Adaptive,
 			PAC:              v2.PAC,

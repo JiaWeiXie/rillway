@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"net"
 	"net/netip"
 	"rillway/internal/config"
 	"strconv"
@@ -31,7 +32,7 @@ func explainTarget(req config.ExplainRequest) (target, error) {
 		if err != nil {
 			return target{}, errors.New("route source must be an IP address")
 		}
-		t.source = source.Unmap()
+		t.source = source.WithZone("").Unmap()
 	}
 	switch req.Inbound {
 	case "", "http", "socks5":
@@ -63,6 +64,23 @@ func (e *Engine) Explain(req config.ExplainRequest) (config.ExplainResult, error
 	if err != nil {
 		return config.ExplainResult{}, err
 	}
+	if req.Family == "" {
+		req.Family = "auto"
+	}
+	e.mu.Lock()
+	policy, pac := e.destinationPolicy, e.cfg.PAC
+	e.mu.Unlock()
+	address := net.JoinHostPort(t.host, t.port)
+	if policy != nil {
+		blocked, internal := policy(address)
+		if blocked {
+			return config.ExplainResult{Blocked: true, TargetKind: "default", Private: privateHost(t.host, pac), Family: req.Family, Reason: "proxy_loop"}, nil
+		}
+		if internal {
+			return config.ExplainResult{TargetKind: "outbound", TargetID: "direct", ResolvedID: "direct", Private: privateHost(t.host, pac), Family: req.Family, Reason: "internal_direct"}, nil
+		}
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

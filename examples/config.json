@@ -41,7 +41,8 @@
   "rule_sets": [],
   "rules": [
     {"id": "github-origin", "domains": ["github.com", "api.github.com", "codeload.github.com"], "outbound": "direct", "family": "auto"},
-    {"id": "github-cdn", "domains": ["raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"], "suffixes": ["githubassets.com"], "outbound": "warp", "family": "auto"}
+    {"id": "github-cdn", "domains": ["raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"], "outbound": "warp", "family": "auto"},
+    {"id": "github-assets", "suffixes": ["githubassets.com"], "outbound": "warp", "family": "auto"}
   ],
   "default_outbound": "direct",
   "adaptive": {

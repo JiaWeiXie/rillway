@@ -38,9 +38,9 @@ func TestDirectIsRequiredAndProtected(t *testing.T) {
 
 func TestRemoveOutboundReplacesAllReferencesWithoutMutatingInput(t *testing.T) {
 	c := Default("state")
+	c.Rules = []Rule{{ID: "fixed", Domains: []string{"fixed.example"}, Outbound: "warp"}, {ID: "adaptive", Domains: []string{"example.com"}, Adaptive: true, Candidates: []string{"warp", "direct", "warp"}}}
 	c.DefaultOutbound = "warp"
 	c.Outbounds[1].Enabled = true
-	c.Rules = append(c.Rules, Rule{ID: "adaptive", Domains: []string{"example.com"}, Adaptive: true, Candidates: []string{"warp", "direct", "warp"}})
 	before, _ := json.Marshal(c)
 	next, err := RemoveOutbound(c, "warp", "direct")
 	if err != nil {
@@ -50,13 +50,13 @@ func TestRemoveOutboundReplacesAllReferencesWithoutMutatingInput(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("removal mutated input before publication")
 	}
-	if next.Revision != c.Revision || len(next.Outbounds) != 1 || next.DefaultOutbound != "direct" || len(next.Rules) != len(c.Rules) || next.Rules[1].Outbound != "direct" {
+	if next.Revision != c.Revision || len(next.Outbounds) != 1 || next.DefaultOutbound != "direct" || len(next.Rules) != len(c.Rules) || next.Rules[0].Outbound != "direct" {
 		t.Fatal(next)
 	}
-	if !reflect.DeepEqual(next.Adaptive.Candidates, []string{"direct"}) || !reflect.DeepEqual(next.Rules[2].Candidates, []string{"direct"}) {
+	if !reflect.DeepEqual(next.Adaptive.Candidates, []string{"direct"}) || !reflect.DeepEqual(next.Rules[1].Candidates, []string{"direct"}) {
 		t.Fatal("candidate references or duplicates remain")
 	}
-	if !reflect.DeepEqual(next.Rules[1].Domains, c.Rules[1].Domains) || next.Rules[1].ID != c.Rules[1].ID {
+	if !reflect.DeepEqual(next.Rules[0].Domains, c.Rules[0].Domains) || next.Rules[0].ID != c.Rules[0].ID {
 		t.Fatal("rule matches lost")
 	}
 }

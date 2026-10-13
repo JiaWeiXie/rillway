@@ -102,7 +102,7 @@ func prefixesMatch(prefixes []netip.Prefix, ip netip.Addr) bool {
 	if !ip.IsValid() {
 		return false
 	}
-	ip = ip.Unmap()
+	ip = ip.WithZone("").Unmap()
 	for _, prefix := range prefixes {
 		if prefix.Contains(ip) {
 			return true

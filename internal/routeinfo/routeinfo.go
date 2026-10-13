@@ -18,7 +18,7 @@ type contextKey struct{}
 
 // With attaches ingress metadata without changing the context's lifetime.
 func With(ctx context.Context, info Info) context.Context {
-	info.SourceIP = info.SourceIP.Unmap()
+	info.SourceIP = info.SourceIP.WithZone("").Unmap()
 	return context.WithValue(ctx, contextKey{}, info)
 }
 

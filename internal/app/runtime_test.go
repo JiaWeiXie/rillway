@@ -363,7 +363,7 @@ func TestSaveFailureDoesNotApply(t *testing.T) {
 	if err = r.Apply(t.Context(), next); err == nil {
 		t.Fatal("saving to directory succeeded")
 	}
-	if r.Config().Revision != 1 || len(r.Config().Rules) != 2 {
+	if r.Config().Revision != c.Revision || len(r.Config().Rules) != len(c.Rules) {
 		t.Fatal("failed disk save changed active config")
 	}
 }

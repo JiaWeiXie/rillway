@@ -213,7 +213,7 @@
       $('rs-delete-confirm').disabled = references.length > 0;
       openModal($('rule-set-delete-dialog'),trigger,$('add-rule-set'));
     }
-    const reasonName = value => { const source = {default:'Default route',fixed_rule:'Fixed rule',adaptive_initial:'Initial adaptive route',group_select:'Selected group member',group_fallback:'Fallback member order',group_consistent_hashing:'Consistent hashing order',group_round_robin:'Round-robin order',private_protected:'Private destination protected',target_unavailable:'Target unavailable',no_eligible_member:'No eligible member',selected_unavailable:'Selected member unavailable'}[value]; return source ? t(source) : value; };
+    const reasonName = value => { const source = {default:'Default route',fixed_rule:'Fixed rule',adaptive_initial:'Initial adaptive route',group_select:'Selected group member',group_fallback:'Fallback member order',group_consistent_hashing:'Consistent hashing order',group_round_robin:'Round-robin order',private_protected:'Private destination protected',target_unavailable:'Target unavailable',no_eligible_member:'No eligible member',selected_unavailable:'Selected member unavailable',proxy_loop:'Local proxy loop prevented',internal_direct:'Local service connected directly'}[value]; return source ? t(source) : value; };
     const kindName = value => { const source = {outbound:'Outbound',group:'Outbound group',default:'Default route'}[value]; return source ? t(source) : value; };
     function previewRequest() { return {host:$('rt-host').value.trim(),port:$('rt-port').value.trim(),source:$('rt-source').value.trim(),inbound:$('rt-inbound').value,family:$('rt-family').value}; }
     function renderPreview() {
