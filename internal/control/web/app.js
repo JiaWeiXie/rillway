@@ -226,8 +226,10 @@ async function poll() {
     const info = await loadInfo();
     if(generation !== sessionGeneration || !active) return;
     serverInfo = info;
-    latestSnapshot = {...snapshot,config_revision:Math.max(latestSnapshot.config_revision ?? 0,snapshot.config_revision ?? 0)};
-    editors.configChanged();
+    const previousRevision = latestSnapshot.config_revision ?? 0;
+    const observedRevision = Math.max(previousRevision,snapshot.config_revision ?? 0);
+    latestSnapshot = {...snapshot,config_revision:observedRevision};
+    if(observedRevision !== previousRevision) editors.configChanged();
     flows = Array.isArray(snapshot) ? snapshot : snapshot.flows || [];
     renderRevision();
     renderFlows(); connection(true);

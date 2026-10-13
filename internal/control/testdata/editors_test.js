@@ -196,6 +196,18 @@ async function sharedDraftSafety() {
 }
 
 async function previewRaces() {
+  {
+    const b = await browser();
+    await b.change('rt-host', 'example.com');
+    await b.submit('rt-form');
+    assert.ok(b.get('rt-result').textContent.includes('vpn-a'));
+    await b.run('poll()');
+    assert.ok(b.get('rt-result').textContent.includes('vpn-a'), 'an unchanged observed revision must keep the preview current');
+    assert.ok(!b.get('rt-result').textContent.includes('Inputs or configuration changed.'));
+    ++b.server.revision;
+    await b.run('poll()');
+    assert.ok(b.get('rt-result').textContent.includes('Inputs or configuration changed.'), 'a newer observed revision must stale the preview');
+  }
   for (const [field, changed] of [['rt-host', 'changed.example'], ['rt-port', '8443'], ['rt-source', '203.0.113.8'], ['rt-inbound', 'socks5'], ['rt-family', 'ipv6']]) {
     const b = await browser();
     await b.change('rt-host', 'example.com');
