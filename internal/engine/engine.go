@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
+	"rillway/internal/routeinfo"
 	"slices"
 	"sort"
 	"strings"
@@ -29,6 +30,16 @@ type route struct {
 	family     string
 	candidates []string
 	fixed      bool
+	target     target
+}
+
+type compiledRouting struct {
+	id         string
+	m          matcher
+	outbound   string
+	adaptive   bool
+	candidates []string
+	family     string
 }
 
 // Snapshot contains bounded, in-memory connection metadata. Payloads and HTTP
@@ -90,6 +101,7 @@ type Engine struct {
 	mu                sync.Mutex
 	cfg               config.Config
 	providers         map[string]outbound.Provider
+	matchers          []compiledRouting
 	flows             map[uint64]*flowState
 	destinations      map[string]*adaptiveState
 	sequence          atomic.Uint64
@@ -136,6 +148,14 @@ func (e *Engine) Update(cfg config.Config, providers map[string]outbound.Provide
 	for id, p := range providers {
 		e.providers[id] = p
 	}
+	sets := make(map[string]config.RuleSet, len(e.cfg.RuleSets))
+	for _, set := range e.cfg.RuleSets {
+		sets[set.ID] = set
+	}
+	e.matchers = make([]compiledRouting, 0, len(e.cfg.Rules))
+	for _, rule := range e.cfg.Rules {
+		e.matchers = append(e.matchers, compiledRouting{id: rule.ID, m: compileRule(rule, sets), outbound: rule.Outbound, adaptive: rule.Adaptive, candidates: rule.Candidates, family: rule.Family})
+	}
 	kept := make(map[string]*adaptiveState, len(e.destinations))
 	for key, d := range e.destinations {
 		if e.unchangedPolicyLocked(d, previous) {
@@ -146,13 +166,16 @@ func (e *Engine) Update(cfg config.Config, providers map[string]outbound.Provide
 }
 
 func (e *Engine) unchangedPolicyLocked(d *adaptiveState, previous map[string]outbound.Provider) bool {
-	host, _, err := net.SplitHostPort(d.address)
-	if err != nil {
-		return false
+	t := d.target
+	if t.host == "" {
+		host, port, err := net.SplitHostPort(d.address)
+		if err != nil {
+			return false
+		}
+		t = target{host: normalize(host), port: port}
 	}
-	r, err := e.selectRoute(host)
-	// d.candidates is never empty, so the equal check guards initialOutbound.
-	if err != nil || r.rule != d.rule || r.family != d.family || !slices.Equal(r.candidates, d.candidates) || initialOutbound(r) != d.initial {
+	r, err := e.selectRoute(t)
+	if err != nil || !sameAdaptivePolicy(d, r) {
 		return false
 	}
 	for _, id := range d.candidates {
@@ -176,11 +199,26 @@ func sameProvider(a, b outbound.Provider) bool {
 func cloneConfig(c config.Config) config.Config {
 	c.Outbounds = append([]config.Outbound(nil), c.Outbounds...)
 	c.Rules = append([]config.Rule(nil), c.Rules...)
+	c.OutboundGroups = slices.Clone(c.OutboundGroups)
+	for i := range c.OutboundGroups {
+		c.OutboundGroups[i].Members = slices.Clone(c.OutboundGroups[i].Members)
+	}
+	c.RuleSets = slices.Clone(c.RuleSets)
+	for i := range c.RuleSets {
+		c.RuleSets[i].Domains = slices.Clone(c.RuleSets[i].Domains)
+		c.RuleSets[i].Suffixes = slices.Clone(c.RuleSets[i].Suffixes)
+		c.RuleSets[i].CIDRs = slices.Clone(c.RuleSets[i].CIDRs)
+		c.RuleSets[i].Sources = slices.Clone(c.RuleSets[i].Sources)
+	}
 	for i := range c.Rules {
 		c.Rules[i].Domains = append([]string(nil), c.Rules[i].Domains...)
 		c.Rules[i].Suffixes = append([]string(nil), c.Rules[i].Suffixes...)
 		c.Rules[i].CIDRs = append([]string(nil), c.Rules[i].CIDRs...)
 		c.Rules[i].Candidates = append([]string(nil), c.Rules[i].Candidates...)
+		c.Rules[i].Sources = slices.Clone(c.Rules[i].Sources)
+		c.Rules[i].Inbounds = slices.Clone(c.Rules[i].Inbounds)
+		c.Rules[i].Ports = slices.Clone(c.Rules[i].Ports)
+		c.Rules[i].Sets = slices.Clone(c.Rules[i].Sets)
 	}
 	c.Adaptive.Candidates = append([]string(nil), c.Adaptive.Candidates...)
 	c.PAC.BypassDomains = append([]config.PACBypass(nil), c.PAC.BypassDomains...)
@@ -192,36 +230,6 @@ func (e *Engine) Close() error {
 	e.cancel()
 	<-e.done
 	return nil
-}
-
-func normalize(host string) string { return strings.TrimSuffix(strings.ToLower(host), ".") }
-
-func suffixMatch(host, suffix string) bool {
-	suffix = normalize(strings.TrimPrefix(suffix, "."))
-	return host == suffix || strings.HasSuffix(host, "."+suffix)
-}
-
-func matches(r config.Rule, host string) bool {
-	for _, domain := range r.Domains {
-		if host == normalize(domain) {
-			return true
-		}
-	}
-	for _, suffix := range r.Suffixes {
-		if suffixMatch(host, suffix) {
-			return true
-		}
-	}
-	// Never resolve a hostname through the host DNS merely to test a CIDR rule.
-	// Name resolution belongs exclusively to the selected outbound.
-	if ip, err := netip.ParseAddr(host); err == nil {
-		for _, cidr := range r.CIDRs {
-			if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Contains(ip.Unmap()) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func privateIP(ip netip.Addr) bool {
@@ -286,36 +294,36 @@ func (e *Engine) adaptiveCandidates(ids []string) []string {
 	return valid
 }
 
-func (e *Engine) selectRoute(host string) (route, error) {
-	r := route{outbound: e.cfg.DefaultOutbound, rule: "default", family: "auto"}
-	var adaptiveRule *config.Rule
-	for _, rule := range e.cfg.Rules {
-		if !matches(rule, host) {
+func (e *Engine) selectRoute(t target) (route, error) {
+	r := route{outbound: e.cfg.DefaultOutbound, rule: "default", family: "auto", target: t}
+	var adaptiveRule *compiledRouting
+	for i := range e.matchers {
+		rule := &e.matchers[i]
+		if !rule.m.match(t) {
 			continue
 		}
-		if rule.Adaptive {
+		if rule.adaptive {
 			if adaptiveRule == nil {
-				rr := rule
-				adaptiveRule = &rr
+				adaptiveRule = rule
 			}
 			continue
 		}
-		r.outbound, r.rule, r.family = rule.Outbound, rule.ID, rule.Family
+		r.outbound, r.rule, r.family = rule.outbound, rule.id, rule.family
 		r.fixed = true
-		return e.protectRoute(r, host)
+		return e.protectRoute(r, t.host)
 	}
 	ids := e.cfg.Adaptive.Candidates
 	if adaptiveRule != nil {
-		r.rule, r.family = adaptiveRule.ID, adaptiveRule.Family
-		ids = adaptiveRule.Candidates
-		if adaptiveRule.Outbound != "" {
-			r.outbound = adaptiveRule.Outbound
+		r.rule, r.family = adaptiveRule.id, adaptiveRule.family
+		ids = adaptiveRule.candidates
+		if adaptiveRule.outbound != "" {
+			r.outbound = adaptiveRule.outbound
 		}
 	}
-	if e.cfg.Adaptive.Enabled && !privateHost(host, e.cfg.PAC) {
+	if e.cfg.Adaptive.Enabled && !privateHost(t.host, e.cfg.PAC) {
 		r.candidates = e.adaptiveCandidates(ids)
 	}
-	return e.protectRoute(r, host)
+	return e.protectRoute(r, t.host)
 }
 
 func (e *Engine) protectRoute(r route, host string) (route, error) {
@@ -344,6 +352,8 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	}
 	host = normalize(host)
 	address = net.JoinHostPort(host, port)
+	info := routeinfo.From(ctx)
+	t := target{host: host, port: port, source: info.SourceIP, inbound: info.Inbound}
 	e.mu.Lock()
 	policy := e.destinationPolicy
 	e.mu.Unlock()
@@ -357,7 +367,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		}
 	}
 	e.mu.Lock()
-	r, err := e.selectRoute(host)
+	r, err := e.selectRoute(t)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -371,9 +381,10 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	key := address + "|" + network
 	var state *adaptiveState
 	generation := e.generation
+	policyRoute := r
 	if len(r.candidates) > 0 {
 		state = e.destinations[key]
-		if state == nil {
+		if state == nil || !sameAdaptivePolicy(state, r) {
 			// Do not publish a new adaptive destination until provider resolution
 			// confirms it is not this daemon. Otherwise probes can race the dial.
 			state = newAdaptiveState(address, network, r, e.now())
@@ -410,7 +421,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		e.mu.Lock()
 		// An in-flight dial from a previous config must not populate the new policy.
 		if e.generation == generation {
-			state = e.destinationLocked(key, address, network, r)
+			state = e.destinationLocked(key, address, network, policyRoute)
 			state.lastUsed = e.now()
 			e.recordFamilyLocked(state, r.outbound, elapsed, err, family)
 		}

@@ -15,6 +15,7 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/authguard"
 	"rillway/internal/config"
+	"rillway/internal/routeinfo"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,7 +130,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "absolute HTTP or HTTPS URL required", http.StatusBadRequest)
 		return
 	}
-	request := r.Clone(r.Context())
+	request := r.Clone(routeinfo.With(r.Context(), requestInfo(r.RemoteAddr, "http")))
 	request.RequestURI = ""
 	websocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && headerToken(r.Header, "Connection", "upgrade")
 	removeHopHeaders(request.Header)
@@ -260,12 +261,20 @@ func validAddress(address string) bool {
 	return err == nil && n > 0 && n <= 65535
 }
 
+func requestInfo(remoteAddr, inbound string) routeinfo.Info {
+	info := routeinfo.Info{Inbound: inbound}
+	if address, err := netip.ParseAddrPort(remoteAddr); err == nil {
+		info.SourceIP = address.Addr().Unmap()
+	}
+	return info
+}
+
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	if !validAddress(r.Host) {
 		http.Error(w, "CONNECT requires host:port", http.StatusBadRequest)
 		return
 	}
-	upstream, err := s.dialContext(r.Context(), "tcp", r.Host)
+	upstream, err := s.dialContext(routeinfo.With(r.Context(), requestInfo(r.RemoteAddr, "http")), "tcp", r.Host)
 	if err != nil {
 		http.Error(w, "outbound connection failed", http.StatusBadGateway)
 		return
