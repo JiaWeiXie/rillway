@@ -1176,7 +1176,8 @@ func (m model) outboundsView() string {
 		if group.Type == "select" {
 			members += " · " + m.text("selected") + " " + group.Selected
 		}
-		fmt.Fprintf(&b, m.text("\n  Group %s · %s · %s\n"), strings.TrimSpace(cell(group.ID, 25)), strings.TrimSpace(cell(m.text(group.Type), 16)), strings.TrimSpace(cell(members, max(0, width-50))))
+		line := fmt.Sprintf("%s %s · %s · %s", m.text("Group"), group.ID, m.text(group.Type), members)
+		fmt.Fprintf(&b, "\n  %s\n", strings.TrimSpace(cell(line, max(0, width-2))))
 	}
 	return b.String()
 }
