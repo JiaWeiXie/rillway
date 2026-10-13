@@ -4,11 +4,11 @@ set -Eeuo pipefail
 umask 077
 
 on_error() {
-  local status=$1 line=$2 command=$3
-  printf 'Service acceptance failed at line %s: %s\n' "$line" "$command" >&2
+  local status=$1 line=$2
+  printf 'Service acceptance failed at line %s.\n' "$line" >&2
   exit "$status"
 }
-trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
+trap 'on_error "$?" "$LINENO"' ERR
 if [ "${RILLWAY_SERVICE_ACCEPTANCE:-}" != "1" ]; then
   echo 'Set RILLWAY_SERVICE_ACCEPTANCE=1 on a fresh Ubuntu 24.04/26.04 VM.' >&2
   exit 1
@@ -172,7 +172,7 @@ fi
 
 # Existing memory limit configuration must be preserved
 test "$(sudo cat /var/lib/rillway-resource-control/memory-limit.conf)" = "$(printf '[Service]\nMemoryMax=512M')"
-test -L /etc/systemd/system/rillway.service.d/zzzz-rillway-memory.conf
+sudo test -L /etc/systemd/system/rillway.service.d/zzzz-rillway-memory.conf
 test "$(sudo readlink -f /etc/systemd/system/rillway.service.d/zzzz-rillway-memory.conf)" = /var/lib/rillway-resource-control/memory-limit.conf
 
 # 7. Verify WARP service logging reconciliation
@@ -181,7 +181,7 @@ sudo test -f /var/lib/rillway-resource-control/warp-log-level.conf
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '[Service]\nLogLevelMax=info')"
 
 # Systemd drop-in must be a symlink pointing to the managed state file
-test -L /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf
+sudo test -L /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf
 test "$(sudo readlink -f /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf)" = /var/lib/rillway-resource-control/warp-log-level.conf
 
 # Effective LogLevelMax of warp-svc must be info
