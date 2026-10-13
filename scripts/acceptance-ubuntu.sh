@@ -323,6 +323,7 @@ sudo sed -i \
   -e 's|Restart=no|Restart=always|' \
   /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
+sudo systemctl reset-failed warp-svc.service
 sudo systemctl restart warp-svc.service
 
 # 15. Verify update to inherit (clears LogLevelMax assignment)
