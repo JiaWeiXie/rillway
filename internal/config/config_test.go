@@ -185,8 +185,8 @@ func TestVersion1MigrationPreservesProxyAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode v1 config: %v", err)
 	}
-	if got.Version != 2 {
-		t.Fatalf("expected in-memory version 2, got %d", got.Version)
+	if got.Version != 3 {
+		t.Fatalf("expected in-memory version 3, got %d", got.Version)
 	}
 	if got.Revision != 3 {
 		t.Fatalf("expected revision 3, got %d", got.Revision)
@@ -251,8 +251,8 @@ func TestVersion1MigrationEmptyLegacyListMigratesDenyAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode v1 config with empty allowed_clients: %v", err)
 	}
-	if got.Version != 2 {
-		t.Fatalf("expected version 2, got %d", got.Version)
+	if got.Version != 3 {
+		t.Fatalf("expected version 3, got %d", got.Version)
 	}
 	if len(got.SourceAccess.Rules) != 0 {
 		t.Fatalf("expected 0 source access rules for empty legacy list, got %d", len(got.SourceAccess.Rules))
@@ -448,8 +448,8 @@ func TestRoundTripVersion1AndVersion2WithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode v1: %v", err)
 	}
-	if decoded.Version != 2 {
-		t.Fatalf("expected version 2 in memory, got %d", decoded.Version)
+	if decoded.Version != 3 {
+		t.Fatalf("expected version 3 in memory, got %d", decoded.Version)
 	}
 
 	if err := Save(p, decoded); err != nil {
@@ -460,22 +460,19 @@ func TestRoundTripVersion1AndVersion2WithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read saved config: %v", err)
 	}
-	content := string(rawBytes)
-	if !strings.Contains(content, `"version": 2`) {
-		t.Fatalf("saved file missing version 2: %s", content)
+	var persisted Config
+	if err := json.Unmarshal(rawBytes, &persisted); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(content, `"source_access"`) {
-		t.Fatalf("saved file missing source_access: %s", content)
-	}
-	if !strings.Contains(content, `"admin_token_file"`) || !strings.Contains(content, `"proxy_password_file"`) {
-		t.Fatalf("saved file missing secret file references: %s", content)
+	if persisted.Version != 3 || !reflect.DeepEqual(persisted.SourceAccess, decoded.SourceAccess) || persisted.Security.AdminTokenFile != decoded.Security.AdminTokenFile || persisted.Security.ProxyPasswordFile != decoded.Security.ProxyPasswordFile {
+		t.Fatal("saved configuration lost migrated version, source access or secret file references")
 	}
 
 	loaded, err := Load(p)
 	if err != nil {
 		t.Fatalf("failed to load saved config: %v", err)
 	}
-	if loaded.Version != 2 || loaded.Revision != 5 {
+	if loaded.Version != 3 || loaded.Revision != 5 {
 		t.Fatalf("unexpected loaded config: %+v", loaded)
 	}
 	if len(loaded.SourceAccess.Rules) != 1 || loaded.SourceAccess.Rules[0].ID != "local-clients" {
@@ -751,8 +748,8 @@ func TestExampleConfigValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to load examples/config.json: %v", err)
 	}
-	if c.Version != 2 {
-		t.Fatalf("expected version 2 in examples/config.json, got %d", c.Version)
+	if c.Version != 3 {
+		t.Fatalf("expected version 3 in examples/config.json, got %d", c.Version)
 	}
 	if len(c.SourceAccess.Rules) == 0 {
 		t.Fatal("expected source_access.rules in examples/config.json")
@@ -788,7 +785,7 @@ func TestConnectionLimitsValidation(t *testing.T) {
 }
 
 func TestConnectionLimitsVersionCompatibility(t *testing.T) {
-	for _, version := range []int{1, 2} {
+	for _, version := range []int{1, 2, 3} {
 		for _, tc := range []struct {
 			name      string
 			omit      bool
@@ -812,6 +809,10 @@ func TestConnectionLimitsVersionCompatibility(t *testing.T) {
 				var raw map[string]json.RawMessage
 				if err := json.Unmarshal(data, &raw); err != nil {
 					t.Fatal(err)
+				}
+				if version < 3 {
+					delete(raw, "outbound_groups")
+					delete(raw, "rule_sets")
 				}
 				if version == 1 {
 					delete(raw, "source_access")
@@ -843,5 +844,129 @@ func TestConnectionLimitsVersionCompatibility(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestDecodeVersionMigrationsAndPreservation(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprintf("v%d to v3", version), func(t *testing.T) {
+			want := Default(t.TempDir())
+			want.Revision = 17
+			want.Outbounds[1].Enabled = true
+			want.Security.AllowedClients = []string{"203.0.113.0/24", "2001:db8::/32"}
+			want.Security.ProxyUsername = "operator"
+			want.Security.ProxyPasswordFile = filepath.Join(t.TempDir(), "proxy.pass")
+			want.ConnectionLimits = ConnectionLimits{MaxConnections: 4096, MaxConnectionsPerSource: 2048}
+			want.Adaptive.Enabled = true
+			want.DefaultOutbound = "warp"
+			if version == 1 {
+				want.SourceAccess = SourceAccess{Rules: []SourceAccessRule{{ID: "local-clients", Name: "Local clients", Action: "allow", Enabled: true, CIDRs: append([]string(nil), want.Security.AllowedClients...)}}}
+			} else {
+				want.SourceAccess = SourceAccess{Rules: []SourceAccessRule{{ID: "remote", Name: "Remote clients", Note: "preserve this note", Action: "deny", Enabled: true, CIDRs: []string{"198.51.100.0/24"}}}}
+			}
+			if err := Validate(want); err != nil {
+				t.Fatalf("invalid baseline: %v", err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(phase1JSON(t, want), &raw); err != nil {
+				t.Fatal(err)
+			}
+			raw["version"] = phase1JSON(t, version)
+			delete(raw, "outbound_groups")
+			delete(raw, "rule_sets")
+			if version == 1 {
+				delete(raw, "source_access")
+			}
+			got, err := Decode(phase1JSON(t, raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Version != 3 {
+				t.Fatalf("version = %d, want 3", got.Version)
+			}
+			if len(got.OutboundGroups) != 0 || len(got.RuleSets) != 0 {
+				t.Fatal("migration invented groups or rule sets")
+			}
+			// Missing collections have the same behavior whether nil or empty.
+			got.OutboundGroups = want.OutboundGroups
+			got.RuleSets = want.RuleSets
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("migration lost settings: got %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestDecodeUnsupportedVersion4(t *testing.T) {
+	c := Default(t.TempDir())
+	c.Version = 4
+	if _, err := Decode(phase1JSON(t, c)); err == nil || err.Error() != "unsupported config version 4" {
+		t.Fatalf("unexpected Decode error: %v", err)
+	}
+	if err := Validate(c); err == nil || err.Error() != "unsupported config version 4" {
+		t.Fatalf("unexpected Validate error: %v", err)
+	}
+}
+
+func TestDecodeVersion3RejectsUnknownFields(t *testing.T) {
+	c := Default(t.TempDir())
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["unrecognized_parameter"] = "unexpected"
+	badData, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(badData); err == nil {
+		t.Fatal("expected Decode to reject unknown field in version 3 JSON")
+	}
+}
+
+func TestCompositeRuleValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rule  Rule
+		valid bool
+	}{
+		{"empty", Rule{}, false},
+		{"ftp inbound", Rule{Inbounds: []string{"ftp"}}, false},
+		{"unknown inbound alongside valid", Rule{Inbounds: []string{"http", "ftp"}}, false},
+		{"port 70000", Rule{Ports: []string{"70000"}}, false},
+		{"zero port", Rule{Ports: []string{"0"}}, false},
+		{"nonnumeric port", Rule{Ports: []string{"abc"}}, false},
+		{"reversed range", Rule{Ports: []string{"8100-8000"}}, false},
+		{"range overflow", Rule{Ports: []string{"80-70000"}}, false},
+		{"negative port", Rule{Ports: []string{"-443"}}, false},
+		{"incomplete range", Rule{Ports: []string{"443-"}}, false},
+		{"invalid source", Rule{Sources: []string{"not-a-prefix"}}, false},
+		{"source without prefix", Rule{Sources: []string{"203.0.113.1"}}, false},
+		{"missing set", Rule{Sets: []string{"missing"}}, false},
+		{"http inbound alone", Rule{Inbounds: []string{"http"}}, true},
+		{"socks5 inbound alone", Rule{Inbounds: []string{"socks5"}}, true},
+		{"port boundaries", Rule{Ports: []string{"1", "65535", "8000-8100"}}, true},
+		{"source alone", Rule{Sources: []string{"203.0.113.0/24", "2001:db8::/32"}}, true},
+		{"set alone", Rule{Sets: []string{"set-1"}}, true},
+		{"all criteria", Rule{Suffixes: []string{"example.com"}, Sources: []string{"203.0.113.0/24"}, Inbounds: []string{"socks5"}, Ports: []string{"8000-8100"}, Sets: []string{"set-1"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := phase1GroupConfig(t)
+			r := tc.rule
+			r.ID = "composite-rule"
+			r.Outbound = "group-1"
+			c.Rules = append(c.Rules, r)
+			before := phase1JSON(t, c)
+			if err := Validate(c); (err == nil) != tc.valid {
+				t.Fatalf("valid = %v, error = %v", tc.valid, err)
+			}
+			if string(phase1JSON(t, c)) != string(before) {
+				t.Fatal("validation mutated input")
+			}
+		})
 	}
 }

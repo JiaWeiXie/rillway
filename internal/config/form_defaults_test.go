@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -41,9 +42,65 @@ func TestFormDefaultsUseDaemonPathsAndAvoidDuplicateIDs(t *testing.T) {
 }
 
 func cloneForDefaultsTest(c Config) Config {
-	c.Outbounds = append([]Outbound(nil), c.Outbounds...)
-	c.Rules = append([]Rule(nil), c.Rules...)
+	c.Outbounds = slices.Clone(c.Outbounds)
+	c.OutboundGroups = slices.Clone(c.OutboundGroups)
+	c.RuleSets = slices.Clone(c.RuleSets)
+	c.Rules = slices.Clone(c.Rules)
 	return c
+}
+
+func TestFormDefaultsIncludesGroupAndRuleSet(t *testing.T) {
+	c := Default(t.TempDir())
+	c.Outbounds[1].Enabled = true
+	c.Outbounds = append(
+		c.Outbounds,
+		Outbound{ID: "disabled", Type: "warp", ProxyAddress: "127.0.0.1:40001"},
+		Outbound{ID: "direct-extra", Type: "direct", Enabled: true, PublicInternet: true},
+		Outbound{ID: "vpn-b", Type: "warp", Enabled: true, PublicInternet: true, ProxyAddress: "127.0.0.1:40002"},
+		Outbound{ID: "vpn-c", Type: "warp", Enabled: true, PublicInternet: true, ProxyAddress: "127.0.0.1:40003"},
+	)
+	if err := Validate(c); err != nil {
+		t.Fatalf("invalid baseline: %v", err)
+	}
+	before := phase1JSON(t, c)
+	d := DefaultsForForms(c)
+	if string(phase1JSON(t, c)) != string(before) {
+		t.Fatal("suggestions mutated input")
+	}
+	wantGroup := OutboundGroup{ID: "group-1", Type: "fallback", Enabled: true, Members: []string{"warp", "vpn-b"}}
+	wantSet := RuleSet{ID: "ruleset-1", Name: "New rule set", Domains: []string{"example.com"}}
+	if !reflect.DeepEqual(d.Group, wantGroup) || !reflect.DeepEqual(d.RuleSet, wantSet) {
+		t.Fatalf("unexpected defaults: %+v / %+v", d.Group, d.RuleSet)
+	}
+	if len(d.Rule.Sources)+len(d.Rule.Inbounds)+len(d.Rule.Ports)+len(d.Rule.Sets) != 0 {
+		t.Fatal("rule defaults invented composite conditions")
+	}
+	next := cloneForDefaultsTest(c)
+	next.OutboundGroups = append(next.OutboundGroups, d.Group)
+	next.RuleSets = append(next.RuleSets, d.RuleSet)
+	if err := Validate(next); err != nil {
+		t.Fatalf("invalid suggestions: %v", err)
+	}
+	c = next
+	before = phase1JSON(t, c)
+	d = DefaultsForForms(c)
+	if d.Group.ID != "group-2" || d.RuleSet.ID != "ruleset-2" {
+		t.Fatal("suggested IDs collide with existing entities")
+	}
+	if string(phase1JSON(t, c)) != string(before) {
+		t.Fatal("collision handling mutated input")
+	}
+	// All entity kinds share the namespace.
+	c.Outbounds = append(c.Outbounds, Outbound{ID: "group-2", Type: "direct", Enabled: true, PublicInternet: true})
+	c.RuleSets = append(c.RuleSets, RuleSet{ID: "group-3", Name: "Occupied", Domains: []string{"example.com"}})
+	c.OutboundGroups = append(c.OutboundGroups, OutboundGroup{ID: "ruleset-2", Type: "fallback", Enabled: true, Members: []string{"warp"}})
+	if err := Validate(c); err != nil {
+		t.Fatalf("invalid collision baseline: %v", err)
+	}
+	d = DefaultsForForms(c)
+	if d.Group.ID != "group-4" || d.RuleSet.ID != "ruleset-3" {
+		t.Fatalf("cross-collection collision: %+v / %+v", d.Group, d.RuleSet)
+	}
 }
 
 func TestFormDefaultsAvoidOccupiedTailscaleState(t *testing.T) {

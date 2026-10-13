@@ -90,3 +90,56 @@ func TestRemoveOutboundRequiresExplicitValidReplacement(t *testing.T) {
 		t.Fatal(next, err)
 	}
 }
+
+func TestRemoveOutboundReplacesGroupReferencesAndDedupes(t *testing.T) {
+	for _, kind := range []string{"select", "fallback"} {
+		for _, replacement := range []string{"vpn-b", "vpn-c"} {
+			t.Run(kind+"/"+replacement, func(t *testing.T) {
+				c := phase1GroupConfig(t)
+				// Isolate group references; legacy rule/adaptive references must not hide missing group tracking.
+				c.Rules = nil
+				c.Adaptive.Candidates = []string{"direct"}
+				c.Outbounds = append(c.Outbounds, Outbound{ID: "vpn-c", Type: "warp", Enabled: true, PublicInternet: true, ProxyAddress: "127.0.0.1:40002"})
+				c.OutboundGroups[0].Type = kind
+				if kind == "select" {
+					c.OutboundGroups[0].Selected = "warp"
+				}
+				if err := Validate(c); err != nil {
+					t.Fatalf("invalid baseline: %v", err)
+				}
+				before := phase1JSON(t, c)
+				for _, invalid := range []string{"", "missing", "warp", "direct", "group-1"} {
+					if _, err := RemoveOutbound(c, "warp", invalid); err == nil {
+						t.Fatalf("unsafe replacement %q accepted", invalid)
+					}
+					if string(phase1JSON(t, c)) != string(before) {
+						t.Fatal("rejected removal mutated input")
+					}
+				}
+				next, err := RemoveOutbound(c, "warp", replacement)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(phase1JSON(t, c)) != string(before) {
+					t.Fatal("removal mutated input")
+				}
+				want := c
+				want.Outbounds = append([]Outbound{c.Outbounds[0]}, c.Outbounds[2:]...)
+				want.OutboundGroups = append([]OutboundGroup(nil), c.OutboundGroups...)
+				want.OutboundGroups[0].Members = []string{replacement, "vpn-b"}
+				if replacement == "vpn-b" {
+					want.OutboundGroups[0].Members = []string{"vpn-b"}
+				}
+				if kind == "select" {
+					want.OutboundGroups[0].Selected = replacement
+				}
+				if !reflect.DeepEqual(next, want) {
+					t.Fatalf("removal changed unrelated settings: got %+v, want %+v", next, want)
+				}
+				if err := Validate(next); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}

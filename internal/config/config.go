@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"rillway/internal/access"
+	"strconv"
 	"strings"
 )
 
@@ -185,7 +186,7 @@ func (p PAC) EnabledCIDRs() []string { return enabledPACValues(p.BypassCIDRs) }
 
 func Default(stateDir string) Config {
 	return Config{
-		Version: 2, Revision: 1,
+		Version: ConfigVersion, Revision: 1,
 		Listeners:        Listeners{HTTP: "127.0.0.1:17890", SOCKS5: "127.0.0.1:17891", Admin: "127.0.0.1:17892", PAC: "127.0.0.1:17893"},
 		Security:         Security{AllowedClients: []string{"127.0.0.0/8", "::1/128"}, AdminTokenFile: filepath.Join(stateDir, "admin.token"), TLSCertFile: filepath.Join(stateDir, "admin.crt"), TLSKeyFile: filepath.Join(stateDir, "admin.key")},
 		ConnectionLimits: ConnectionLimits{MaxConnections: DefaultMaxConnections, MaxConnectionsPerSource: DefaultMaxConnectionsPerSource},
@@ -200,7 +201,9 @@ func Default(stateDir string) Config {
 				},
 			},
 		},
-		Outbounds: []Outbound{{ID: "direct", Type: "direct", Enabled: true, PublicInternet: true}, {ID: "warp", Type: "warp", Enabled: false, PublicInternet: true, ProxyAddress: "127.0.0.1:40000", WARPBinary: "warp-cli"}},
+		Outbounds:      []Outbound{{ID: "direct", Type: "direct", Enabled: true, PublicInternet: true}, {ID: "warp", Type: "warp", Enabled: false, PublicInternet: true, ProxyAddress: "127.0.0.1:40000", WARPBinary: "warp-cli"}},
+		OutboundGroups: []OutboundGroup{},
+		RuleSets:       []RuleSet{},
 		Rules: []Rule{
 			{ID: "github-origin", Domains: []string{"github.com", "api.github.com", "codeload.github.com"}, Outbound: "direct", Family: "auto"},
 			{ID: "github-cdn", Domains: []string{"raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"}, Suffixes: []string{"githubassets.com"}, Outbound: "warp", Family: "auto"},
@@ -223,6 +226,50 @@ type rawConfigV1 struct {
 	PAC              PAC              `json:"pac"`
 }
 
+type rawConfigV2 struct {
+	Version          int              `json:"version"`
+	Revision         uint64           `json:"revision"`
+	Listeners        Listeners        `json:"listeners"`
+	Security         Security         `json:"security"`
+	ConnectionLimits ConnectionLimits `json:"connection_limits"`
+	SourceAccess     SourceAccess     `json:"source_access"`
+	Outbounds        []Outbound       `json:"outbounds"`
+	Rules            []Rule           `json:"rules"`
+	DefaultOutbound  string           `json:"default_outbound"`
+	Adaptive         Adaptive         `json:"adaptive"`
+	PAC              PAC              `json:"pac"`
+}
+
+func migrateV1(v1 rawConfigV1) Config {
+	c := Config{
+		Version:          ConfigVersion,
+		Revision:         v1.Revision,
+		Listeners:        v1.Listeners,
+		Security:         v1.Security,
+		ConnectionLimits: v1.ConnectionLimits,
+		SourceAccess:     SourceAccess{Rules: []SourceAccessRule{}},
+		Outbounds:        v1.Outbounds,
+		OutboundGroups:   []OutboundGroup{},
+		RuleSets:         []RuleSet{},
+		Rules:            v1.Rules,
+		DefaultOutbound:  v1.DefaultOutbound,
+		Adaptive:         v1.Adaptive,
+		PAC:              v1.PAC,
+	}
+	if len(v1.Security.AllowedClients) > 0 {
+		c.SourceAccess.Rules = []SourceAccessRule{
+			{
+				ID:      "local-clients",
+				Name:    "Local clients",
+				Action:  "allow",
+				CIDRs:   append([]string(nil), v1.Security.AllowedClients...),
+				Enabled: true,
+			},
+		}
+	}
+	return c
+}
+
 func Decode(data []byte) (Config, error) {
 	if len(data) > 1<<20 {
 		return Config{}, errors.New("configuration exceeds 1 MiB")
@@ -241,29 +288,36 @@ func Decode(data []byte) (Config, error) {
 		if err := d.Decode(new(any)); err != io.EOF {
 			return Config{}, errors.New("configuration must contain one JSON object")
 		}
-		c := Config{
-			Version:          2,
-			Revision:         v1.Revision,
-			Listeners:        v1.Listeners,
-			Security:         v1.Security,
-			ConnectionLimits: v1.ConnectionLimits,
-			SourceAccess:     SourceAccess{Rules: []SourceAccessRule{}},
-			Outbounds:        v1.Outbounds,
-			Rules:            v1.Rules,
-			DefaultOutbound:  v1.DefaultOutbound,
-			Adaptive:         v1.Adaptive,
-			PAC:              v1.PAC,
+		c := migrateV1(v1)
+		return c, Validate(c)
+	}
+	if probe.Version == 2 {
+		var v2 rawConfigV2
+		d := json.NewDecoder(bytes.NewReader(data))
+		d.DisallowUnknownFields()
+		if err := d.Decode(&v2); err != nil {
+			return Config{}, err
 		}
-		if len(v1.Security.AllowedClients) > 0 {
-			c.SourceAccess.Rules = []SourceAccessRule{
-				{
-					ID:      "local-clients",
-					Name:    "Local clients",
-					Action:  "allow",
-					CIDRs:   append([]string(nil), v1.Security.AllowedClients...),
-					Enabled: true,
-				},
-			}
+		if err := d.Decode(new(any)); err != io.EOF {
+			return Config{}, errors.New("configuration must contain one JSON object")
+		}
+		c := Config{
+			Version:          ConfigVersion,
+			Revision:         v2.Revision,
+			Listeners:        v2.Listeners,
+			Security:         v2.Security,
+			ConnectionLimits: v2.ConnectionLimits,
+			SourceAccess:     v2.SourceAccess,
+			Outbounds:        v2.Outbounds,
+			OutboundGroups:   []OutboundGroup{},
+			RuleSets:         []RuleSet{},
+			Rules:            v2.Rules,
+			DefaultOutbound:  v2.DefaultOutbound,
+			Adaptive:         v2.Adaptive,
+			PAC:              v2.PAC,
+		}
+		if c.SourceAccess.Rules == nil {
+			c.SourceAccess.Rules = []SourceAccessRule{}
 		}
 		return c, Validate(c)
 	}
@@ -279,6 +333,12 @@ func Decode(data []byte) (Config, error) {
 	}
 	if c.SourceAccess.Rules == nil {
 		c.SourceAccess.Rules = []SourceAccessRule{}
+	}
+	if c.OutboundGroups == nil {
+		c.OutboundGroups = []OutboundGroup{}
+	}
+	if c.RuleSets == nil {
+		c.RuleSets = []RuleSet{}
 	}
 	return c, Validate(c)
 }
@@ -339,7 +399,7 @@ func ValidateAndCompileSourceAccess(c Config) (*access.Policy, error) {
 }
 
 func validateNonSourceSettings(c Config) error {
-	if c.Version != 2 {
+	if c.Version != ConfigVersion {
 		return fmt.Errorf("unsupported config version %d", c.Version)
 	}
 	if c.Revision == 0 {
@@ -424,7 +484,29 @@ func validateNonSourceSettings(c Config) error {
 	if o, ok := outs["direct"]; !ok || o.Type != "direct" || !o.Enabled || !o.PublicInternet {
 		return PublicError{Message: DirectRequired}
 	}
-	if o, ok := outs[c.DefaultOutbound]; !ok || !o.Enabled {
+	groups, err := validateOutboundGroups(c.OutboundGroups, outs, c.Rules, c.DefaultOutbound)
+	if err != nil {
+		return err
+	}
+	sets, err := validateRuleSets(c.RuleSets)
+	if err != nil {
+		return err
+	}
+	for id := range sets {
+		if _, ok := outs[id]; ok {
+			return fmt.Errorf("rule set ID %q collides with outbound", id)
+		}
+		if _, ok := groups[id]; ok {
+			return fmt.Errorf("rule set ID %q collides with outbound group", id)
+		}
+	}
+	enabledTarget := false
+	if o, ok := outs[c.DefaultOutbound]; ok && o.Enabled {
+		enabledTarget = true
+	} else if g, ok := groups[c.DefaultOutbound]; ok && g.Enabled {
+		enabledTarget = true
+	}
+	if !enabledTarget {
 		return errors.New("default_outbound must refer to an enabled outbound")
 	}
 	checkCandidates := func(ids []string) error {
@@ -448,7 +530,7 @@ func validateNonSourceSettings(c Config) error {
 			return fmt.Errorf("invalid or duplicate rule ID %q", r.ID)
 		}
 		rules[r.ID] = true
-		if len(r.Domains)+len(r.Suffixes)+len(r.CIDRs) == 0 {
+		if len(r.Domains)+len(r.Suffixes)+len(r.CIDRs)+len(r.Sources)+len(r.Inbounds)+len(r.Ports)+len(r.Sets) == 0 {
 			return fmt.Errorf("rule %q has no match", r.ID)
 		}
 		for _, d := range append(append([]string{}, r.Domains...), r.Suffixes...) {
@@ -459,6 +541,24 @@ func validateNonSourceSettings(c Config) error {
 		for _, p := range r.CIDRs {
 			if _, err := netip.ParsePrefix(p); err != nil {
 				return fmt.Errorf("rule CIDR: %w", err)
+			}
+		}
+		if err := validateSources(r.Sources); err != nil {
+			return err
+		}
+		for _, in := range r.Inbounds {
+			if in != "http" && in != "socks5" {
+				return fmt.Errorf("unknown inbound %q", in)
+			}
+		}
+		for _, p := range r.Ports {
+			if _, _, err := ParsePortRange(p); err != nil {
+				return err
+			}
+		}
+		for _, s := range r.Sets {
+			if _, ok := sets[s]; !ok {
+				return fmt.Errorf("unknown rule set %q", s)
 			}
 		}
 		if r.Family != "" && r.Family != "auto" && r.Family != "ipv4" && r.Family != "ipv6" {
@@ -472,7 +572,9 @@ func validateNonSourceSettings(c Config) error {
 				return err
 			}
 		} else if _, ok := outs[r.Outbound]; !ok {
-			return fmt.Errorf("unknown outbound %q", r.Outbound)
+			if _, ok := groups[r.Outbound]; !ok {
+				return fmt.Errorf("unknown outbound %q", r.Outbound)
+			}
 		}
 	}
 	if err := checkCandidates(c.Adaptive.Candidates); err != nil {
@@ -635,4 +737,30 @@ func WritePrivate(path string, data []byte) error {
 		return closeErr
 	}
 	return os.Rename(f.Name(), path)
+}
+
+func validateSources(list []string) error {
+	for _, p := range list {
+		if _, err := netip.ParsePrefix(p); err != nil {
+			return fmt.Errorf("rule source: %w", err)
+		}
+	}
+	return nil
+}
+
+// ParsePortRange parses a port range string such as "443" or "8000-8100".
+func ParsePortRange(v string) (uint16, uint16, error) {
+	first, last, rangePort := strings.Cut(v, "-")
+	lo, err := strconv.ParseUint(first, 10, 16)
+	if err != nil || lo == 0 {
+		return 0, 0, fmt.Errorf("invalid rule port %q", v)
+	}
+	if !rangePort {
+		return uint16(lo), uint16(lo), nil
+	}
+	hi, err := strconv.ParseUint(last, 10, 16)
+	if err != nil || hi == 0 || lo > hi {
+		return 0, 0, fmt.Errorf("invalid rule port %q", v)
+	}
+	return uint16(lo), uint16(hi), nil
 }

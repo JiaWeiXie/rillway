@@ -36,6 +36,9 @@ func RemoveOutbound(c Config, id, replacement string) (Config, error) {
 		referenced = referenced || rule.Outbound == id || slices.Contains(rule.Candidates, id)
 		adaptive = adaptive || slices.Contains(rule.Candidates, id)
 	}
+	for _, g := range c.OutboundGroups {
+		referenced = referenced || slices.Contains(g.Members, id) || g.Selected == id
+	}
 	if referenced || replacement != "" {
 		if substitute.ID == "" || substitute.ID == id || !substitute.Enabled {
 			return Config{}, PublicError{Message: ReplacementRequired}
@@ -71,6 +74,13 @@ func RemoveOutbound(c Config, id, replacement string) (Config, error) {
 		c.DefaultOutbound = replacement
 	}
 	c.Adaptive.Candidates = replaceCandidates(c.Adaptive.Candidates)
+	c.OutboundGroups = slices.Clone(c.OutboundGroups)
+	for i := range c.OutboundGroups {
+		c.OutboundGroups[i].Members = replaceCandidates(c.OutboundGroups[i].Members)
+		if c.OutboundGroups[i].Selected == id {
+			c.OutboundGroups[i].Selected = replacement
+		}
+	}
 	if err := Validate(c); err != nil {
 		return Config{}, PublicError{Message: "Configuration validation failed: " + err.Error(), Err: err}
 	}
