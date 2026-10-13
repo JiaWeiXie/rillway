@@ -1,5 +1,9 @@
 {
   "en": {
+    "Theme": "Theme",
+    "System": "System",
+    "Light": "Light",
+    "Dark": "Dark",
     "Resource control is unavailable. Upgrade the installed service to enable it.": "Resource control is unavailable. Upgrade the installed service to enable it.",
     "Resource control did not respond. Read current settings before retrying.": "Resource control did not respond. Read current settings before retrying.",
     "Resource control did not respond. Read current limits before retrying.": "Resource control did not respond. Read current limits before retrying.",
@@ -774,6 +778,10 @@
     "WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.": "WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart."
   },
   "zh-Hant": {
+    "Theme": "主題",
+    "System": "跟隨系統",
+    "Light": "淺色",
+    "Dark": "深色",
     "Resource control is unavailable. Upgrade the installed service to enable it.": "資源控制無法使用；請升級已安裝的服務以啟用此功能。",
     "Resource control did not respond. Read current settings before retrying.": "資源控制未回應。請先讀取目前設定再重試。",
     "Resource control did not respond. Read current limits before retrying.": "資源控制未回應；重試前請重新讀取目前限制。",

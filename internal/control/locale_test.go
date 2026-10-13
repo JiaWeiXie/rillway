@@ -59,8 +59,11 @@ func TestLocaleCatalogCompleteness(t *testing.T) {
 		}
 	}
 	messageCall := regexp.MustCompile(`(?:^|[^\w$])(?:t|et|notice|sourceError)\('([^']*)'`)
-	for _, file := range []string{"web/app.js", "web/i18n.js"} {
-		source, _ := assets.ReadFile(file)
+	for _, file := range []string{"web/app.js", "web/i18n.js", "web/theme.js"} {
+		source, err := assets.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, match := range messageCall.FindAllStringSubmatch(string(source), -1) {
 			if _, ok := en[match[1]]; !ok {
 				t.Fatalf("dynamic UI message missing: %q", match[1])

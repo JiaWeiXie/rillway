@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
+const theme=fs.readFileSync(path.join(__dirname,'..','web','theme.js'),'utf8');
 const app=fs.readFileSync(path.join(__dirname,'..','web','app.js'),'utf8');
 const elements=new Map();
 function get(id) {
@@ -19,15 +20,17 @@ function get(id) {
 const documentEvents={};
 const context=vm.createContext({
   document:{
-    readyState:'loading',getElementById:get,body:{},
+    readyState:'loading',documentElement:{removeAttribute(){},setAttribute(){}},getElementById:get,body:{},
+    querySelector(){return null;},
     querySelectorAll(){return [];},
     addEventListener(event,callback){documentEvents[event]=callback;}
   },
   window:{addEventListener(){}},
-  globalThis:{RillwayI18n:{locale:'en',capture(){},t(source,values={}){return source.replace(/\{(\w+)\}/g,(_,key)=>values[key]??key);}}},
+  RillwayI18n:{locale:'en',capture(){},t(source,values={}){return source.replace(/\{(\w+)\}/g,(_,key)=>values[key]??key);}},
   sessionStorage:{getItem(){return'';}},localStorage:{getItem(){return'';}},
   location:{hostname:'example.test',hash:''},console,structuredClone
 });
+vm.runInContext(theme,context,{filename:'theme.js'});
 vm.runInContext(app,context,{filename:'app.js'});
 assert.equal(typeof documentEvents.DOMContentLoaded,'function');
 assert.equal(get('memory-form').events.submit,undefined,'loading must defer listener registration');
@@ -46,7 +49,7 @@ context.fixture=s;vm.runInContext('active=true;api=async()=>structuredClone(fixt
  await vm.runInContext('loadMemory(true)',context);assert.equal(get('memory-value').value,'0.75');assert.equal(vm.runInContext('memoryDraftRevision',context),'two');
  vm.runInContext('api=async(path,options)=>{globalThis.sent=JSON.parse(options.body);return {...fixture,mode:"GiB",value:"0.75",limit_bytes:805306368,revision:"three"};};',context);
  await get('memory-form').events.submit({preventDefault(){},target:get('memory-form')});
- const sent=context.globalThis.sent;assert.equal(sent.mode,'GiB');assert.equal(sent.value,'0.75');assert.equal(sent.revision,'two');assert.equal(vm.runInContext('memoryDirty',context),false);assert.equal(get('memory-fields').disabled,false);
+ const sent=context.sent;assert.equal(sent.mode,'GiB');assert.equal(sent.value,'0.75');assert.equal(sent.revision,'two');assert.equal(vm.runInContext('memoryDirty',context),false);assert.equal(get('memory-fields').disabled,false);
  context.fixture={...s,supported:false,reason:'Service memory limits require a Linux systemd installation.'};vm.runInContext('api=async()=>fixture;',context);await vm.runInContext('loadMemory()',context);assert.equal(get('memory-fields').disabled,true);
  console.log('Memory form: units, bounds, dirty input, conflict revision, save and unsupported platform passed.');
 })().catch(err=>{console.error(err);process.exitCode=1;});

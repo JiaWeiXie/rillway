@@ -827,6 +827,7 @@ let uiBound = false;
 function bindUI() {
   if(uiBound) return;
   uiBound = true;
+  RillwayTheme.bind();
   document.querySelectorAll('[data-locale]').forEach(select => select.addEventListener('change',() => switchLocale(select.value)));
 
   $('memory-mode').addEventListener('change',() => {

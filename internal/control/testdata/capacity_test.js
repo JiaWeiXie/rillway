@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const theme = fs.readFileSync(path.join(__dirname, '..', 'web', 'theme.js'), 'utf8');
 const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
 const elements = new Map();
 function get(id) {
@@ -20,17 +21,19 @@ function get(id) {
 const documentEvents = {};
 const context = vm.createContext({
   document: {
-    readyState: 'loading', getElementById: get, body: {}, hidden: false, activeElement: null,
+    readyState: 'loading', documentElement: { removeAttribute() {}, setAttribute() {} }, getElementById: get, body: {}, hidden: false, activeElement: null,
+    querySelector() { return null; },
     querySelectorAll() { return []; },
     addEventListener(event, callback) { documentEvents[event] = callback; },
   },
   window: { addEventListener() {} },
-  globalThis: { RillwayI18n: { locale: 'en', capture() {}, t(source, values = {}) {
+  RillwayI18n: { locale: 'en', capture() {}, t(source, values = {}) {
     return source.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? key);
-  } } },
+  } },
   sessionStorage: { getItem() { return ''; } }, localStorage: { getItem() { return ''; } },
   location: { hostname: 'example.test', hash: '' }, console, structuredClone,
 });
+vm.runInContext(theme, context, { filename: 'theme.js' });
 vm.runInContext(app, context, { filename: 'app.js' });
 assert.equal(typeof documentEvents.DOMContentLoaded, 'function');
 assert.equal(get('source-capacity-form').events.submit, undefined, 'loading must defer listener registration');

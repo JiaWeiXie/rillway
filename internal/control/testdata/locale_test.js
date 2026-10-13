@@ -7,6 +7,7 @@ const path = require('node:path');
 const web = path.join(__dirname, '..', 'web');
 const catalog = JSON.parse(fs.readFileSync(path.join(web, 'locales.json'), 'utf8'));
 const helper = fs.readFileSync(path.join(web, 'i18n.js'), 'utf8');
+const theme = fs.readFileSync(path.join(web, 'theme.js'), 'utf8');
 const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
 const resourceMessages = [
   ["Resource control is unavailable. Upgrade the installed service to enable it.", "資源控制無法使用；請升級已安裝的服務以啟用此功能。"],
@@ -106,7 +107,7 @@ async function browser(initialLocale, preferences = {}) {
   const glossarySections=glossaryTerms.map(term => ({hidden:false,querySelectorAll:()=>[term]}));
   const documentEvents = {}, documentEventCounts = {}, windowEvents = {};
   const document = {
-    readyState:'loading', documentElement:{lang:'en'}, title:'', hidden:false, activeElement:null,
+    readyState:'loading', documentElement:{lang:'en',removeAttribute(){},setAttribute(){}}, title:'', hidden:false, activeElement:null,
     addEventListener(event,callback){
       documentEvents[event]=callback;
       documentEventCounts[event]=(documentEventCounts[event]||0)+1;
@@ -115,8 +116,13 @@ async function browser(initialLocale, preferences = {}) {
     getElementById:get,
     createTreeWalker(){let index=-1; const nodes=[label,userText,glossaryCopy];return {
       nextNode(){index++;this.currentNode=nodes[index];return index<nodes.length;}};},
+    querySelector(selector){
+      if(selector === 'meta[name="color-scheme"]') return null;
+      return null;
+    },
     querySelectorAll(selector){
       if(selector === '[data-locale]') return selectors;
+      if(selector === 'select[data-theme]') return [];
       if(selector === '[data-glossary-term]') return glossaryTerms;
       if(selector === '.glossary-section') return glossarySections;
       if(selector === '[data-error-source]') return [...elements.values()].filter(node => node.dataset.errorSource);
@@ -141,6 +147,7 @@ async function browser(initialLocale, preferences = {}) {
     fetch:async(url)=>{requests.push(url);return {ok:true,json:async()=>catalog};},
     structuredClone,setTimeout,clearTimeout,setInterval,clearInterval,
     Date:class extends Date { static now(){return now;} }});
+  vm.runInContext(theme,context,{filename:'theme.js'});
   vm.runInContext(helper,context,{filename:'i18n.js'});
   await context.RillwayI18n.ready;
   vm.runInContext(app,context,{filename:'app.js'});
