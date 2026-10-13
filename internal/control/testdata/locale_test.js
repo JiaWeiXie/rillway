@@ -71,8 +71,8 @@ for(const [source,translation] of resourceMessages) {
 function element(id = '') {
   const el = {id, value:'', checked:false, hidden:false, open:false, disabled:false,
     textContent:'', innerHTML:'', dataset:{}, options:[], isConnected:true,
-    attributes:{}, classList:{toggle(){}}, events:{},
-    addEventListener(evt,cb){this.events[evt]=cb;},
+    attributes:{}, classList:{toggle(){}}, events:{}, eventCounts:{},
+    addEventListener(evt,cb){this.events[evt]=cb;this.eventCounts[evt]=(this.eventCounts[evt]||0)+1;},
     getAttribute(name){return this.attributes[name] ?? null;},
     setAttribute(name,value){this.attributes[name] = value;},
     showModal(){this.open=true;},close(){this.open=false;},contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
@@ -104,8 +104,13 @@ async function browser(initialLocale, preferences = {}) {
   const glossaryCopy={textContent:'Set your browser to use Rillway. Only traffic sent through this proxy appears in Connections.',parentElement:{tagName:'P'},isConnected:true};
   glossaryTerms[1].contains=node=>node===glossaryCopy;
   const glossarySections=glossaryTerms.map(term => ({hidden:false,querySelectorAll:()=>[term]}));
+  const documentEvents = {}, documentEventCounts = {}, windowEvents = {};
   const document = {
-    documentElement:{lang:'en'}, title:'',
+    readyState:'loading', documentElement:{lang:'en'}, title:'', hidden:false, activeElement:null,
+    addEventListener(event,callback){
+      documentEvents[event]=callback;
+      documentEventCounts[event]=(documentEventCounts[event]||0)+1;
+    },
     body:{querySelectorAll(){return [input];}},
     getElementById:get,
     createTreeWalker(){let index=-1; const nodes=[label,userText,glossaryCopy];return {
@@ -125,17 +130,38 @@ async function browser(initialLocale, preferences = {}) {
   const setTimeout = (callback, delay) => { const id = nextTimer++; timers.set(id,{callback,at:now+delay}); return id; };
   const clearTimeout = id => timers.delete(id);
   const clock = {async advance(ms) { now += ms; for(const [id,timer] of [...timers]) { if(timer.at <= now) { timers.delete(id); timer.callback(); } } await new Promise(resolve => setImmediate(resolve)); }};
+  const intervals = new Map();
+  const setInterval = (callback,delay) => { const id=nextTimer++;intervals.set(id,{callback,delay});return id; };
+  const clearInterval = id => intervals.delete(id);
+  const requests = [];
   const context=vm.createContext({document,localStorage,sessionStorage,
+    window:{addEventListener(event,callback){windowEvents[event]=callback;}},
+    location:{hostname:'example.test',hash:''}, history:{replaceState(){}},
     navigator:{language:'zh-TW'},NodeFilter:{SHOW_TEXT:4},
-    fetch:async()=>({ok:true,json:async()=>catalog}),structuredClone,setTimeout,clearTimeout,Date:class extends Date { static now(){return now;} }});
-  vm.runInContext(helper,context);
+    fetch:async(url)=>{requests.push(url);return {ok:true,json:async()=>catalog};},
+    structuredClone,setTimeout,clearTimeout,setInterval,clearInterval,
+    Date:class extends Date { static now(){return now;} }});
+  vm.runInContext(helper,context,{filename:'i18n.js'});
   await context.RillwayI18n.ready;
-  vm.runInContext(app.slice(0,app.indexOf("document.querySelectorAll('[data-locale]').forEach")),context);
-  return {context,get,label,userText,localStorage,sessionStorage,document,glossaryTerms,glossarySections,clock,timers};
+  vm.runInContext(app,context,{filename:'app.js'});
+  assert.equal(typeof documentEvents.DOMContentLoaded,'function','loading must register the deferred bootstrap');
+  assert.equal(documentEventCounts.DOMContentLoaded,1);
+  assert.equal(get('login-form').events.submit,undefined,'loading must not bind or sign in yet');
+  assert.deepEqual(requests,['/locales.json'],'app evaluation must not request private data');
+  assert.equal(timers.size,0,'app evaluation must not start polling');
+  assert.equal(intervals.size,0,'app evaluation must not start polling');
+  return {context,get,label,userText,localStorage,sessionStorage,document,glossaryTerms,glossarySections,clock,timers,intervals,documentEvents,windowEvents,requests};
 }
 
 (async()=>{
   const b=await browser();
+  vm.runInContext('bindUI(); bindUI();',b.context);
+  for(const id of ['login-form','memory-form','source-capacity-form','warp-log-form','outbound-form']) {
+    assert.equal(b.get(id).eventCounts.submit,1,'bindUI must register each form exactly once');
+  }
+  assert.equal(b.get('sidebar-language').eventCounts.change,1);
+  assert.deepEqual(b.requests,['/locales.json'],'binding alone must not load private data');
+  assert.equal(b.intervals.size,0,'binding alone must not start polling');
   vm.runInContext("cfg={revision:42}; serverInfo={version:'v9.8.7'}; latestSnapshot={config_revision:43}; renderRevision();",b.context);
   assert.equal(b.get('program-version').textContent,'Program version: v9.8.7');
   assert.equal(b.get('revision').textContent,'43');
@@ -406,6 +432,19 @@ async function browser(initialLocale, preferences = {}) {
   assert.equal(request.options.headers['Accept-Language'],'zh-Hant');
   assert.equal(request.options.headers.Authorization,'Bearer existing-management-token');
   assert.equal(request.options.credentials,'omit');
+  // Closing dialogs clears secrets through the shipped listeners.
+  b.get('out-profile').value='private WireGuard draft';
+  b.get('out-key').value='private Tailscale auth key';
+  b.get('out-upload').value='private selected profile';
+  b.get('outbound-dialog').open=false;
+  b.get('outbound-dialog').events.close();
+  for(const id of ['out-profile','out-key','out-upload']) assert.equal(b.get(id).value,'');
+  assert.equal(vm.runInContext('Object.keys(outboundDrafts).length',b.context),0);
+  b.get('license-value').value='private WARP license';
+  vm.runInContext("licenseID='warp'",b.context);
+  b.get('license-dialog').events.close();
+  assert.equal(b.get('license-value').value,'');
+  assert.equal(vm.runInContext('licenseID',b.context),'');
   // WARP logging 409 conflict handler test:
   // On 409, GET /service/logging/warp must be called immediately, revision updated,
   // user's draft level preserved, form marked dirty, and conflict/retry guidance displayed.
@@ -428,8 +467,6 @@ async function browser(initialLocale, preferences = {}) {
     warpLogDraftRevision = 'rev-stale';
     warpLogDirty = false;
   `, b.context);
-  const submitListener = app.slice(app.indexOf("if($('warp-log-form')) {"), app.indexOf("$('flow-groups').addEventListener"));
-  vm.runInContext(submitListener, b.context);
   await warpForm.events.submit({ preventDefault() {}, target: warpForm });
   assert.equal(warpCalls.length, 2, '409 must trigger an immediate GET');
   assert.equal(warpCalls[0].method, 'PUT');
@@ -447,6 +484,7 @@ async function browser(initialLocale, preferences = {}) {
     assert.equal(vm.runInContext('outboundRefreshSeconds',fixture.context),expected);
   }
   const scheduler = await browser('en',{'rillway-outbound-refresh-seconds':'10'});
+  vm.runInContext('bindUI()',scheduler.context);
   const requests = [];
   scheduler.context.fetch = async url => { requests.push(url); return {ok:true,json:async()=>[]}; };
   vm.runInContext("active=true; navigate('outbounds')",scheduler.context);

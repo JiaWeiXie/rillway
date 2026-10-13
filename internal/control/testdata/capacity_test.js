@@ -2,27 +2,40 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const app = fs.readFileSync('web/app.js', 'utf8');
+const path = require('node:path');
+const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
 const elements = new Map();
 function get(id) {
   if (!elements.has(id)) elements.set(id, {
-    value: '', textContent: '', innerHTML: '', disabled: false, dataset: {}, events: {},
+    value: '', textContent: '', innerHTML: '', disabled: false, dataset: {}, events: {}, eventCounts: {},
     querySelector() { return get('error'); },
     contains() { return false; },
-    addEventListener(event, callback) { this.events[event] = callback; },
+    addEventListener(event, callback) {
+      this.events[event] = callback;
+      this.eventCounts[event] = (this.eventCounts[event] || 0) + 1;
+    },
   });
   return elements.get(id);
 }
+const documentEvents = {};
 const context = vm.createContext({
-  document: { getElementById: get, body: {}, hidden: false, activeElement: null },
+  document: {
+    readyState: 'loading', getElementById: get, body: {}, hidden: false, activeElement: null,
+    querySelectorAll() { return []; },
+    addEventListener(event, callback) { documentEvents[event] = callback; },
+  },
+  window: { addEventListener() {} },
   globalThis: { RillwayI18n: { locale: 'en', capture() {}, t(source, values = {}) {
     return source.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? key);
   } } },
   sessionStorage: { getItem() { return ''; } }, localStorage: { getItem() { return ''; } },
-  location: { hostname: 'example.test' }, console, structuredClone,
+  location: { hostname: 'example.test', hash: '' }, console, structuredClone,
 });
-vm.runInContext(app.slice(0, app.indexOf("document.querySelectorAll('[data-locale]').forEach")), context);
-vm.runInContext(app.slice(app.indexOf('function onCapacityEdit()'), app.indexOf("$('outbound-list').addEventListener")), context);
+vm.runInContext(app, context, { filename: 'app.js' });
+assert.equal(typeof documentEvents.DOMContentLoaded, 'function');
+assert.equal(get('source-capacity-form').events.submit, undefined, 'loading must defer listener registration');
+vm.runInContext('bindUI(); bindUI();', context);
+assert.equal(get('source-capacity-form').eventCounts.submit, 1, 'binding twice must not duplicate mutations');
 vm.runInContext(`active = true; currentPage = 'sources';
   cfg = {revision: 1, connection_limits: {max_connections: 4, max_connections_per_source: 2}};
   capacityDraftRevision = 1; renderConfig = () => {}; poll = async () => {}; notice = () => {};`, context);

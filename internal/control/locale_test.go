@@ -159,7 +159,7 @@ func TestLanguageControlsAndOfflineFonts(t *testing.T) {
 func TestBrowserLocaleStateContract(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("Node is unavailable; run the browser locale contract test where Node is installed")
+		t.Fatalf("Node is required for the browser locale contract: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

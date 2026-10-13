@@ -817,388 +817,401 @@ function switchLocale(locale) {
   for(const id of ['adaptive-candidates','rule-candidates']) { const hint = $(id).querySelector('.hint'); if(hint) hint.textContent = t('Enable an outbound with Internet access first.'); }
   if(active) pollStatuses();
 }
-document.querySelectorAll('[data-locale]').forEach(select => select.addEventListener('change',() => switchLocale(select.value)));
-
-$('memory-mode').addEventListener('change',() => {
-  const s = memoryStatus, mode = $('memory-mode').value;
-  if(s?.supported) {
-    const scale = unit => unit === 'percent' ? s.host_bytes/100 : unit === 'GiB' ? 1073741824 : 1048576;
-    const value = Number($('memory-value').value)*scale(memoryInputMode)/scale(mode);
-    if(Number.isFinite(value) && value > 0) $('memory-value').value = (Math.ceil(value*1000)/1000).toFixed(3);
-  }
-  memoryInputMode = mode; memoryDirty = true; memoryPreview();
-});
-$('memory-value').addEventListener('input',() => { memoryDirty = true; memoryPreview(); });
-$('memory-refresh').addEventListener('click',() => loadMemory(true));
-$('memory-form').addEventListener('submit',async e => {
-  e.preventDefault(); if(memorySaving || !memoryStatus?.supported) return;
-  const body = {mode:$('memory-mode').value,value:$('memory-value').value.trim(),revision:memoryDraftRevision};
-  memorySaving = true; renderMemory(false); clearError(e.target);
-  try {
-    memoryStatus = await api('/service/memory',{method:'PUT',body:JSON.stringify(body)});
-    memoryDraftRevision = memoryStatus.revision; memoryDirty = false;
-    renderMemory(true); notice('Memory limit saved. Applied without restarting the service.');
-  } catch(error) { errorIn(e.target,error); }
-  finally { memorySaving = false; renderMemory(false); }
-});
-$('login-form').addEventListener('submit',async e => { e.preventDefault(); token = $('token').value.trim(); $('login-error').textContent = ''; delete $('login-error').dataset.errorSource; try { await load(); sessionStorage.setItem('rillway-token',token); $('token').value = ''; } catch(error) { displayError($('login-error'),error); } });
-$('logout').addEventListener('click',logout);
-$('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));
-$('flow-search').addEventListener('input',renderFlows);
-$('flow-refresh').value = String(refreshSeconds);
-$('flow-refresh').addEventListener('change',e => {
-  const seconds = Number(e.target.value);
-  if(!refreshChoices.includes(seconds)) return;
-  refreshSeconds = seconds;
-  try { localStorage.setItem('rillway-flow-refresh-seconds',String(seconds)); } catch (_) {}
-  restartFlowPolling(true);
-  restartSourcePolling();
-});
-if($('outbound-refresh')) {
-  $('outbound-refresh').value = String(outboundRefreshSeconds);
-  $('outbound-refresh').addEventListener('change',e => {
-    const seconds = Number(e.target.value);
-    if(!outboundRefreshChoices.includes(seconds)) return;
-    outboundRefreshSeconds = seconds;
-    try { localStorage.setItem('rillway-outbound-refresh-seconds',String(seconds)); } catch (_) {}
-    scheduleOutboundPolling();
-  });
-}
-if($('refresh-outbounds')) {
-  $('refresh-outbounds').addEventListener('click',() => pollStatuses(true));
-}
-if($('warp-log-level')) {
-  $('warp-log-level').addEventListener('change',() => { warpLogDirty = true; });
-}
-if($('warp-log-refresh')) {
-  $('warp-log-refresh').addEventListener('click',() => loadWarpLog(true));
-}
-if($('warp-log-form')) {
-  $('warp-log-form').addEventListener('submit',async e => {
-    e.preventDefault(); if(warpLogSaving || warpLogLoading || !warpLogStatus?.supported) return;
-    const level = $('warp-log-level').value;
-    const body = {level, revision:warpLogDraftRevision};
-    ++warpLogGeneration;
-    warpLogSaving = true; renderWarpLog(false); clearError(e.target);
-    const saveBtn = $('warp-log-save');
-    if(saveBtn) saveBtn.textContent = t('Saving logging level…');
-    try {
-      warpLogStatus = await api('/service/logging/warp',{method:'PUT',body:JSON.stringify(body)});
-      warpLogDraftRevision = warpLogStatus.revision || ''; warpLogDirty = false;
-      renderWarpLog(true); notice('WARP logging level applied. WARP service restarted.');
-    } catch(error) {
-      if(error.status === 409) {
-        const draftLevel = level;
-        try {
-          const latest = await api('/service/logging/warp');
-          warpLogStatus = latest;
-          warpLogDraftRevision = latest.revision || '';
-          renderWarpLog(false);
-          $('warp-log-level').value = draftLevel;
-          warpLogDirty = true;
-        } catch (_) {}
-        displayError(e.target.querySelector('.form-error'), sourceError('WARP logging settings changed elsewhere. Refresh settings before saving.'));
-        notice('Your selected level has been kept. Refresh status to review the current setting, then save again.', true);
-      } else if(error.status === 501) {
-        warpLogStatus = {supported:false, reason:t('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.')};
-        renderWarpLog(false);
-        displayError(e.target.querySelector('.form-error'), sourceError('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.'));
-      } else {
-        errorIn(e.target,error);
-      }
-    } finally {
-      warpLogSaving = false;
-      if(saveBtn) saveBtn.textContent = t('Save logging level');
-      renderWarpLog(false);
-    }
-  });
-}
-$('flow-groups').addEventListener('toggle',e => {
-  if(!e.target.matches('.flow-group')) return;
-  const key = decodeURIComponent(e.target.dataset.groupKey);
-  if(e.target.open) openFlowGroups.add(key); else openFlowGroups.delete(key);
-},true);
-$('glossary-search').addEventListener('input',filterGlossary);
-$('glossary-clear').addEventListener('click',() => { $('glossary-search').value = ''; filterGlossary(); $('glossary-search').focus(); });
-document.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click',() => { navigate(b.dataset.page); history.replaceState(null,'',`#${b.dataset.page}`); }));
-document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',() => $(b.dataset.close).close()));
-$('license-dialog').addEventListener('close',() => { $('license-value').value = ''; licenseID = ''; });
-$('add-outbound').addEventListener('click',() => openOutbound());
-$('out-type').addEventListener('change',changeOutboundType);
-$('add-rule').addEventListener('click',() => openRule());
-$('add-pac-domain').addEventListener('click',() => addPACEntry('domains'));
-$('add-pac-cidr').addEventListener('click',() => addPACEntry('cidrs'));
-for(const kind of ['domains','cidrs']) {
-  $(`pac-${kind}`).addEventListener('change',e => { if(e.target.matches('[data-pac-enabled]')) updatePACSwitch(e.target); if(e.target.matches('[data-pac-value]')) { const row = e.target.closest('.pac-entry'); row.querySelector('[data-pac-enabled]').setAttribute('aria-label',t('Bypass {destination}',{destination:e.target.value})); } });
-  $(`pac-${kind}`).addEventListener('click',e => {
-    const remove = e.target.closest('[data-remove-pac]');
-    if(remove) remove.closest('.pac-entry').remove();
-  });
-}
-$('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
-$('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) { e.preventDefault(); e.stopPropagation(); openRule(-1,flows[Number(b.dataset.flow)]); } });
-$('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
-$('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
-$('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
-$('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = serializePACList('domains'); next.pac.bypass_cidrs = serializePACList('cidrs'); try { await save(next); } catch(error) { notice(error,true); } });
-$('restart-service').addEventListener('click',() => { clearError($('restart-form')); $('restart-dialog').showModal(); });
-$('restart-form').addEventListener('submit',async e => {
-  e.preventDefault(); const button = $('confirm-restart'); button.disabled = true;
-  try {
-    await api('/service/restart',{method:'POST',body:'{}'});
-    $('restart-dialog').close(); active = false; connection(false);
-    notice('Restarting the service. Existing connections will close. Waiting for it to return.');
-    let recovered = false;
-    for(let attempt = 0; attempt < 30; attempt++) {
-      await new Promise(resolve => setTimeout(resolve,1000));
-      try { await load(); recovered = true; break; } catch (_) { active = false; }
-    }
-    if(recovered) notice('Service restarted. The saved configuration is now active.');
-    else notice('The service has not returned at this address. If its address or credentials changed, open the new address and sign in again.',true);
-  } catch(error) { errorIn(e.target,error); }
-  finally { button.disabled = false; }
-});
-$('copy-json').addEventListener('click',() => copyText($('config-json').value));
-$('pac-copy').addEventListener('click',() => copyText($('pac-url').value));
-$('out-upload').addEventListener('change',async () => {
-  const file = $('out-upload').files?.[0], generation = outboundGeneration; if(!file) return;
-  if(file.size > 1048576) { errorIn($('outbound-form'),sourceError('WireGuard configuration must be at most 1 MiB.')); $('out-upload').value = ''; return; }
-  try { const text = await file.text(); if(generation !== outboundGeneration || !$('outbound-dialog').open) return; $('out-profile').value = text; clearError($('outbound-form')); }
-  catch (_) { if(generation === outboundGeneration && $('outbound-dialog').open) errorIn($('outbound-form'),sourceError('Could not read the selected configuration file.')); }
-});
-$('outbound-dialog').addEventListener('close',() => { if(!$('outbound-dialog').open) clearOutboundSecrets(); });
-$('reset-json').addEventListener('click',() => load().catch(e => notice(e,true)));
-$('outbound-form').addEventListener('submit',async e => {
-  e.preventDefault(); const next = cloneConfig(); const original = outboundIndex >= 0 ? next.outbounds[outboundIndex] : {};
-  const o = {...original,id:$('out-id').value.trim(),type:$('out-type').value,enabled:$('out-enabled').checked,public_internet:$('out-public').checked,proxy_address:$('out-address').value.trim(),config_file:$('out-file').value.trim(),hostname:$('out-hostname').value.trim(),state_dir:$('out-state').value.trim(),auth_key_file:$('out-auth').value.trim(),warp_binary:$('out-binary').value.trim(),dns:lines($('out-dns').value)};
-  if(o.type !== 'warp') { o.proxy_address = ''; o.warp_binary = ''; }
-  if(o.type !== 'wireguard' || outboundIndex < 0) o.config_file = '';
-  if(!['tailscale','tsnet'].includes(o.type)) { o.hostname = ''; o.state_dir = ''; o.auth_key_file = ''; }
-  if(outboundIndex >= 0 && o.type === 'tailscale' && (formDefaults.restart_required_outbounds || []).includes(o.id)) { for(const key of ['hostname','state_dir','auth_key_file','dns']) o[key] = original[key]; }
-  try {
-    const body = {revision:cfg.revision,create:outboundIndex < 0,outbound:o};
-    if(o.type === 'wireguard' && $('out-profile').value.trim()) body.wireguard_config = $('out-profile').value;
-    if(o.type === 'tailscale' && $('out-key').value.trim()) body.tailscale_auth_key = $('out-key').value;
-    cfg = await api('/outbounds',{method:'PUT',body:JSON.stringify(body)});
-    clearOutboundSecrets(); $('outbound-dialog').close(); renderConfig(); notice('Configuration saved. New connections will use the updated rules.'); await poll();
-  } catch(error) { errorIn(e.target,error); }
-});
-$('rule-form').addEventListener('submit',async e => {
-  e.preventDefault(); const next = cloneConfig(); const adaptive = $('rule-outbound').value === '@adaptive';
-  const r = {id:$('rule-id').value.trim(),domains:lines($('rule-domains').value),suffixes:lines($('rule-suffixes').value),cidrs:lines($('rule-cidrs').value),family:$('rule-family').value,adaptive,outbound:adaptive ? '' : $('rule-outbound').value,candidates:adaptive ? checked($('rule-candidates')) : []};
-  if(ruleIndex >= 0) next.rules[ruleIndex] = r; else next.rules = [r,...(next.rules || [])];
-  try { await save(next); $('rule-dialog').close(); } catch(error) { errorIn(e.target,error); }
-});
-$('rules').addEventListener('click',async e => {
-  const edit = e.target.closest('[data-edit-rule]'); if(edit) { openRule(Number(edit.dataset.editRule)); return; }
-  const up = e.target.closest('[data-up-rule]'), del = e.target.closest('[data-delete-rule]'); if(!up && !del) return;
-  const next = cloneConfig(); const index = Number(up ? up.dataset.upRule : del.dataset.deleteRule);
-  if(up && index > 0) [next.rules[index-1],next.rules[index]] = [next.rules[index],next.rules[index-1]];
-  if(del) { if(!confirm(t('Delete rule "{name}"?',{name:next.rules[index].id}))) return; next.rules.splice(index,1); }
-  try { await save(next); } catch(error) { notice(error,true); }
-});
-$('refresh-sources').addEventListener('click',() => loadSourceClients(true).catch(e => notice(e,true)));
-$('add-source-rule').addEventListener('click',() => openSourceRule());
-$('source-rules-body').addEventListener('click',async e => {
-  const edit = e.target.closest('[data-edit-source-rule]');
-  if(edit) { openSourceRule(Number(edit.dataset.editSourceRule)); return; }
-  const del = e.target.closest('[data-delete-source-rule]');
-  if(!del) return;
-  const index = Number(del.dataset.deleteSourceRule);
-  const r = cfg.source_access.rules[index];
-  if(!r) return;
-  if(!confirm(t('Delete source rule "{name}"?',{name:r.name || r.id}))) return;
-  const next = cloneConfig();
-  next.source_access.rules.splice(index,1);
-  try { await save(next); } catch(error) { notice(error,true); }
-});
-$('source-clients-body').addEventListener('click',e => {
-  const row = e.target.closest('[data-client-addr]');
-  if(row) selectedSourceAddress = row.dataset.clientAddr;
-  const block = e.target.closest('[data-block-source]');
-  if(block) { openBlockSourceDialog(block.dataset.blockSource); }
-});
-$('refresh-source-rule').addEventListener('click',async () => {
-  try {
-    const id = editingSourceRuleID;
-    cfg = await api('/config');
-    const index = id ? (cfg.source_access?.rules || []).findIndex(rule => rule.id === id) : -1;
-    renderConfig();
-    if(id && index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
-    openSourceRule(index);
-  } catch(error) { errorIn($('source-rule-form'),error); }
-});
-$('source-rule-dialog').addEventListener('close',() => { sourceRuleDraft = null; editingSourceRuleID = ''; });
-$('source-rule-form').addEventListener('submit',async e => {
-  e.preventDefault();
-  if(!sourceRuleDraft) return;
-  const button = e.target.querySelector('button[type="submit"]');
-  if(button.disabled) return;
-  button.disabled = true;
-  try {
-    const next = structuredClone(sourceRuleDraft);
-    const rule = {id:$('src-rule-id').value.trim(),name:$('src-rule-name').value.trim(),action:$('src-rule-action').value,enabled:$('src-rule-enabled').checked,cidrs:lines($('src-rule-cidrs').value),note:$('src-rule-note').value.trim()};
-    if(editingSourceRuleID) {
-      const index = next.source_access.rules.findIndex(r => r.id === editingSourceRuleID);
-      if(index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
-      next.source_access.rules[index] = rule;
-    } else { next.source_access.rules.push(rule); }
-    await save(next);
-    $('source-rule-dialog').close();
-  } catch(error) { errorIn(e.target,error); }
-  finally { button.disabled = false; }
-});
-$('block-source-form').addEventListener('submit',async e => {
-  e.preventDefault();
-  if(!blockSourceContext) return;
-  const btn = $('confirm-block-source');
-  if(btn.disabled) return;
-  btn.disabled = true;
-  clearError(e.target);
-  const {address,revision} = blockSourceContext;
-  try {
-    const res = await api('/source-clients/block',{method:'POST',body:JSON.stringify({revision,address})});
-    cfg = res.config;
-    selectedSourceAddress = address;
-    $('block-source-dialog').close();
-    notice({source:'Blocked {address}; disconnected {count} connection(s).',values:{address,count:res.disconnected}});
-    renderConfig();
-    await loadSourceClients(true);
-    focusSource(address);
-  } catch(error) { errorIn(e.target,error); }
-  finally { btn.disabled = false; }
-});
 function onCapacityEdit() {
   if(!capacityDirty) {
     capacityDirty = true;
     capacityDraftRevision = cfg?.revision;
   }
 }
-$('capacity-max-total').addEventListener('input', onCapacityEdit);
-$('capacity-max-per-source').addEventListener('input', onCapacityEdit);
-$('capacity-max-total').addEventListener('change', onCapacityEdit);
-$('capacity-max-per-source').addEventListener('change', onCapacityEdit);
-$('source-capacity-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  if(capacitySaving) return;
-  clearError(e.target);
-  const totalVal = Number($('capacity-max-total').value);
-  const perSourceVal = Number($('capacity-max-per-source').value);
-  try {
-    if(!Number.isInteger(totalVal) || totalVal < 1 || totalVal > 65536) {
-      throw sourceError('Total connection limit must be between 1 and 65536.');
+let uiBound = false;
+function bindUI() {
+  if(uiBound) return;
+  uiBound = true;
+  document.querySelectorAll('[data-locale]').forEach(select => select.addEventListener('change',() => switchLocale(select.value)));
+
+  $('memory-mode').addEventListener('change',() => {
+    const s = memoryStatus, mode = $('memory-mode').value;
+    if(s?.supported) {
+      const scale = unit => unit === 'percent' ? s.host_bytes/100 : unit === 'GiB' ? 1073741824 : 1048576;
+      const value = Number($('memory-value').value)*scale(memoryInputMode)/scale(mode);
+      if(Number.isFinite(value) && value > 0) $('memory-value').value = (Math.ceil(value*1000)/1000).toFixed(3);
     }
-    if(!Number.isInteger(perSourceVal) || perSourceVal < 1 || perSourceVal > 65536) {
-      throw sourceError('Per-source connection limit must be between 1 and 65536.');
-    }
-    if(perSourceVal > totalVal) {
-      throw sourceError('Per-source connection limit must not exceed total connection limit.');
-    }
-    capacitySaving = true;
-    renderCapacity(false);
+    memoryInputMode = mode; memoryDirty = true; memoryPreview();
+  });
+  $('memory-value').addEventListener('input',() => { memoryDirty = true; memoryPreview(); });
+  $('memory-refresh').addEventListener('click',() => loadMemory(true));
+  $('memory-form').addEventListener('submit',async e => {
+    e.preventDefault(); if(memorySaving || !memoryStatus?.supported) return;
+    const body = {mode:$('memory-mode').value,value:$('memory-value').value.trim(),revision:memoryDraftRevision};
+    memorySaving = true; renderMemory(false); clearError(e.target);
+    try {
+      memoryStatus = await api('/service/memory',{method:'PUT',body:JSON.stringify(body)});
+      memoryDraftRevision = memoryStatus.revision; memoryDirty = false;
+      renderMemory(true); notice('Memory limit saved. Applied without restarting the service.');
+    } catch(error) { errorIn(e.target,error); }
+    finally { memorySaving = false; renderMemory(false); }
+  });
+  $('login-form').addEventListener('submit',async e => { e.preventDefault(); token = $('token').value.trim(); $('login-error').textContent = ''; delete $('login-error').dataset.errorSource; try { await load(); sessionStorage.setItem('rillway-token',token); $('token').value = ''; } catch(error) { displayError($('login-error'),error); } });
+  $('logout').addEventListener('click',logout);
+  $('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));
+  $('flow-search').addEventListener('input',renderFlows);
+  $('flow-refresh').value = String(refreshSeconds);
+  $('flow-refresh').addEventListener('change',e => {
+    const seconds = Number(e.target.value);
+    if(!refreshChoices.includes(seconds)) return;
+    refreshSeconds = seconds;
+    try { localStorage.setItem('rillway-flow-refresh-seconds',String(seconds)); } catch (_) {}
+    restartFlowPolling(true);
+    restartSourcePolling();
+  });
+  if($('outbound-refresh')) {
+    $('outbound-refresh').value = String(outboundRefreshSeconds);
+    $('outbound-refresh').addEventListener('change',e => {
+      const seconds = Number(e.target.value);
+      if(!outboundRefreshChoices.includes(seconds)) return;
+      outboundRefreshSeconds = seconds;
+      try { localStorage.setItem('rillway-outbound-refresh-seconds',String(seconds)); } catch (_) {}
+      scheduleOutboundPolling();
+    });
+  }
+  if($('refresh-outbounds')) {
+    $('refresh-outbounds').addEventListener('click',() => pollStatuses(true));
+  }
+  if($('warp-log-level')) {
+    $('warp-log-level').addEventListener('change',() => { warpLogDirty = true; });
+  }
+  if($('warp-log-refresh')) {
+    $('warp-log-refresh').addEventListener('click',() => loadWarpLog(true));
+  }
+  if($('warp-log-form')) {
+    $('warp-log-form').addEventListener('submit',async e => {
+      e.preventDefault(); if(warpLogSaving || warpLogLoading || !warpLogStatus?.supported) return;
+      const level = $('warp-log-level').value;
+      const body = {level, revision:warpLogDraftRevision};
+      ++warpLogGeneration;
+      warpLogSaving = true; renderWarpLog(false); clearError(e.target);
+      const saveBtn = $('warp-log-save');
+      if(saveBtn) saveBtn.textContent = t('Saving logging level…');
+      try {
+        warpLogStatus = await api('/service/logging/warp',{method:'PUT',body:JSON.stringify(body)});
+        warpLogDraftRevision = warpLogStatus.revision || ''; warpLogDirty = false;
+        renderWarpLog(true); notice('WARP logging level applied. WARP service restarted.');
+      } catch(error) {
+        if(error.status === 409) {
+          const draftLevel = level;
+          try {
+            const latest = await api('/service/logging/warp');
+            warpLogStatus = latest;
+            warpLogDraftRevision = latest.revision || '';
+            renderWarpLog(false);
+            $('warp-log-level').value = draftLevel;
+            warpLogDirty = true;
+          } catch (_) {}
+          displayError(e.target.querySelector('.form-error'), sourceError('WARP logging settings changed elsewhere. Refresh settings before saving.'));
+          notice('Your selected level has been kept. Refresh status to review the current setting, then save again.', true);
+        } else if(error.status === 501) {
+          warpLogStatus = {supported:false, reason:t('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.')};
+          renderWarpLog(false);
+          displayError(e.target.querySelector('.form-error'), sourceError('WARP system logging requires an upgraded Linux service. Update the binary and run sudo rillway service restart.'));
+        } else {
+          errorIn(e.target,error);
+        }
+      } finally {
+        warpLogSaving = false;
+        if(saveBtn) saveBtn.textContent = t('Save logging level');
+        renderWarpLog(false);
+      }
+    });
+  }
+  $('flow-groups').addEventListener('toggle',e => {
+    if(!e.target.matches('.flow-group')) return;
+    const key = decodeURIComponent(e.target.dataset.groupKey);
+    if(e.target.open) openFlowGroups.add(key); else openFlowGroups.delete(key);
+  },true);
+  $('glossary-search').addEventListener('input',filterGlossary);
+  $('glossary-clear').addEventListener('click',() => { $('glossary-search').value = ''; filterGlossary(); $('glossary-search').focus(); });
+  document.querySelectorAll('[data-page]').forEach(b => b.addEventListener('click',() => { navigate(b.dataset.page); history.replaceState(null,'',`#${b.dataset.page}`); }));
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click',() => $(b.dataset.close).close()));
+  $('license-dialog').addEventListener('close',() => { $('license-value').value = ''; licenseID = ''; });
+  $('add-outbound').addEventListener('click',() => openOutbound());
+  $('out-type').addEventListener('change',changeOutboundType);
+  $('add-rule').addEventListener('click',() => openRule());
+  $('add-pac-domain').addEventListener('click',() => addPACEntry('domains'));
+  $('add-pac-cidr').addEventListener('click',() => addPACEntry('cidrs'));
+  for(const kind of ['domains','cidrs']) {
+    $(`pac-${kind}`).addEventListener('change',e => { if(e.target.matches('[data-pac-enabled]')) updatePACSwitch(e.target); if(e.target.matches('[data-pac-value]')) { const row = e.target.closest('.pac-entry'); row.querySelector('[data-pac-enabled]').setAttribute('aria-label',t('Bypass {destination}',{destination:e.target.value})); } });
+    $(`pac-${kind}`).addEventListener('click',e => {
+      const remove = e.target.closest('[data-remove-pac]');
+      if(remove) remove.closest('.pac-entry').remove();
+    });
+  }
+  $('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
+  $('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) { e.preventDefault(); e.stopPropagation(); openRule(-1,flows[Number(b.dataset.flow)]); } });
+  $('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
+  $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
+  $('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
+  $('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = serializePACList('domains'); next.pac.bypass_cidrs = serializePACList('cidrs'); try { await save(next); } catch(error) { notice(error,true); } });
+  $('restart-service').addEventListener('click',() => { clearError($('restart-form')); $('restart-dialog').showModal(); });
+  $('restart-form').addEventListener('submit',async e => {
+    e.preventDefault(); const button = $('confirm-restart'); button.disabled = true;
+    try {
+      await api('/service/restart',{method:'POST',body:'{}'});
+      $('restart-dialog').close(); active = false; connection(false);
+      notice('Restarting the service. Existing connections will close. Waiting for it to return.');
+      let recovered = false;
+      for(let attempt = 0; attempt < 30; attempt++) {
+        await new Promise(resolve => setTimeout(resolve,1000));
+        try { await load(); recovered = true; break; } catch (_) { active = false; }
+      }
+      if(recovered) notice('Service restarted. The saved configuration is now active.');
+      else notice('The service has not returned at this address. If its address or credentials changed, open the new address and sign in again.',true);
+    } catch(error) { errorIn(e.target,error); }
+    finally { button.disabled = false; }
+  });
+  $('copy-json').addEventListener('click',() => copyText($('config-json').value));
+  $('pac-copy').addEventListener('click',() => copyText($('pac-url').value));
+  $('out-upload').addEventListener('change',async () => {
+    const file = $('out-upload').files?.[0], generation = outboundGeneration; if(!file) return;
+    if(file.size > 1048576) { errorIn($('outbound-form'),sourceError('WireGuard configuration must be at most 1 MiB.')); $('out-upload').value = ''; return; }
+    try { const text = await file.text(); if(generation !== outboundGeneration || !$('outbound-dialog').open) return; $('out-profile').value = text; clearError($('outbound-form')); }
+    catch (_) { if(generation === outboundGeneration && $('outbound-dialog').open) errorIn($('outbound-form'),sourceError('Could not read the selected configuration file.')); }
+  });
+  $('outbound-dialog').addEventListener('close',() => { if(!$('outbound-dialog').open) clearOutboundSecrets(); });
+  $('reset-json').addEventListener('click',() => load().catch(e => notice(e,true)));
+  $('outbound-form').addEventListener('submit',async e => {
+    e.preventDefault(); const next = cloneConfig(); const original = outboundIndex >= 0 ? next.outbounds[outboundIndex] : {};
+    const o = {...original,id:$('out-id').value.trim(),type:$('out-type').value,enabled:$('out-enabled').checked,public_internet:$('out-public').checked,proxy_address:$('out-address').value.trim(),config_file:$('out-file').value.trim(),hostname:$('out-hostname').value.trim(),state_dir:$('out-state').value.trim(),auth_key_file:$('out-auth').value.trim(),warp_binary:$('out-binary').value.trim(),dns:lines($('out-dns').value)};
+    if(o.type !== 'warp') { o.proxy_address = ''; o.warp_binary = ''; }
+    if(o.type !== 'wireguard' || outboundIndex < 0) o.config_file = '';
+    if(!['tailscale','tsnet'].includes(o.type)) { o.hostname = ''; o.state_dir = ''; o.auth_key_file = ''; }
+    if(outboundIndex >= 0 && o.type === 'tailscale' && (formDefaults.restart_required_outbounds || []).includes(o.id)) { for(const key of ['hostname','state_dir','auth_key_file','dns']) o[key] = original[key]; }
+    try {
+      const body = {revision:cfg.revision,create:outboundIndex < 0,outbound:o};
+      if(o.type === 'wireguard' && $('out-profile').value.trim()) body.wireguard_config = $('out-profile').value;
+      if(o.type === 'tailscale' && $('out-key').value.trim()) body.tailscale_auth_key = $('out-key').value;
+      cfg = await api('/outbounds',{method:'PUT',body:JSON.stringify(body)});
+      clearOutboundSecrets(); $('outbound-dialog').close(); renderConfig(); notice('Configuration saved. New connections will use the updated rules.'); await poll();
+    } catch(error) { errorIn(e.target,error); }
+  });
+  $('rule-form').addEventListener('submit',async e => {
+    e.preventDefault(); const next = cloneConfig(); const adaptive = $('rule-outbound').value === '@adaptive';
+    const r = {id:$('rule-id').value.trim(),domains:lines($('rule-domains').value),suffixes:lines($('rule-suffixes').value),cidrs:lines($('rule-cidrs').value),family:$('rule-family').value,adaptive,outbound:adaptive ? '' : $('rule-outbound').value,candidates:adaptive ? checked($('rule-candidates')) : []};
+    if(ruleIndex >= 0) next.rules[ruleIndex] = r; else next.rules = [r,...(next.rules || [])];
+    try { await save(next); $('rule-dialog').close(); } catch(error) { errorIn(e.target,error); }
+  });
+  $('rules').addEventListener('click',async e => {
+    const edit = e.target.closest('[data-edit-rule]'); if(edit) { openRule(Number(edit.dataset.editRule)); return; }
+    const up = e.target.closest('[data-up-rule]'), del = e.target.closest('[data-delete-rule]'); if(!up && !del) return;
+    const next = cloneConfig(); const index = Number(up ? up.dataset.upRule : del.dataset.deleteRule);
+    if(up && index > 0) [next.rules[index-1],next.rules[index]] = [next.rules[index],next.rules[index-1]];
+    if(del) { if(!confirm(t('Delete rule "{name}"?',{name:next.rules[index].id}))) return; next.rules.splice(index,1); }
+    try { await save(next); } catch(error) { notice(error,true); }
+  });
+  $('refresh-sources').addEventListener('click',() => loadSourceClients(true).catch(e => notice(e,true)));
+  $('add-source-rule').addEventListener('click',() => openSourceRule());
+  $('source-rules-body').addEventListener('click',async e => {
+    const edit = e.target.closest('[data-edit-source-rule]');
+    if(edit) { openSourceRule(Number(edit.dataset.editSourceRule)); return; }
+    const del = e.target.closest('[data-delete-source-rule]');
+    if(!del) return;
+    const index = Number(del.dataset.deleteSourceRule);
+    const r = cfg.source_access.rules[index];
+    if(!r) return;
+    if(!confirm(t('Delete source rule "{name}"?',{name:r.name || r.id}))) return;
     const next = cloneConfig();
-    if(capacityDraftRevision !== null && capacityDraftRevision !== undefined) {
-      next.revision = capacityDraftRevision;
+    next.source_access.rules.splice(index,1);
+    try { await save(next); } catch(error) { notice(error,true); }
+  });
+  $('source-clients-body').addEventListener('click',e => {
+    const row = e.target.closest('[data-client-addr]');
+    if(row) selectedSourceAddress = row.dataset.clientAddr;
+    const block = e.target.closest('[data-block-source]');
+    if(block) { openBlockSourceDialog(block.dataset.blockSource); }
+  });
+  $('refresh-source-rule').addEventListener('click',async () => {
+    try {
+      const id = editingSourceRuleID;
+      cfg = await api('/config');
+      const index = id ? (cfg.source_access?.rules || []).findIndex(rule => rule.id === id) : -1;
+      renderConfig();
+      if(id && index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
+      openSourceRule(index);
+    } catch(error) { errorIn($('source-rule-form'),error); }
+  });
+  $('source-rule-dialog').addEventListener('close',() => { sourceRuleDraft = null; editingSourceRuleID = ''; });
+  $('source-rule-form').addEventListener('submit',async e => {
+    e.preventDefault();
+    if(!sourceRuleDraft) return;
+    const button = e.target.querySelector('button[type="submit"]');
+    if(button.disabled) return;
+    button.disabled = true;
+    try {
+      const next = structuredClone(sourceRuleDraft);
+      const rule = {id:$('src-rule-id').value.trim(),name:$('src-rule-name').value.trim(),action:$('src-rule-action').value,enabled:$('src-rule-enabled').checked,cidrs:lines($('src-rule-cidrs').value),note:$('src-rule-note').value.trim()};
+      if(editingSourceRuleID) {
+        const index = next.source_access.rules.findIndex(r => r.id === editingSourceRuleID);
+        if(index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
+        next.source_access.rules[index] = rule;
+      } else { next.source_access.rules.push(rule); }
+      await save(next);
+      $('source-rule-dialog').close();
+    } catch(error) { errorIn(e.target,error); }
+    finally { button.disabled = false; }
+  });
+  $('block-source-form').addEventListener('submit',async e => {
+    e.preventDefault();
+    if(!blockSourceContext) return;
+    const btn = $('confirm-block-source');
+    if(btn.disabled) return;
+    btn.disabled = true;
+    clearError(e.target);
+    const {address,revision} = blockSourceContext;
+    try {
+      const res = await api('/source-clients/block',{method:'POST',body:JSON.stringify({revision,address})});
+      cfg = res.config;
+      selectedSourceAddress = address;
+      $('block-source-dialog').close();
+      notice({source:'Blocked {address}; disconnected {count} connection(s).',values:{address,count:res.disconnected}});
+      renderConfig();
+      await loadSourceClients(true);
+      focusSource(address);
+    } catch(error) { errorIn(e.target,error); }
+    finally { btn.disabled = false; }
+  });
+  $('capacity-max-total').addEventListener('input', onCapacityEdit);
+  $('capacity-max-per-source').addEventListener('input', onCapacityEdit);
+  $('capacity-max-total').addEventListener('change', onCapacityEdit);
+  $('capacity-max-per-source').addEventListener('change', onCapacityEdit);
+  $('source-capacity-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    if(capacitySaving) return;
+    clearError(e.target);
+    const totalVal = Number($('capacity-max-total').value);
+    const perSourceVal = Number($('capacity-max-per-source').value);
+    try {
+      if(!Number.isInteger(totalVal) || totalVal < 1 || totalVal > 65536) {
+        throw sourceError('Total connection limit must be between 1 and 65536.');
+      }
+      if(!Number.isInteger(perSourceVal) || perSourceVal < 1 || perSourceVal > 65536) {
+        throw sourceError('Per-source connection limit must be between 1 and 65536.');
+      }
+      if(perSourceVal > totalVal) {
+        throw sourceError('Per-source connection limit must not exceed total connection limit.');
+      }
+      capacitySaving = true;
+      renderCapacity(false);
+      const next = cloneConfig();
+      if(capacityDraftRevision !== null && capacityDraftRevision !== undefined) {
+        next.revision = capacityDraftRevision;
+      }
+      next.connection_limits = {
+        max_connections: totalVal,
+        max_connections_per_source: perSourceVal,
+      };
+      cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
+      capacityDirty = false;
+      capacityDraftRevision = cfg.revision;
+      renderConfig();
+      await poll();
+      if(currentPage === 'sources') await loadSourceClients(true);
+      notice('Connection capacity saved. New connections will use the updated limits.');
+    } catch(error) {
+      errorIn(e.target, error);
+    } finally {
+      capacitySaving = false;
+      renderCapacity(false);
     }
-    next.connection_limits = {
-      max_connections: totalVal,
-      max_connections_per_source: perSourceVal,
-    };
-    cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
-    capacityDirty = false;
-    capacityDraftRevision = cfg.revision;
-    renderConfig();
-    await poll();
-    if(currentPage === 'sources') await loadSourceClients(true);
-    notice('Connection capacity saved. New connections will use the updated limits.');
-  } catch(error) {
-    errorIn(e.target, error);
-  } finally {
-    capacitySaving = false;
-    renderCapacity(false);
-  }
-});
-$('capacity-reload').addEventListener('click', async () => {
-  if(capacitySaving) return;
-  clearError($('source-capacity-form'));
-  try {
-    cfg = await api('/config');
-    capacityDirty = false;
-    capacityDraftRevision = cfg.revision;
-    renderConfig();
-    if(currentPage === 'sources') await loadSourceClients(true);
-    notice('Connection limits reloaded.');
-  } catch(error) {
-    errorIn($('source-capacity-form'), error);
-  }
-});
-$('outbound-list').addEventListener('click',async e => {
-  const edit = e.target.closest('[data-edit-outbound]'); if(edit) { openOutbound(Number(edit.dataset.editOutbound)); return; }
-  const license = e.target.closest('[data-license]'); if(license) { licenseID = license.dataset.license; $('license-value').value = ''; clearError($('license-form')); $('license-dialog').showModal(); return; }
-  const del = e.target.closest('[data-delete-outbound]');
-  if(del) { openDeleteOutbound(Number(del.dataset.deleteOutbound)); return; }
-  const action = e.target.closest('[data-action]'); if(!action) return;
-  const key = `${action.dataset.id}/${action.dataset.action}`;
-  if(pendingOutboundActions.has(key)) return;
-  pendingOutboundActions.add(key);
-  action.disabled = true;
-  try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); }
-  catch(error) { notice(error,true); }
-  finally { pendingOutboundActions.delete(key); renderOutbounds(); }
-});
-$('delete-outbound-dialog').addEventListener('close',() => { deletingOutbound = null; });
-$('delete-outbound-form').addEventListener('submit',async e => {
-  e.preventDefault(); if(!deletingOutbound) return;
-  const {id,config:c} = deletingOutbound, button = e.target.querySelector('button.primary');
-  button.disabled = true;
-  try {
-    cfg = await api(`/outbounds/${encodeURIComponent(id)}`,{method:'DELETE',body:JSON.stringify({revision:c.revision,replacement:$('delete-replacement-section').hidden ? '' : $('delete-replacement').value})});
-    renderConfig(); $('delete-outbound-dialog').close(); notice('Outbound deleted. Referenced routes now use the replacement you selected.'); await poll();
-  } catch(error) { errorIn(e.target,error); }
-  finally { button.disabled = false; }
-});
-$('docker-form').addEventListener('submit',async e => {
-  e.preventDefault();
-  try {
-    dockerBundle = await api('/integrations/docker',{method:'POST',body:JSON.stringify({proxy_url:$('docker-proxy-url').value.trim(),no_proxy:$('docker-no-proxy').value})});
-    $('docker-error').textContent = ''; delete $('docker-error').dataset.errorSource;
-    renderDockerExport(); notice('Docker settings generated. Apply them in Docker to enable Proxy connections.');
-  } catch(error) { displayError($('docker-error'),error); }
-});
-$('docker-target').addEventListener('change',renderDockerExport);
-$('docker-copy').addEventListener('click',async () => {
-  if(!$('docker-config').value) return;
-  try { await navigator.clipboard.writeText($('docker-config').value); notice('Configuration copied.'); }
-  catch(_) { notice(sourceError('Could not copy. Select and copy the configuration manually.'),true); }
-});
-$('docker-download').addEventListener('click',() => {
-  if(!$('docker-config').value) return;
-  const names = {daemon:'daemon.json',client:'config.json',env:'rillway-docker.env',compose:'compose.yaml'};
-  const blob = new Blob([$('docker-config').value],{type:'text/plain;charset=utf-8'});
-  const url = URL.createObjectURL(blob), link = document.createElement('a');
-  link.href = url; link.download = names[$('docker-target').value]; link.click(); URL.revokeObjectURL(url);
-});
-$('license-form').addEventListener('submit',async e => {
-  e.preventDefault(); const value = $('license-value').value.trim(); $('license-value').value = '';
-  try { await api(`/outbounds/${encodeURIComponent(licenseID)}/license`,{method:'POST',body:JSON.stringify({value})}); $('license-dialog').close(); notice('WARP+ license key applied.'); await pollStatuses(); } catch(error) { errorIn(e.target,error); }
-});
-navigate(location.hash.slice(1));
-window.addEventListener('hashchange',() => navigate(location.hash.slice(1)));
-i18n.ready.then(() => switchLocale(i18n.locale));
-restartFlowPolling();
-if(token) load().catch(e => { displayError($('login-error'),e); logout(); });
-document.addEventListener('visibilitychange',() => {
-  restartSourcePolling();
-  if(!document.hidden && currentPage === 'sources') loadSourceClients();
-  if(document.hidden) {
-    stopOutboundPolling();
-  } else if(active && currentPage === 'outbounds' && outboundRefreshSeconds !== 0) {
-    const elapsed = Date.now() - outboundLastLoadedAt;
-    const intervalMs = outboundRefreshSeconds * 1000;
-    if(elapsed >= intervalMs) {
-      pollStatuses(false);
-    } else {
-      scheduleOutboundPolling(intervalMs - elapsed);
+  });
+  $('capacity-reload').addEventListener('click', async () => {
+    if(capacitySaving) return;
+    clearError($('source-capacity-form'));
+    try {
+      cfg = await api('/config');
+      capacityDirty = false;
+      capacityDraftRevision = cfg.revision;
+      renderConfig();
+      if(currentPage === 'sources') await loadSourceClients(true);
+      notice('Connection limits reloaded.');
+    } catch(error) {
+      errorIn($('source-capacity-form'), error);
     }
-  }
-});
+  });
+  $('outbound-list').addEventListener('click',async e => {
+    const edit = e.target.closest('[data-edit-outbound]'); if(edit) { openOutbound(Number(edit.dataset.editOutbound)); return; }
+    const license = e.target.closest('[data-license]'); if(license) { licenseID = license.dataset.license; $('license-value').value = ''; clearError($('license-form')); $('license-dialog').showModal(); return; }
+    const del = e.target.closest('[data-delete-outbound]');
+    if(del) { openDeleteOutbound(Number(del.dataset.deleteOutbound)); return; }
+    const action = e.target.closest('[data-action]'); if(!action) return;
+    const key = `${action.dataset.id}/${action.dataset.action}`;
+    if(pendingOutboundActions.has(key)) return;
+    pendingOutboundActions.add(key);
+    action.disabled = true;
+    try { await api(`/outbounds/${encodeURIComponent(action.dataset.id)}/${action.dataset.action}`,{method:'POST',body:'{}'}); notice('Outbound action completed.'); await pollStatuses(); }
+    catch(error) { notice(error,true); }
+    finally { pendingOutboundActions.delete(key); renderOutbounds(); }
+  });
+  $('delete-outbound-dialog').addEventListener('close',() => { deletingOutbound = null; });
+  $('delete-outbound-form').addEventListener('submit',async e => {
+    e.preventDefault(); if(!deletingOutbound) return;
+    const {id,config:c} = deletingOutbound, button = e.target.querySelector('button.primary');
+    button.disabled = true;
+    try {
+      cfg = await api(`/outbounds/${encodeURIComponent(id)}`,{method:'DELETE',body:JSON.stringify({revision:c.revision,replacement:$('delete-replacement-section').hidden ? '' : $('delete-replacement').value})});
+      renderConfig(); $('delete-outbound-dialog').close(); notice('Outbound deleted. Referenced routes now use the replacement you selected.'); await poll();
+    } catch(error) { errorIn(e.target,error); }
+    finally { button.disabled = false; }
+  });
+  $('docker-form').addEventListener('submit',async e => {
+    e.preventDefault();
+    try {
+      dockerBundle = await api('/integrations/docker',{method:'POST',body:JSON.stringify({proxy_url:$('docker-proxy-url').value.trim(),no_proxy:$('docker-no-proxy').value})});
+      $('docker-error').textContent = ''; delete $('docker-error').dataset.errorSource;
+      renderDockerExport(); notice('Docker settings generated. Apply them in Docker to enable Proxy connections.');
+    } catch(error) { displayError($('docker-error'),error); }
+  });
+  $('docker-target').addEventListener('change',renderDockerExport);
+  $('docker-copy').addEventListener('click',async () => {
+    if(!$('docker-config').value) return;
+    try { await navigator.clipboard.writeText($('docker-config').value); notice('Configuration copied.'); }
+    catch(_) { notice(sourceError('Could not copy. Select and copy the configuration manually.'),true); }
+  });
+  $('docker-download').addEventListener('click',() => {
+    if(!$('docker-config').value) return;
+    const names = {daemon:'daemon.json',client:'config.json',env:'rillway-docker.env',compose:'compose.yaml'};
+    const blob = new Blob([$('docker-config').value],{type:'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = names[$('docker-target').value]; link.click(); URL.revokeObjectURL(url);
+  });
+  $('license-form').addEventListener('submit',async e => {
+    e.preventDefault(); const value = $('license-value').value.trim(); $('license-value').value = '';
+    try { await api(`/outbounds/${encodeURIComponent(licenseID)}/license`,{method:'POST',body:JSON.stringify({value})}); $('license-dialog').close(); notice('WARP+ license key applied.'); await pollStatuses(); } catch(error) { errorIn(e.target,error); }
+  });
+  window.addEventListener('hashchange',() => navigate(location.hash.slice(1)));
+  document.addEventListener('visibilitychange',() => {
+    restartSourcePolling();
+    if(!document.hidden && currentPage === 'sources') loadSourceClients();
+    if(document.hidden) {
+      stopOutboundPolling();
+    } else if(active && currentPage === 'outbounds' && outboundRefreshSeconds !== 0) {
+      const elapsed = Date.now() - outboundLastLoadedAt;
+      const intervalMs = outboundRefreshSeconds * 1000;
+      if(elapsed >= intervalMs) {
+        pollStatuses(false);
+      } else {
+        scheduleOutboundPolling(intervalMs - elapsed);
+      }
+    }
+  });
+}
+function startUI() {
+  bindUI();
+  navigate(location.hash.slice(1));
+  i18n.ready.then(() => switchLocale(i18n.locale));
+  restartFlowPolling();
+  if(token) load().catch(e => { displayError($('login-error'),e); logout(); });
+}
+if(document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded',startUI,{once:true});
+} else {
+  startUI();
+}
