@@ -102,6 +102,8 @@ type Engine struct {
 	cfg               config.Config
 	providers         map[string]outbound.Provider
 	matchers          []compiledRouting
+	groups            map[string]*groupRuntime
+	health            map[string]*healthState
 	flows             map[uint64]*flowState
 	destinations      map[string]*adaptiveState
 	sequence          atomic.Uint64
@@ -147,6 +149,24 @@ func (e *Engine) Update(cfg config.Config, providers map[string]outbound.Provide
 	e.providers = make(map[string]outbound.Provider, len(providers))
 	for id, p := range providers {
 		e.providers[id] = p
+	}
+	groups := make(map[string]*groupRuntime, len(e.cfg.OutboundGroups))
+	for _, g := range e.cfg.OutboundGroups {
+		old := e.groups[g.ID]
+		if old != nil && old.cfg.Type == g.Type && old.cfg.Enabled == g.Enabled && old.cfg.Strategy == g.Strategy && old.cfg.Key == g.Key && old.cfg.Selected == g.Selected && slices.Equal(old.cfg.Members, g.Members) {
+			groups[g.ID] = old
+		} else {
+			groups[g.ID] = &groupRuntime{cfg: g}
+		}
+	}
+	e.groups = groups
+	if e.health == nil {
+		e.health = make(map[string]*healthState)
+	}
+	for id := range e.health {
+		if e.providers[id] == nil || !sameProvider(previous[id], e.providers[id]) {
+			delete(e.health, id)
+		}
 	}
 	sets := make(map[string]config.RuleSet, len(e.cfg.RuleSets))
 	for _, set := range e.cfg.RuleSets {
@@ -330,6 +350,13 @@ func (e *Engine) protectRoute(r route, host string) (route, error) {
 	if r.family == "" {
 		r.family = "auto"
 	}
+	if g := e.groups[r.outbound]; g != nil {
+		if !g.cfg.Enabled {
+			return r, fmt.Errorf("outbound group %q is unavailable; no fallback configured", r.outbound)
+		}
+		// Private protection is applied to each member before attempts are ordered.
+		return r, nil
+	}
 	if privateHost(host, e.cfg.PAC) && (e.warpOutbound(r.outbound) || e.publicWireGuard(r.outbound) && !r.fixed) {
 		return r, fmt.Errorf("private destination %q cannot use public outbound %q", host, r.outbound)
 	}
@@ -392,10 +419,41 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		r.outbound = e.chooseLocked(state)
 		state.lastUsed = e.now()
 	}
-	p := e.providers[r.outbound]
+	single := [1]string{r.outbound}
+	order := single[:]
+	if g := e.groups[r.outbound]; g != nil {
+		order, err = e.groupAttemptOrderLocked(g, t, r.fixed, e.now())
+		if err != nil {
+			e.mu.Unlock()
+			return nil, err
+		}
+	}
+	// Update replaces this map rather than mutating it. All attempts use the
+	// same routing/provider snapshot even if configuration changes mid-dial.
+	providers := e.providers
 	started := e.now()
 	e.mu.Unlock()
-	conn, err := p.DialContext(ctx, network, address)
+	var conn net.Conn
+	for _, id := range order {
+		if err = ctx.Err(); err != nil {
+			break
+		}
+		p := providers[id]
+		r.outbound = id
+		conn, err = p.DialContext(ctx, network, address)
+		e.mu.Lock()
+		if e.generation == generation || sameProvider(p, e.providers[id]) {
+			e.recordHealthLocked(id, err)
+		}
+		e.mu.Unlock()
+		if err == nil {
+			break
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+			break
+		}
+	}
 	elapsed := e.now().Sub(started)
 	if err == nil && conn != nil && policy != nil {
 		blocked, internal := policy(conn.RemoteAddr().String())

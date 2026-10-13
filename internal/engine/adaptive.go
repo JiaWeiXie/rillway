@@ -317,6 +317,9 @@ func (e *Engine) completeProbe(job probeJob, started time.Time, conn net.Conn, e
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.probes--
+	if job.state != nil && e.destinations[job.key] == job.state || sameProvider(job.provider, e.providers[job.id]) {
+		e.recordHealthLocked(job.id, err)
+	}
 	if e.destinations[job.key] == job.state {
 		if internal {
 			delete(e.destinations, job.key)
