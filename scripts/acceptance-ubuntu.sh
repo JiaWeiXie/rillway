@@ -171,7 +171,7 @@ test "$(sudo readlink -f /etc/systemd/system/rillway.service.d/zzzz-rillway-memo
 
 # 7. Verify WARP service logging reconciliation
 # Managed state file must exist with default info level
-test -f /var/lib/rillway-resource-control/warp-log-level.conf
+sudo test -f /var/lib/rillway-resource-control/warp-log-level.conf
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '[Service]\nLogLevelMax=info')"
 
 # Systemd drop-in must be a symlink pointing to the managed state file
