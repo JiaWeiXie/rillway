@@ -209,6 +209,10 @@ func clone(c config.Config) config.Config {
 }
 func (r *Runtime) Config() config.Config { r.mu.Lock(); defer r.mu.Unlock(); return clone(r.cfg) }
 
+func (r *Runtime) Explain(req config.ExplainRequest) (config.ExplainResult, error) {
+	return r.Engine.Explain(req)
+}
+
 // RestartRequiredOutbounds includes retired nodes with open connections. Their
 // state directories cannot be safely opened by a replacement provider yet.
 func (r *Runtime) RestartRequiredOutbounds() []string {

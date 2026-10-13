@@ -30,6 +30,7 @@ type route struct {
 	family     string
 	candidates []string
 	fixed      bool
+	matched    bool
 	target     target
 }
 
@@ -330,10 +331,12 @@ func (e *Engine) selectRoute(t target) (route, error) {
 		}
 		r.outbound, r.rule, r.family = rule.outbound, rule.id, rule.family
 		r.fixed = true
+		r.matched = true
 		return e.protectRoute(r, t.host)
 	}
 	ids := e.cfg.Adaptive.Candidates
 	if adaptiveRule != nil {
+		r.matched = true
 		r.rule, r.family = adaptiveRule.id, adaptiveRule.family
 		ids = adaptiveRule.candidates
 		if adaptiveRule.outbound != "" {
@@ -352,16 +355,16 @@ func (e *Engine) protectRoute(r route, host string) (route, error) {
 	}
 	if g := e.groups[r.outbound]; g != nil {
 		if !g.cfg.Enabled {
-			return r, fmt.Errorf("outbound group %q is unavailable; no fallback configured", r.outbound)
+			return r, &routeBlockError{reason: "target_unavailable", message: fmt.Sprintf("outbound group %q is unavailable; no fallback configured", r.outbound)}
 		}
 		// Private protection is applied to each member before attempts are ordered.
 		return r, nil
 	}
 	if privateHost(host, e.cfg.PAC) && (e.warpOutbound(r.outbound) || e.publicWireGuard(r.outbound) && !r.fixed) {
-		return r, fmt.Errorf("private destination %q cannot use public outbound %q", host, r.outbound)
+		return r, &routeBlockError{reason: "private_protected", message: fmt.Sprintf("private destination %q cannot use public outbound %q", host, r.outbound)}
 	}
 	if e.providers[r.outbound] == nil {
-		return r, fmt.Errorf("outbound %q is unavailable; no fallback configured", r.outbound)
+		return r, &routeBlockError{reason: "target_unavailable", message: fmt.Sprintf("outbound %q is unavailable; no fallback configured", r.outbound)}
 	}
 	return r, nil
 }

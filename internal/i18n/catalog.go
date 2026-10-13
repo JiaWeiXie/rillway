@@ -3,6 +3,12 @@ package i18n
 // Each key is an exact message owned by Rillway. Do not add pattern matching or
 // replacements within arbitrary error text: it can contain user or upstream data.
 var coreCatalog = map[string]string{
+	"Outbound group not found.": "找不到出口群組。",
+	"Choose an enabled replacement for the group's rules and default route.":        "請為群組的規則與預設路由選擇已啟用的替代出口。",
+	"Direct outbounds cannot be group members.":                                     "直連出口不能加入出口群組。",
+	"Could not explain the route. Check the host, port, source and inbound values.": "無法預覽路由；請檢查主機、連接埠、來源與入口。",
+	"Could not delete outbound group. Your previous configuration is unchanged.":    "無法刪除出口群組；原有設定維持不變。",
+
 	"connection_limits must be non-negative and within the supported maximum":                  "connection_limits 必須為非負整數，且不得超過支援的最大值。",
 	"effective max_connections_per_source must not exceed max_connections":                     "生效後的 max_connections_per_source 不得超過 max_connections。",
 	"Invalid client IP address to block.":                                                      "請輸入要封鎖的有效 IP 位址。",

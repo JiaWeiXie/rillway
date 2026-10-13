@@ -99,30 +99,44 @@ func rotate(ids []string, start int) []string {
 	return ids
 }
 
-// groupAttemptOrderLocked is the sole strategy boundary. Its caller holds mu.
 func (e *Engine) groupAttemptOrderLocked(g *groupRuntime, t target, fixed bool, now time.Time) ([]string, error) {
+	return e.groupOrderLocked(g, t, fixed, now, true)
+}
+
+// groupOrderLocked is the sole strategy boundary. Its caller holds mu.
+// A preview reads the next round-robin position without advancing the cursor.
+func (e *Engine) groupOrderLocked(g *groupRuntime, t target, fixed bool, now time.Time, advance bool) ([]string, error) {
 	eligible := make([]string, 0, len(g.cfg.Members))
 	private := privateHost(t.host, e.cfg.PAC)
+	privateFiltered := false
 	for _, id := range g.cfg.Members {
 		if e.providers[id] == nil {
 			continue
 		}
 		for _, o := range e.cfg.Outbounds {
 			if o.ID == id {
-				if o.Enabled && (!private || privateEligible(o, fixed)) {
-					eligible = append(eligible, id)
+				if o.Enabled {
+					if private && !privateEligible(o, fixed) {
+						privateFiltered = true
+					} else {
+						eligible = append(eligible, id)
+					}
 				}
 				break
 			}
 		}
 	}
 	if len(eligible) == 0 {
-		return nil, fmt.Errorf("outbound group %q has no eligible member for this destination", g.cfg.ID)
+		reason := "no_eligible_member"
+		if privateFiltered {
+			reason = "private_protected"
+		}
+		return nil, &routeBlockError{reason: reason, message: fmt.Sprintf("outbound group %q has no eligible member for this destination", g.cfg.ID)}
 	}
 	switch g.cfg.Type {
 	case "select":
 		if !slices.Contains(eligible, g.cfg.Selected) {
-			return nil, fmt.Errorf("selected member %q of group %q is unavailable for this destination", g.cfg.Selected, g.cfg.ID)
+			return nil, &routeBlockError{reason: "selected_unavailable", message: fmt.Sprintf("selected member %q of group %q is unavailable for this destination", g.cfg.Selected, g.cfg.ID)}
 		}
 		eligible[0] = g.cfg.Selected
 		return eligible[:1], nil
@@ -132,7 +146,13 @@ func (e *Engine) groupAttemptOrderLocked(g *groupRuntime, t target, fixed bool, 
 		var start int
 		switch g.cfg.Strategy {
 		case "round-robin":
-			start = int((g.counter.Add(1) - 1) % uint64(len(eligible)))
+			var cursor uint64
+			if advance {
+				cursor = g.counter.Add(1) - 1
+			} else {
+				cursor = g.counter.Load()
+			}
+			start = int(cursor % uint64(len(eligible)))
 		case "consistent-hashing":
 			keyText := destinationKey(t.host)
 			if g.cfg.Key == "source" && t.source.IsValid() {
