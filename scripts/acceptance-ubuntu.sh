@@ -299,8 +299,12 @@ warp_pid_after=$(systemctl show -p MainPID --value warp-svc)
 test "$warp_pid_before" != "$warp_pid_after"
 
 # 14. Verify restart failure rollback behavior
-# Temporarily break warp-svc.service unit so restarting it fails
-sudo sed -i 's|ExecStart=/bin/sleep infinity|ExecStart=/bin/false|' /etc/systemd/system/warp-svc.service
+# Temporarily make warp-svc.service fail synchronously so restart returns non-zero.
+sudo sed -i \
+  -e 's|Type=simple|Type=oneshot|' \
+  -e 's|ExecStart=/bin/sleep infinity|ExecStart=/bin/false|' \
+  -e 's|Restart=always|Restart=no|' \
+  /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
 
 # Attempt to change level to warning - restart will fail and helper must roll back to debug
@@ -313,7 +317,11 @@ test "$rollback_code" != "200"
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
 
 # Restore warp-svc.service unit
-sudo sed -i 's|ExecStart=/bin/false|ExecStart=/bin/sleep infinity|' /etc/systemd/system/warp-svc.service
+sudo sed -i \
+  -e 's|Type=oneshot|Type=simple|' \
+  -e 's|ExecStart=/bin/false|ExecStart=/bin/sleep infinity|' \
+  -e 's|Restart=no|Restart=always|' \
+  /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
 sudo systemctl restart warp-svc.service
 
