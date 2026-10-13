@@ -404,6 +404,8 @@ async function otherEditorsBusyLocaleAndReset() {
     assert.equal(b.puts().length, 1, spec.form + ': busy double-submit must send one mutation');
     assert.equal(b.get(spec.save).getAttribute('aria-busy'), 'true');
     b.run('logout();');
+    assert.equal(b.get(spec.save).disabled, false);
+    assert.equal(b.get(spec.save).getAttribute('aria-busy'), null);
     assert.equal(b.get(spec.dialog).open, false);
     assert.equal(b.get('rt-result').textContent, '');
     const loggedOutConfig = b.run('JSON.stringify(cfg)');
