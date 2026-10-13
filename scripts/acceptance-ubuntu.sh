@@ -3,6 +3,12 @@
 set -Eeuo pipefail
 umask 077
 
+on_error() {
+  local status=$1 line=$2 command=$3
+  printf 'Service acceptance failed at line %s: %s\n' "$line" "$command" >&2
+  exit "$status"
+}
+trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 if [ "${RILLWAY_SERVICE_ACCEPTANCE:-}" != "1" ]; then
   echo 'Set RILLWAY_SERVICE_ACCEPTANCE=1 on a fresh Ubuntu 24.04/26.04 VM.' >&2
   exit 1
