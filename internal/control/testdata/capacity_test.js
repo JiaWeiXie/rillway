@@ -2,13 +2,15 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const path = require('node:path');
-const theme = fs.readFileSync(path.join(__dirname, '..', 'web', 'theme.js'), 'utf8');
-const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
+const {loadScripts, web} = require('./shipped_scripts');
+const catalog = JSON.parse(fs.readFileSync(require('node:path').join(web, 'locales.json'), 'utf8'));
 const elements = new Map();
 function get(id) {
   if (!elements.has(id)) elements.set(id, {
     value: '', textContent: '', innerHTML: '', disabled: false, dataset: {}, events: {}, eventCounts: {},
+    attributes: {}, setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] ?? null; }, removeAttribute(name) { delete this.attributes[name]; },
+    querySelectorAll() { return []; }, focus() {}, close() {}, reset() {},
     querySelector() { return get('error'); },
     contains() { return false; },
     addEventListener(event, callback) {
@@ -21,20 +23,19 @@ function get(id) {
 const documentEvents = {};
 const context = vm.createContext({
   document: {
-    readyState: 'loading', documentElement: { removeAttribute() {}, setAttribute() {} }, getElementById: get, body: {}, hidden: false, activeElement: null,
+    readyState: 'loading', documentElement: { removeAttribute() {}, setAttribute() {} }, getElementById: get, body: {querySelectorAll() { return []; }}, hidden: false, activeElement: null,
+    createTreeWalker() { return {nextNode() { return false; }}; },
     querySelector() { return null; },
     querySelectorAll() { return []; },
     addEventListener(event, callback) { documentEvents[event] = callback; },
   },
   window: { addEventListener() {} },
-  RillwayI18n: { locale: 'en', capture() {}, t(source, values = {}) {
-    return source.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? key);
-  } },
+  NodeFilter: {SHOW_TEXT: 4}, fetch: async () => ({ok: true, json: async () => catalog}),
+  setTimeout, clearTimeout,
   sessionStorage: { getItem() { return ''; } }, localStorage: { getItem() { return ''; } },
   location: { hostname: 'example.test', hash: '' }, console, structuredClone,
 });
-vm.runInContext(theme, context, { filename: 'theme.js' });
-vm.runInContext(app, context, { filename: 'app.js' });
+loadScripts(context);
 assert.equal(typeof documentEvents.DOMContentLoaded, 'function');
 assert.equal(get('source-capacity-form').events.submit, undefined, 'loading must defer listener registration');
 vm.runInContext('bindUI(); bindUI();', context);

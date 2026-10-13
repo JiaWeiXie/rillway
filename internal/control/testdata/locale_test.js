@@ -6,9 +6,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const web = path.join(__dirname, '..', 'web');
 const catalog = JSON.parse(fs.readFileSync(path.join(web, 'locales.json'), 'utf8'));
-const helper = fs.readFileSync(path.join(web, 'i18n.js'), 'utf8');
-const theme = fs.readFileSync(path.join(web, 'theme.js'), 'utf8');
-const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
+const {loadScripts} = require('./shipped_scripts');
 const resourceMessages = [
   ["Resource control is unavailable. Upgrade the installed service to enable it.", "資源控制無法使用；請升級已安裝的服務以啟用此功能。"],
   [
@@ -72,11 +70,16 @@ for(const [source,translation] of resourceMessages) {
 function element(id = '') {
   const el = {id, value:'', checked:false, hidden:false, open:false, disabled:false,
     textContent:'', innerHTML:'', dataset:{}, options:[], isConnected:true,
-    attributes:{}, classList:{toggle(){}}, events:{}, eventCounts:{},
-    addEventListener(evt,cb){this.events[evt]=cb;this.eventCounts[evt]=(this.eventCounts[evt]||0)+1;},
+    attributes:{}, classList:{toggle(){}}, events:{}, eventCounts:{}, listeners:{},
+    addEventListener(evt,cb){
+      (this.listeners[evt] ||= []).push(cb);
+      this.events[evt]=(...args)=>Promise.all(this.listeners[evt].map(listener=>listener(...args)));
+      this.eventCounts[evt]=(this.eventCounts[evt]||0)+1;
+    },
     getAttribute(name){return this.attributes[name] ?? null;},
     setAttribute(name,value){this.attributes[name] = value;},
-    showModal(){this.open=true;},close(){this.open=false;},contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
+    removeAttribute(name){delete this.attributes[name];},focus(){},reset(){},
+    showModal(){this.open=true;},close(){if(!this.open)return;this.open=false;this.events.close?.();},contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
   return el;
 }
 function storage(initial = {}) {
@@ -147,10 +150,7 @@ async function browser(initialLocale, preferences = {}) {
     fetch:async(url)=>{requests.push(url);return {ok:true,json:async()=>catalog};},
     structuredClone,setTimeout,clearTimeout,setInterval,clearInterval,
     Date:class extends Date { static now(){return now;} }});
-  vm.runInContext(theme,context,{filename:'theme.js'});
-  vm.runInContext(helper,context,{filename:'i18n.js'});
-  await context.RillwayI18n.ready;
-  vm.runInContext(app,context,{filename:'app.js'});
+  await loadScripts(context);
   assert.equal(typeof documentEvents.DOMContentLoaded,'function','loading must register the deferred bootstrap');
   assert.equal(documentEventCounts.DOMContentLoaded,1);
   assert.equal(get('login-form').events.submit,undefined,'loading must not bind or sign in yet');
@@ -426,7 +426,8 @@ async function browser(initialLocale, preferences = {}) {
   await vm.runInContext('openRule()',b.context);
   assert.equal(b.get('rule-domains').value,'github.com');
   assert.equal(b.get('rule-family').value,'');
-  await vm.runInContext("openRule(-1,{ip:'192.0.2.8',outbound:'warp'})",b.context);
+  b.get('rule-dialog').close();
+  await vm.runInContext("openRule(null,{ip:'192.0.2.8',outbound:'warp'})",b.context);
   assert.equal(b.get('rule-domains').value,'','IP rule must not keep the default GitHub domain');
   assert.equal(b.get('rule-cidrs').value,'192.0.2.8/32');
   assert.equal(b.get('rule-setup-hint').hidden,true);

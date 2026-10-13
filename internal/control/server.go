@@ -89,7 +89,7 @@ func New(backend Backend, adminToken string) http.Handler {
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		brandType := brandContentType(name)
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/app.css" && r.URL.Path != "/i18n.js" && r.URL.Path != "/theme.js" && r.URL.Path != "/locales.json" && brandType == "" {
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/app.css" && r.URL.Path != "/i18n.js" && r.URL.Path != "/theme.js" && r.URL.Path != "/editors.js" && r.URL.Path != "/locales.json" && brandType == "" {
 			http.NotFound(w, r)
 			return
 		}

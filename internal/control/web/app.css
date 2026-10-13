@@ -116,13 +116,13 @@ input[readonly],textarea[readonly]{background:var(--surface-2);color:var(--muted
 #source-capacity-rejections-detail span{display:inline;font:inherit;color:inherit}
 .source-table td .sub{max-width:none;white-space:normal}
 @media(max-width:720px){
-  .source-table thead{display:none}
-  .source-table, .source-table tbody, .source-table tr, .source-table td{display:block;width:100%}
-  .source-table tr{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
-  .source-table td{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:.9rem}
-  .source-table td:last-child{border-bottom:0;padding-top:8px}
-  .source-table td::before{content:attr(data-label);font-weight:600;color:var(--muted);font-size:.8rem;margin-right:8px}
-  .source-table td>div{text-align:right}
+  table.source-table thead{display:none}
+  table.source-table,table.source-table tbody,table.source-table tr,table.source-table td{display:block;width:100%}
+  table.source-table tr{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+  table.source-table td{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:.9rem}
+  table.source-table td:last-child{border-bottom:0;padding-top:8px}
+  table.source-table td::before{content:attr(data-label);font-weight:600;color:var(--muted);font-size:.8rem;margin-right:8px}
+  table.source-table td>div{text-align:right}
 }
 
 .outbound-tools{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap}
@@ -174,4 +174,107 @@ input[readonly],textarea[readonly]{background:var(--surface-2);color:var(--muted
 }
 @media(prefers-reduced-motion:reduce){
   .pac-entry,.flow-chevron,.notice,button,.toggle-track,.toggle-track::after{transition:none}
+}
+#group-list{display:grid;gap:14px}
+:is(#page-outbounds,#rule-sets-section) .section-bar button{min-height:44px;font-size:.85rem;white-space:normal}
+.group-card{min-width:0}
+.group-card .detail{font-size:.85rem}
+.group-card .outbound-heading,.group-card .outbound-actions{min-width:0}
+.group-card .outbound-actions button{min-height:44px;white-space:normal}
+.group-card .badge{white-space:normal;overflow-wrap:anywhere}
+.group-card ol{margin:12px 0 0;padding-left:24px;font-size:.85rem;overflow-wrap:anywhere}
+
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog){max-width:760px}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) form{min-width:0}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .form-grid>div{min-width:0}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .dialog-heading{gap:12px;align-items:flex-start}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .dialog-heading h2{min-width:0;overflow-wrap:anywhere}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) button{min-height:44px;min-width:44px;font-size:.85rem;white-space:normal}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .icon-button{font-size:1.6rem;flex-shrink:0}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) :is(input:not([type="checkbox"]),select,textarea){min-width:0;min-height:44px;font-size:.88rem}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) :is(input[readonly],textarea[readonly]){color:var(--ink)}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .check{min-height:44px;white-space:normal;overflow-wrap:anywhere}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .check input{flex-shrink:0}
+#rule-dialog .candidate-list label{min-height:44px;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .hint{font-size:.82rem;max-width:70ch;overflow-wrap:anywhere}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .form-error{color:var(--error);font-size:.88rem;line-height:1.65;margin-top:16px;overflow-wrap:anywhere}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .form-error:empty{margin-top:0}
+#group-delete-dialog :is(p,li){overflow-wrap:anywhere}
+#group-delete-dialog ul{padding-left:24px;margin:14px 0}
+
+.editor-choices{min-width:0;margin:20px 0 0;padding:12px;border:1px solid var(--control-line);border-radius:8px;display:flex;flex-wrap:wrap;gap:8px}
+.editor-choices legend{padding:0 6px;font-weight:600;font-size:.88rem;color:var(--ink)}
+.editor-choices label{display:flex;align-items:center;gap:10px;min-height:44px;min-width:0;max-width:100%;margin:0;padding:8px 10px;background:var(--surface);border:1px solid var(--control-line);border-radius:7px;font-size:.85rem;font-weight:400;overflow-wrap:anywhere}
+.editor-choices input[type="checkbox"]{flex:0 0 18px;width:18px;height:18px;margin:0;padding:0;accent-color:var(--accent)}
+.editor-choices label:focus-within{outline:3px solid var(--focus);outline-offset:3px}
+.editor-choices .hint{flex-basis:100%;margin:0}
+
+#group-members{display:grid;gap:8px;min-width:0;margin-top:12px}
+.group-member-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;min-width:0}
+.group-member-row>label{margin:0;min-width:0;background:none;border:0;padding:0;overflow-wrap:anywhere}
+.group-member-row>label span{min-width:0;overflow-wrap:anywhere}
+.group-member-controls{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.group-member-controls button{width:44px;min-height:44px;padding:6px;font-size:1rem}
+
+.rule-match-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;min-width:0}
+.rule-match-chip{display:inline-flex;align-items:center;max-width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:5px;background:var(--quiet-bg);color:var(--ink);font-size:.8rem;line-height:1.6;white-space:normal;overflow-wrap:anywhere}
+#page-rules table.source-table{font-size:.85rem}
+#page-rules table.source-table th{font-size:.85rem}
+#page-rules table.source-table :is(th,td){overflow-wrap:anywhere}
+#page-rules table.source-table .table-action{min-width:44px;min-height:44px;white-space:normal}
+#page-rules table.source-table td .sub{overflow:visible;text-overflow:clip;white-space:normal}
+#rule-sets-section table.source-table td{vertical-align:top}
+#rule-sets-section table.source-table td:last-child{min-width:160px}
+#rule-sets-section table.source-table td button{min-height:44px;margin:0 6px 6px 0;white-space:normal;font-size:.85rem}
+@media(min-width:721px){
+  #page-rules table.source-table th{position:sticky;top:0;z-index:1}
+}
+
+.editor-review{min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);margin-top:16px;padding:16px;color:var(--ink)}
+.editor-review :is(h3,h4){font-size:1rem;margin:0 0 8px;overflow-wrap:anywhere}
+.editor-review p{font-size:.85rem;overflow-wrap:anywhere}
+.editor-review pre{max-width:100%;margin:12px 0 0;padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:7px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,"Rillway Noto Sans TC","Apple Color Emoji","Segoe UI Emoji","Rillway Noto Color Emoji",monospace;font-size:.85rem;line-height:1.65;color:var(--ink)}
+:is(#rule-conflict,#group-conflict,#rs-conflict){margin-top:16px;overflow-wrap:anywhere}
+:is(#rule-review,#group-review,#rs-review){margin-top:12px}
+
+#route-test-panel{min-width:0;margin-top:28px}
+#route-test-panel .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+#route-test-panel .form-grid>div{min-width:0}
+#route-test-panel :is(input,select,button){min-width:0;min-height:44px;font-size:.88rem}
+#route-test-panel button{white-space:normal}
+#route-test-panel .hint{font-size:.82rem;max-width:70ch}
+#rt-result{min-width:0;margin-top:20px;overflow-wrap:anywhere}
+#rt-result>p{font-size:.85rem}
+#rt-result .form-error{color:var(--error);font-size:.88rem}
+#rt-result .form-alert{margin-bottom:16px}
+#rt-result .form-alert.warn{background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-ink)}
+.route-preview-grid{display:grid;grid-template-columns:minmax(110px,.6fr) minmax(0,1.4fr);gap:8px 20px;margin:16px 0 0;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);font-size:.88rem;min-width:0}
+.route-preview-grid>div{display:grid;grid-template-columns:minmax(110px,.6fr) minmax(0,1.4fr);gap:8px 20px;grid-column:1 / -1;min-width:0}
+.route-preview-grid dt{margin:0;color:var(--muted);font-size:.85rem;font-weight:500;overflow-wrap:anywhere}
+.route-preview-grid dd{margin:0;min-width:0;color:var(--ink);overflow-wrap:anywhere}
+
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog,#route-test-panel) button:disabled{cursor:not-allowed}
+:is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog,#route-test-panel) button[aria-busy="true"]{cursor:wait;opacity:1}
+:is(#group-list,#rule-sets-section,#rt-result)[aria-busy="true"]{cursor:progress}
+
+@media(max-width:720px){
+  .group-card{grid-template-columns:minmax(0,1fr)}
+  .group-card .outbound-actions{justify-content:flex-start}
+  .group-member-row{gap:8px;padding:8px}
+  .editor-choices{padding:10px}
+  .editor-choices label{flex-basis:100%}
+  :is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog){width:calc(100% - 24px);padding:18px}
+  :is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .button-row{align-items:stretch}
+  :is(#rule-dialog,#group-dialog,#rule-set-dialog,#group-delete-dialog) .button-row button{flex:1 1 120px}
+  #page-rules table.source-table td{min-width:0;align-items:flex-start;gap:12px}
+  #page-rules table.source-table td::before{flex:0 0 30%;margin:0}
+  #page-rules table.source-table td>*{min-width:0;max-width:100%;overflow-wrap:anywhere}
+  #page-rules table.source-table td>div{text-align:left}
+  #page-rules table.source-table .rule-match-chips{justify-content:flex-start}
+  #rule-sets-section table.source-table td:last-child{min-width:0;flex-wrap:wrap}
+  #route-test-panel .form-grid{grid-template-columns:minmax(0,1fr);gap:0}
+  .route-preview-grid,.route-preview-grid>div{grid-template-columns:minmax(0,1fr);gap:4px}
+  .route-preview-grid dd{margin-bottom:12px}
+  .route-preview-grid dd:last-child{margin-bottom:0}
+  .editor-review{padding:12px}
 }

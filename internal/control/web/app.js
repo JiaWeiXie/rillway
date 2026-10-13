@@ -40,7 +40,8 @@ let outboundGeneration = 0;
 const pendingOutboundActions = new Set();
 let token = ''; try { token = sessionStorage.getItem('rillway-token') || ''; } catch (_) {}
 let currentPage = 'overview', latestSnapshot = {}, serverInfo = null, lastNotice = null, isOnline = false;
-let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, ruleIndex = -1, licenseID = '';
+let cfg, statuses = [], flows = [], active = false, polling = false, statusPolling = false, outboundIndex = -1, licenseID = '';
+let sessionGeneration = 0, ruleDraft = null, ruleOpening = false;
 let sourceClients = [], sourceCapacity = null, sourcePollTimer = null, sourcePollPromise = null, sourceRuleDraft = null, editingSourceRuleID = '', blockSourceContext = null, selectedSourceAddress = '';
 let sourceSnapshotGeneratedAt = null;
 const refreshChoices = [1,2,5,10,30];
@@ -50,12 +51,14 @@ const outboundRefreshChoices = [0,10,30,60,300];
 let outboundRefreshSeconds = 30, outboundPollTimer = null, outboundLastLoadedAt = 0;
 try { const saved = localStorage.getItem('rillway-outbound-refresh-seconds'); if(['0','10','30','60','300'].includes(saved)) outboundRefreshSeconds = Number(saved); } catch (_) {}
 async function api(path, options = {}) {
+  const generation = sessionGeneration;
   const headers = {'Authorization': `Bearer ${token}`, 'Accept-Language': i18n.locale, ...options.headers};
   if(options.body !== undefined) headers['Content-Type'] = 'application/json';
   let response;
   try { response = await fetch(`/api/v1${path}`, {...options, headers, credentials:'omit', cache:'no-store', redirect:'error'}); }
-  catch (_) { throw sourceError('Could not reach the management service. Try again.'); }
+  catch (_) { if(generation !== sessionGeneration) { const error = new Error(); error.stale = true; throw error; } throw sourceError('Could not reach the management service. Try again.'); }
   let data; try { data = await response.json(); } catch (_) { data = {}; }
+  if(generation !== sessionGeneration) { const error = new Error(); error.stale = true; throw error; }
   if(!response.ok) {
     const error = new Error(data.error || t('Service returned {status}',{status:response.status})); error.status = response.status;
     if(typeof data.error_source === 'string') error.source = data.error_source;
@@ -67,11 +70,13 @@ async function api(path, options = {}) {
 function sourceError(source) { const error = new Error(t(source)); error.source = source; return error; }
 function errorText(error) { return error.source ? t(error.source,error.values) : error.message; }
 function notice(message, failure = false) {
+  if(message?.stale) return;
   lastNotice = {message,failure};
   $('notice').textContent = typeof message === 'string' ? t(message) : errorText(message);
   $('notice').className = `notice${failure ? ' failure' : ''}`; $('notice').hidden = false;
 }
 function displayError(node,error) {
+  if(error.stale) return;
   if(error.source) node.dataset.errorSource = error.source;
   else delete node.dataset.errorSource;
   node.textContent = errorText(error);
@@ -80,8 +85,48 @@ function errorIn(form,error) { displayError(form.querySelector('.form-error'),er
 function clearError(form) { const error = form.querySelector('.form-error'); if(error) { error.textContent = ''; delete error.dataset.errorSource; } }
 function connection(online) { isOnline = online; $('connection-dot').className = `dot ${online ? 'online' : 'offline'}`; $('connection-label').textContent = t(online ? 'Service connected' : 'Service unavailable'); }
 function cloneConfig() { return structuredClone(cfg); }
+const busyButtons = new WeakSet();
+async function withBusy(button,action) {
+  if(busyButtons.has(button)) return;
+  busyButtons.add(button);
+  const disabled = button.disabled, text = button.textContent;
+  button.disabled = true; button.setAttribute('aria-busy','true');
+  try { return await action(); }
+  finally { busyButtons.delete(button); button.disabled = disabled; button.textContent = text; button.removeAttribute('aria-busy'); }
+}
+const modalOpeners = new WeakMap();
+function openModal(dialog,trigger = document.activeElement,fallback = null) {
+  if(dialog.open) return;
+  const identity = trigger ? {id:trigger.id,data:Object.entries(trigger.dataset || {})} : null;
+  modalOpeners.set(dialog,{trigger,identity,fallback});
+  if(!dialog.dataset.focusBound) {
+    dialog.dataset.focusBound = 'true';
+    dialog.addEventListener('close',() => {
+      const record = modalOpeners.get(dialog); if(!record || !active) return;
+      if(dialog.open) return;
+      const usable = element => element?.isConnected && !element.disabled && !element.closest('[hidden]');
+      let target = record.trigger;
+      if(!usable(target)) {
+        target = record.identity?.id ? $(record.identity.id) : null;
+        if(!target && record.identity?.data.length) target = [...document.querySelectorAll('button')].find(button => record.identity.data.every(([key,value]) => button.dataset[key] === value));
+      }
+      if(!usable(target)) target = record.fallback;
+      target?.focus({preventScroll:true}); modalOpeners.delete(dialog);
+    });
+  }
+  dialog.showModal();
+  const deletion = dialog.id.includes('delete');
+  const target = deletion ? dialog.querySelector('[data-close].quiet') : dialog.querySelector('input:not(:disabled),select:not(:disabled),textarea:not(:disabled)');
+  target?.focus();
+}
+const editors = RillwayEditors.create({api,save,publishConfig,getConfig:() => cfg,getSession:() => ({active,generation:sessionGeneration}),getObservedRevision:() => Math.max(cfg?.revision ?? 0,latestSnapshot.config_revision ?? 0),t,esc,errorText,notice,withBusy,openModal});
+function publishConfig(next) { cfg = next; editors.configChanged(); renderConfig(); }
+
 function candidates() { return (cfg?.outbounds || []).filter(o => o.enabled && o.public_internet && ['direct','warp','wireguard'].includes(o.type)); }
-function options(selected, withAdaptive = false) { return (withAdaptive ? `<option value="@adaptive"${selected === '@adaptive' ? ' selected' : ''}>${et('Adaptive routing')}</option>` : '') + (cfg.outbounds || []).map(o => `<option value="${esc(o.id)}"${o.id === selected ? ' selected' : ''}>${esc(o.id)} · ${esc(typeName(o.type))}${o.enabled ? '' : t(' (disabled)')}</option>`).join(''); }
+function options(selected,withAdaptive = false) {
+  const targets = [...(cfg.outbounds || []),...(cfg.outbound_groups || [])];
+  return (withAdaptive ? `<option value="@adaptive"${selected === '@adaptive' ? ' selected' : ''}>${et('Adaptive routing')}</option>` : '') + targets.map(o => `<option value="${esc(o.id)}"${o.id === selected ? ' selected' : ''}>${esc(o.id)} · ${esc(({select:t('Select'),fallback:t('Fallback'),'load-balance':t('Load balance')})[o.type] || typeName(o.type))}${o.enabled ? '' : et(' (disabled)')}</option>`).join('');
+}
 function candidateBoxes(container, selected, prefix) { container.innerHTML = candidates().map(o => `<label><input type="checkbox" name="${prefix}" value="${esc(o.id)}"${selected.includes(o.id) ? ' checked' : ''}>${esc(o.id)}</label>`).join('') || `<p class="hint">${et('Enable an outbound with Internet access first.')}</p>`; }
 function checked(container) { return [...container.querySelectorAll('input:checked')].map(i => i.value); }
 
@@ -90,17 +135,24 @@ async function loadInfo() {
   catch(error) { if(error.status === 404) return null; throw error; }
 }
 async function load() {
-  serverInfo = null;
-  cfg = await api('/config');
-  serverInfo = await loadInfo();
+  const generation = sessionGeneration;
+  const next = await api('/config');
+  const info = await loadInfo();
+  if(generation !== sessionGeneration) return;
+  serverInfo = info;
   active = true; $('login').hidden = true; $('app').hidden = false;
-  renderConfig(); await poll(); pollStatuses(); loadDocker(); loadMemory(); loadWarpLog();
-  navigate(currentPage);
+  publishConfig(next); await poll();
+  if(generation !== sessionGeneration) return;
+  pollStatuses(); loadDocker(); loadMemory(); loadWarpLog(); navigate(currentPage);
 }
 async function save(next) {
-  cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
-  renderConfig(); notice('Configuration saved. New connections will use the updated rules.'); await poll();
+  const generation = sessionGeneration;
+  const updated = await api('/config',{method:'PUT',body:JSON.stringify(next)});
+  if(generation !== sessionGeneration) { const error = new Error(); error.stale = true; throw error; }
+  publishConfig(updated); notice('Configuration saved. New connections will use the updated rules.'); await poll();
+  if(generation !== sessionGeneration) { const error = new Error(); error.stale = true; throw error; }
 }
+
 function renderConfig() {
   renderConfigText();
   $('adaptive-toggle').checked = !!cfg.adaptive.enabled;
@@ -110,7 +162,7 @@ function renderConfig() {
   renderPACList('domains',cfg.pac.bypass_domains || []);
   renderPACList('cidrs',cfg.pac.bypass_cidrs || []);
   $('config-json').value = JSON.stringify(cfg, null, 2);
-  renderRules(); renderOutbounds(); renderSourceAccess();
+  renderRules(); renderOutbounds(); renderSourceAccess(); editors.render();
 }
 function normalizePACEntry(entry) {
   return typeof entry === 'string' ? {value:entry,enabled:true,note:'',preset:''} : {value:'',enabled:true,note:'',preset:'',...entry};
@@ -167,14 +219,19 @@ function translatePACRows() {
 }
 async function poll() {
   if(!active || polling) return;
+  const generation = sessionGeneration;
   polling = true;
   try {
     const snapshot = await api('/stats');
-    serverInfo = await loadInfo(); latestSnapshot = snapshot;
+    const info = await loadInfo();
+    if(generation !== sessionGeneration || !active) return;
+    serverInfo = info;
+    latestSnapshot = {...snapshot,config_revision:Math.max(latestSnapshot.config_revision ?? 0,snapshot.config_revision ?? 0)};
+    editors.configChanged();
     flows = Array.isArray(snapshot) ? snapshot : snapshot.flows || [];
     renderRevision();
     renderFlows(); connection(true);
-  } catch (e) { connection(false); if(e.status !== 401) notice(e, true); }
+  } catch (e) { if(generation !== sessionGeneration || e.stale) return; connection(false); if(e.status !== 401) notice(e, true); }
   finally { polling = false; }
 }
 async function pollStatuses(force = false) {
@@ -297,8 +354,9 @@ function restartFlowPolling(runNow = false) {
 }
 function renderRules() {
   $('rules').innerHTML = (cfg.rules || []).map((r,index) => {
-    const targets = [...(r.domains || []), ...(r.suffixes || []).map(s => `*.${s.replace(/^\./,'')}`), ...(r.cidrs || [])];
-    return `<tr><td><strong>${esc(r.id)}</strong><span class="sub">${esc(targets.join(', ') || t('No matching destinations configured'))}</span></td><td><span class="badge">${esc(r.adaptive ? t('Adaptive routing') : r.outbound)}</span>${r.adaptive ? `<span class="sub">${esc((r.candidates || []).join(', '))}</span>` : ''}</td><td>${esc(r.family || t('Dual stack'))}</td><td><button class="table-action" data-edit-rule="${index}">${et('Edit')}</button> <button class="table-action" data-up-rule="${index}"${index === 0 ? ' disabled' : ''} aria-label="${et('Move {name} up',{name:r.id})}">↑</button> <button class="table-action danger" data-delete-rule="${index}">${et('Delete')}</button></td></tr>`;
+    const targets = [...(r.domains || []),...(r.suffixes || []).map(s => `*.${s.replace(/^\./,'')}`),...(r.cidrs || [])];
+    const chips = [['Source CIDRs',r.sources],['Inbound types',r.inbounds],['Destination ports',r.ports],['Local rule sets',r.sets]].flatMap(([name,values]) => (values || []).map(value => `<span class="rule-match-chip">${et(name)}: ${esc(value)}</span>`)).join('');
+    return `<tr data-rule-id="${esc(r.id)}"><td data-label="${et('Match destination')}"><strong>${esc(r.id)}</strong><span class="sub">${esc(targets.join(', '))}</span><div class="rule-match-chips">${chips}</div></td><td data-label="${et('Outbound')}"><span class="badge">${esc(r.adaptive ? t('Adaptive routing') : r.outbound)}</span>${r.adaptive ? `<span class="sub">${esc((r.candidates || []).join(', '))}</span>` : ''}</td><td data-label="${et('IP family')}">${esc(r.family || t('Dual stack'))}</td><td data-label="${et('Order and actions')}"><button class="table-action" data-edit-rule="${esc(r.id)}">${et('Edit')}</button> <button class="table-action" data-up-rule="${esc(r.id)}"${index === 0 ? ' disabled' : ''} aria-label="${et('Move {name} up',{name:r.id})}">↑</button> <button class="table-action danger" data-delete-rule="${esc(r.id)}">${et('Delete')}</button></td></tr>`;
   }).join('') || `<tr><td colspan="4" class="muted">${et('No rules yet. Add a domain or IP rule to choose its outbound.')}</td></tr>`;
 }
 function renderCapacity(syncInputs = !capacityDirty) {
@@ -520,23 +578,26 @@ function openDeleteOutbound(index) {
   if(!outbound || outbound.id === 'direct') return;
   deletingOutbound = {id:outbound.id,config:cloneConfig()};
   $('delete-replacement').value = '';
-  renderDeleteOutbound(); clearError($('delete-outbound-form')); $('delete-outbound-dialog').showModal();
+  renderDeleteOutbound(); clearError($('delete-outbound-form')); openModal($('delete-outbound-dialog'),document.activeElement,$('add-outbound'));
 }
 function renderDeleteOutbound() {
   if(!deletingOutbound) return;
   const {id,config:c} = deletingOutbound;
   const rules = (c.rules || []).filter(r => r.outbound === id || (r.candidates || []).includes(id));
   const adaptive = (c.adaptive.candidates || []).includes(id) || rules.some(r => (r.candidates || []).includes(id));
-  const referenced = rules.length > 0 || c.default_outbound === id || adaptive;
+  const groups = (c.outbound_groups || []).filter(group => (group.members || []).includes(id) || group.selected === id);
+  const referenced = rules.length > 0 || c.default_outbound === id || adaptive || groups.length > 0;
   $('delete-outbound-name').textContent = t('Delete outbound "{name}"?',{name:id});
   const affected = rules.map(r => t('Routing rule: {name}',{name:r.id}));
   if(c.default_outbound === id) affected.push(t('Default outbound'));
   if((c.adaptive.candidates || []).includes(id)) affected.push(t('Adaptive routing'));
+  for(const group of groups) affected.push(t('Outbound group: {name}',{name:group.id}));
   $('delete-outbound-references').innerHTML = affected.map(text => `<li>${esc(text)}</li>`).join('');
   $('delete-replacement-section').hidden = !referenced;
   const select = $('delete-replacement'), selected = select.value;
   select.required = referenced;
-  select.innerHTML = `<option value="">${et('Choose a replacement')}</option>` + c.outbounds.filter(o => o.id !== id && o.enabled && (!adaptive || o.public_internet && o.type !== 'tailscale')).map(o => `<option value="${esc(o.id)}">${esc(o.id)}</option>`).join('');
+  const replacementTargets = [...c.outbounds,...(!adaptive && groups.length === 0 ? c.outbound_groups || [] : [])];
+  select.innerHTML = `<option value="">${et('Choose a replacement')}</option>` + replacementTargets.filter(o => o.id !== id && o.enabled && (!(adaptive || groups.length) || o.type !== 'direct') && (!adaptive || o.public_internet && o.type !== 'tailscale')).map(o => `<option value="${esc(o.id)}">${esc(o.id)}</option>`).join('');
   select.value = selected;
 }
 function navigate(page) {
@@ -577,7 +638,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); if($('warp-log-form')) clearError($('warp-log-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); stopOutboundPolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { sessionGeneration++; active = false; editors.reset(); ruleDraft = null; ruleOpening = false; $('rule-dialog').close(); $('rule-form').reset(); $('rule-latest').textContent = ''; $('rule-mine').textContent = ''; $('rule-review-panel').hidden = true; memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); if($('warp-log-form')) clearError($('warp-log-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); stopOutboundPolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -630,24 +691,50 @@ function outboundFields() {
   $('out-restart-hint').hidden = !existingTail;
   $('out-setup-hint').textContent = t(hints[type]);
 }
-async function openRule(index = -1, flow = null) {
-  try { formDefaults = await api('/defaults'); }
-  catch(error) { notice(error,true); return; }
-  ruleIndex = index; const r = index >= 0 ? cfg.rules[index] : formDefaults.rule;
-  $('rule-id').value = r.id;
-  for(const key of ['domains','suffixes','cidrs']) $(`rule-${key}`).value = (r[key] || []).join('\n');
-  $('rule-setup-hint').hidden = index >= 0 || !!flow;
-  if(flow) {
-    $('rule-domains').value = ''; $('rule-suffixes').value = ''; $('rule-cidrs').value = '';
-    const host = flow.host || flow.domain || flow.ip || '';
-    if(host.includes(':') || /^\d+(\.\d+){3}$/.test(host)) $('rule-cidrs').value = `${host}/${host.includes(':') ? '128' : '32'}`;
-    else $('rule-domains').value = host;
-  }
-  $('rule-outbound').innerHTML = options(r.adaptive ? '@adaptive' : (flow?.outbound || r.outbound), true);
-  $('rule-family').value = r.family === 'auto' ? '' : r.family || '';
-  candidateBoxes($('rule-candidates'), r.candidates || cfg.adaptive.candidates || [], 'rule-candidate');
-  $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive';
-  clearError($('rule-form')); $('rule-dialog').showModal();
+async function openRule(id = null,flow = null,trigger = document.activeElement) {
+  if(ruleOpening || $('rule-dialog').open) return;
+  ruleOpening = true; const generation = sessionGeneration;
+  try {
+    const defaults = id === null ? await api('/defaults') : null;
+    if(generation !== sessionGeneration || !active) return;
+    ruleDraft = editors.createDraft('rules',id); const r = id === null ? defaults.rule : ruleDraft.baseEntity;
+    $('rule-id').value = r.id;
+    for(const key of ['domains','suffixes','cidrs','sources','ports']) $(`rule-${key}`).value = (r[key] || []).join('\n');
+    for(const input of $('rule-inbounds').querySelectorAll('input')) input.checked = (r.inbounds || []).includes(input.value);
+    $('rule-sets').innerHTML = (ruleDraft.baseConfig.rule_sets || []).map(set => `<label><input type="checkbox" value="${esc(set.id)}"${(r.sets || []).includes(set.id) ? ' checked' : ''}>${esc(set.id)} · ${esc(set.name)}</label>`).join('') || `<p class="hint">${et('No local rule sets yet')}</p>`;
+    $('rule-setup-hint').hidden = id !== null || !!flow;
+    if(flow) {
+      $('rule-domains').value = ''; $('rule-suffixes').value = ''; $('rule-cidrs').value = '';
+      const host = flow.host || flow.domain || flow.ip || '';
+      if(host.includes(':') || /^\d+(\.\d+){3}$/.test(host)) $('rule-cidrs').value = `${host}/${host.includes(':') ? '128' : '32'}`;
+      else $('rule-domains').value = host;
+    }
+    $('rule-outbound').innerHTML = options(r.adaptive ? '@adaptive' : (flow?.outbound || r.outbound),true);
+    $('rule-family').value = r.family === 'auto' ? '' : r.family || '';
+    candidateBoxes($('rule-candidates'),r.candidates || cfg.adaptive.candidates || [],'rule-candidate');
+    $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive';
+    clearError($('rule-form')); $('rule-review-panel').hidden = true; renderRuleConflict();
+    openModal($('rule-dialog'),trigger,$('add-rule'));
+  } catch(error) { if(generation === sessionGeneration) notice(error,true); }
+  finally { if(generation === sessionGeneration) ruleOpening = false; }
+}
+function ruleEntity() {
+  const adaptive = $('rule-outbound').value === '@adaptive';
+  return {id:$('rule-id').value.trim(),...Object.fromEntries(['domains','suffixes','cidrs','sources','ports'].map(key => [key,lines($(`rule-${key}`).value)])),inbounds:checked($('rule-inbounds')),sets:checked($('rule-sets')),family:$('rule-family').value,adaptive,outbound:adaptive ? '' : $('rule-outbound').value,candidates:adaptive ? checked($('rule-candidates')) : []};
+}
+function renderRuleConflict() {
+  const reviewing = !!ruleDraft?.reviewBase;
+  if(!reviewing) $('rule-review-panel').hidden = true;
+  $('rule-conflict').hidden = !ruleDraft?.requiresReview && !reviewing && !ruleDraft?.deleted;
+  $('rule-conflict-message').textContent = t(ruleDraft?.deleted ? 'This item was deleted elsewhere. Close this editor to create a new item.' : 'Configuration changed elsewhere. Your draft is kept.');
+  $('rule-review').hidden = !ruleDraft?.requiresReview || !!ruleDraft?.deleted;
+  $('rule-save').disabled = !!ruleDraft?.saving || !!ruleDraft?.deleted || (!!ruleDraft?.requiresReview && !reviewing);
+  $('rule-save').textContent = t(reviewing ? 'Save my draft' : 'Save rule');
+}
+function closeRule() {
+  if(ruleDraft?.saving) return;
+  if(ruleDraft?.dirty && !confirm(t('Discard unsaved changes?'))) return;
+  $('rule-dialog').close();
 }
 
 function renderRevision() {
@@ -804,6 +891,7 @@ function switchLocale(locale) {
   connection(isOnline);
   if(cfg) {
     renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds(); renderSourceAccess(); renderDeleteOutbound();
+    editors.render(); renderRuleConflict();
     for(const id of ['default-outbound','rule-outbound']) {
       const select = $(id), selected = select.value;
       if(select.options.length) { select.innerHTML = options(selected,id === 'rule-outbound'); select.value = selected; }
@@ -828,6 +916,7 @@ function bindUI() {
   if(uiBound) return;
   uiBound = true;
   RillwayTheme.bind();
+  editors.bind();
   document.querySelectorAll('[data-locale]').forEach(select => select.addEventListener('change',() => switchLocale(select.value)));
 
   $('memory-mode').addEventListener('change',() => {
@@ -852,7 +941,11 @@ function bindUI() {
     } catch(error) { errorIn(e.target,error); }
     finally { memorySaving = false; renderMemory(false); }
   });
-  $('login-form').addEventListener('submit',async e => { e.preventDefault(); token = $('token').value.trim(); $('login-error').textContent = ''; delete $('login-error').dataset.errorSource; try { await load(); sessionStorage.setItem('rillway-token',token); $('token').value = ''; } catch(error) { displayError($('login-error'),error); } });
+  $('login-form').addEventListener('submit',async event => {
+    event.preventDefault(); const generation = ++sessionGeneration; editors.reset(); token = $('token').value.trim(); $('login-error').textContent = ''; delete $('login-error').dataset.errorSource;
+    try { await load(); if(generation !== sessionGeneration) return; try { sessionStorage.setItem('rillway-token',token); } catch (_) {} $('token').value = ''; }
+    catch(error) { if(generation === sessionGeneration) displayError($('login-error'),error); }
+  });
   $('logout').addEventListener('click',logout);
   $('refresh').addEventListener('click',() => load().catch(e => notice(e,true)));
   $('flow-search').addEventListener('input',renderFlows);
@@ -947,9 +1040,9 @@ function bindUI() {
     });
   }
   $('rule-outbound').addEventListener('change',() => { $('rule-candidates').hidden = $('rule-outbound').value !== '@adaptive'; });
-  $('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) { e.preventDefault(); e.stopPropagation(); openRule(-1,flows[Number(b.dataset.flow)]); } });
-  $('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
-  $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { renderConfig(); notice(e,true); } });
+  $('flow-groups').addEventListener('click',e => { const b = e.target.closest('[data-flow]'); if(b) { e.preventDefault(); e.stopPropagation(); openRule(null,flows[Number(b.dataset.flow)],b); } });
+  $('adaptive-toggle').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.enabled = $('adaptive-toggle').checked; next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { if(e.stale) return; $('adaptive-toggle').checked = cfg.adaptive.enabled; notice(e,true); } });
+  $('adaptive-candidates').addEventListener('change',async () => { const next = cloneConfig(); next.adaptive.candidates = checked($('adaptive-candidates')); try { await save(next); } catch(e) { if(e.stale) return; renderConfig(); notice(e,true); } });
   $('save-default').addEventListener('click',async () => { const next = cloneConfig(); next.default_outbound = $('default-outbound').value; try { await save(next); } catch(e) { notice(e,true); } });
   $('pac-form').addEventListener('submit',async e => { e.preventDefault(); const next = cloneConfig(); next.pac.proxy_address = $('pac-address').value.trim(); next.pac.bypass_domains = serializePACList('domains'); next.pac.bypass_cidrs = serializePACList('cidrs'); try { await save(next); } catch(error) { notice(error,true); } });
   $('restart-service').addEventListener('click',() => { clearError($('restart-form')); $('restart-dialog').showModal(); });
@@ -981,6 +1074,8 @@ function bindUI() {
   $('reset-json').addEventListener('click',() => load().catch(e => notice(e,true)));
   $('outbound-form').addEventListener('submit',async e => {
     e.preventDefault(); const next = cloneConfig(); const original = outboundIndex >= 0 ? next.outbounds[outboundIndex] : {};
+    const generation = sessionGeneration;
+    return withBusy(e.target.querySelector('button.primary'),async () => {
     const o = {...original,id:$('out-id').value.trim(),type:$('out-type').value,enabled:$('out-enabled').checked,public_internet:$('out-public').checked,proxy_address:$('out-address').value.trim(),config_file:$('out-file').value.trim(),hostname:$('out-hostname').value.trim(),state_dir:$('out-state').value.trim(),auth_key_file:$('out-auth').value.trim(),warp_binary:$('out-binary').value.trim(),dns:lines($('out-dns').value)};
     if(o.type !== 'warp') { o.proxy_address = ''; o.warp_binary = ''; }
     if(o.type !== 'wireguard' || outboundIndex < 0) o.config_file = '';
@@ -990,24 +1085,47 @@ function bindUI() {
       const body = {revision:cfg.revision,create:outboundIndex < 0,outbound:o};
       if(o.type === 'wireguard' && $('out-profile').value.trim()) body.wireguard_config = $('out-profile').value;
       if(o.type === 'tailscale' && $('out-key').value.trim()) body.tailscale_auth_key = $('out-key').value;
-      cfg = await api('/outbounds',{method:'PUT',body:JSON.stringify(body)});
-      clearOutboundSecrets(); $('outbound-dialog').close(); renderConfig(); notice('Configuration saved. New connections will use the updated rules.'); await poll();
+      const updated = await api('/outbounds',{method:'PUT',body:JSON.stringify(body)});
+      if(generation !== sessionGeneration) return;
+      clearOutboundSecrets(); $('outbound-dialog').close(); publishConfig(updated); notice('Configuration saved. New connections will use the updated rules.'); await poll();
     } catch(error) { errorIn(e.target,error); }
+    });
   });
-  $('rule-form').addEventListener('submit',async e => {
-    e.preventDefault(); const next = cloneConfig(); const adaptive = $('rule-outbound').value === '@adaptive';
-    const r = {id:$('rule-id').value.trim(),domains:lines($('rule-domains').value),suffixes:lines($('rule-suffixes').value),cidrs:lines($('rule-cidrs').value),family:$('rule-family').value,adaptive,outbound:adaptive ? '' : $('rule-outbound').value,candidates:adaptive ? checked($('rule-candidates')) : []};
-    if(ruleIndex >= 0) next.rules[ruleIndex] = r; else next.rules = [r,...(next.rules || [])];
-    try { await save(next); $('rule-dialog').close(); } catch(error) { errorIn(e.target,error); }
+  $('rule-form').addEventListener('input',() => { if(ruleDraft) ruleDraft.dirty = true; });
+  $('rule-form').addEventListener('change',() => { if(ruleDraft) ruleDraft.dirty = true; });
+  $('rule-dialog').addEventListener('cancel',event => { event.preventDefault(); closeRule(); });
+  $('rule-dialog').querySelectorAll('[data-rule-close]').forEach(button => button.addEventListener('click',closeRule));
+  $('rule-dialog').addEventListener('close',() => { if($('rule-dialog').open) return; ruleDraft = null; $('rule-form').reset(); $('rule-latest').textContent = ''; $('rule-mine').textContent = ''; $('rule-review-panel').hidden = true; });
+  $('rule-review').addEventListener('click',() => withBusy($('rule-review'),async () => {
+    const draft = ruleDraft; if(!draft) return;
+    try {
+      const latest = await editors.reviewDraft(draft);
+      if(ruleDraft !== draft) return;
+      $('rule-latest').textContent = JSON.stringify(latest,null,2); $('rule-mine').textContent = JSON.stringify(ruleEntity(),null,2);
+      $('rule-review-panel').hidden = false;
+    } catch(error) { if(ruleDraft === draft) errorIn($('rule-form'),error); }
+    if(ruleDraft === draft) renderRuleConflict();
+  }));
+  $('rule-form').addEventListener('submit',event => {
+    event.preventDefault(); const draft = ruleDraft; if(!draft || draft.saving || $('rule-save').disabled) return;
+    return withBusy($('rule-save'),async () => {
+      try { if(await editors.saveDraft(draft,ruleEntity())) $('rule-dialog').close(); }
+      catch(error) { if(ruleDraft === draft) errorIn(event.target,error); }
+    }).finally(() => { if(ruleDraft === draft) renderRuleConflict(); });
   });
-  $('rules').addEventListener('click',async e => {
-    const edit = e.target.closest('[data-edit-rule]'); if(edit) { openRule(Number(edit.dataset.editRule)); return; }
-    const up = e.target.closest('[data-up-rule]'), del = e.target.closest('[data-delete-rule]'); if(!up && !del) return;
-    const next = cloneConfig(); const index = Number(up ? up.dataset.upRule : del.dataset.deleteRule);
+  $('rules').addEventListener('click',async event => {
+    const edit = event.target.closest('[data-edit-rule]'); if(edit) { openRule(edit.dataset.editRule,null,edit); return; }
+    const up = event.target.closest('[data-up-rule]'), del = event.target.closest('[data-delete-rule]'); if(!up && !del) return;
+    const next = cloneConfig(), id = up ? up.dataset.upRule : del.dataset.deleteRule;
+    const index = next.rules.findIndex(rule => rule.id === id); if(index < 0) return;
     if(up && index > 0) [next.rules[index-1],next.rules[index]] = [next.rules[index],next.rules[index-1]];
-    if(del) { if(!confirm(t('Delete rule "{name}"?',{name:next.rules[index].id}))) return; next.rules.splice(index,1); }
-    try { await save(next); } catch(error) { notice(error,true); }
+    if(del) { if(!confirm(t('Delete rule "{name}"?',{name:id}))) return; next.rules.splice(index,1); }
+    try {
+      await save(next);
+      [...$('rules').querySelectorAll('[data-up-rule]')].find(button => button.dataset.upRule === id)?.focus();
+    } catch(error) { notice(error,true); if(error.status === 409) $('rules-reload').hidden = false; }
   });
+  $('rules-reload').addEventListener('click',async () => { try { await load(); $('rules-reload').hidden = true; } catch(error) { notice(error,true); } });
   $('refresh-sources').addEventListener('click',() => loadSourceClients(true).catch(e => notice(e,true)));
   $('add-source-rule').addEventListener('click',() => openSourceRule());
   $('source-rules-body').addEventListener('click',async e => {
@@ -1030,11 +1148,13 @@ function bindUI() {
     if(block) { openBlockSourceDialog(block.dataset.blockSource); }
   });
   $('refresh-source-rule').addEventListener('click',async () => {
+    const generation = sessionGeneration;
     try {
       const id = editingSourceRuleID;
-      cfg = await api('/config');
-      const index = id ? (cfg.source_access?.rules || []).findIndex(rule => rule.id === id) : -1;
-      renderConfig();
+      const updated = await api('/config');
+      if(generation !== sessionGeneration) return;
+      const index = id ? (updated.source_access?.rules || []).findIndex(rule => rule.id === id) : -1;
+      publishConfig(updated);
       if(id && index < 0) throw sourceError('Source access rule no longer exists. Refresh before editing.');
       openSourceRule(index);
     } catch(error) { errorIn($('source-rule-form'),error); }
@@ -1042,6 +1162,7 @@ function bindUI() {
   $('source-rule-dialog').addEventListener('close',() => { sourceRuleDraft = null; editingSourceRuleID = ''; });
   $('source-rule-form').addEventListener('submit',async e => {
     e.preventDefault();
+    const generation = sessionGeneration;
     if(!sourceRuleDraft) return;
     const button = e.target.querySelector('button[type="submit"]');
     if(button.disabled) return;
@@ -1057,10 +1178,11 @@ function bindUI() {
       await save(next);
       $('source-rule-dialog').close();
     } catch(error) { errorIn(e.target,error); }
-    finally { button.disabled = false; }
+    finally { if(generation === sessionGeneration) button.disabled = false; }
   });
   $('block-source-form').addEventListener('submit',async e => {
     e.preventDefault();
+    const generation = sessionGeneration;
     if(!blockSourceContext) return;
     const btn = $('confirm-block-source');
     if(btn.disabled) return;
@@ -1069,15 +1191,16 @@ function bindUI() {
     const {address,revision} = blockSourceContext;
     try {
       const res = await api('/source-clients/block',{method:'POST',body:JSON.stringify({revision,address})});
-      cfg = res.config;
+      if(generation !== sessionGeneration) return;
       selectedSourceAddress = address;
       $('block-source-dialog').close();
       notice({source:'Blocked {address}; disconnected {count} connection(s).',values:{address,count:res.disconnected}});
-      renderConfig();
+      publishConfig(res.config);
       await loadSourceClients(true);
+      if(generation !== sessionGeneration) return;
       focusSource(address);
     } catch(error) { errorIn(e.target,error); }
-    finally { btn.disabled = false; }
+    finally { if(generation === sessionGeneration) btn.disabled = false; }
   });
   $('capacity-max-total').addEventListener('input', onCapacityEdit);
   $('capacity-max-per-source').addEventListener('input', onCapacityEdit);
@@ -1085,6 +1208,7 @@ function bindUI() {
   $('capacity-max-per-source').addEventListener('change', onCapacityEdit);
   $('source-capacity-form').addEventListener('submit', async e => {
     e.preventDefault();
+    const generation = sessionGeneration;
     if(capacitySaving) return;
     clearError(e.target);
     const totalVal = Number($('capacity-max-total').value);
@@ -1109,29 +1233,33 @@ function bindUI() {
         max_connections: totalVal,
         max_connections_per_source: perSourceVal,
       };
-      cfg = await api('/config', {method:'PUT', body:JSON.stringify(next)});
+      const updated = await api('/config', {method:'PUT', body:JSON.stringify(next)});
+      if(generation !== sessionGeneration) return;
       capacityDirty = false;
-      capacityDraftRevision = cfg.revision;
-      renderConfig();
+      capacityDraftRevision = updated.revision;
+      publishConfig(updated);
       await poll();
       if(currentPage === 'sources') await loadSourceClients(true);
+      if(generation !== sessionGeneration) return;
       notice('Connection capacity saved. New connections will use the updated limits.');
     } catch(error) {
       errorIn(e.target, error);
     } finally {
-      capacitySaving = false;
-      renderCapacity(false);
+      if(generation === sessionGeneration) { capacitySaving = false; renderCapacity(false); }
     }
   });
   $('capacity-reload').addEventListener('click', async () => {
+    const generation = sessionGeneration;
     if(capacitySaving) return;
     clearError($('source-capacity-form'));
     try {
-      cfg = await api('/config');
+      const updated = await api('/config');
+      if(generation !== sessionGeneration) return;
       capacityDirty = false;
-      capacityDraftRevision = cfg.revision;
-      renderConfig();
+      capacityDraftRevision = updated.revision;
+      publishConfig(updated);
       if(currentPage === 'sources') await loadSourceClients(true);
+      if(generation !== sessionGeneration) return;
       notice('Connection limits reloaded.');
     } catch(error) {
       errorIn($('source-capacity-form'), error);
@@ -1154,13 +1282,15 @@ function bindUI() {
   $('delete-outbound-dialog').addEventListener('close',() => { deletingOutbound = null; });
   $('delete-outbound-form').addEventListener('submit',async e => {
     e.preventDefault(); if(!deletingOutbound) return;
+    const generation = sessionGeneration;
     const {id,config:c} = deletingOutbound, button = e.target.querySelector('button.primary');
     button.disabled = true;
     try {
-      cfg = await api(`/outbounds/${encodeURIComponent(id)}`,{method:'DELETE',body:JSON.stringify({revision:c.revision,replacement:$('delete-replacement-section').hidden ? '' : $('delete-replacement').value})});
-      renderConfig(); $('delete-outbound-dialog').close(); notice('Outbound deleted. Referenced routes now use the replacement you selected.'); await poll();
+      const updated = await api(`/outbounds/${encodeURIComponent(id)}`,{method:'DELETE',body:JSON.stringify({revision:c.revision,replacement:$('delete-replacement-section').hidden ? '' : $('delete-replacement').value})});
+      if(generation !== sessionGeneration) return;
+      $('delete-outbound-dialog').close(); publishConfig(updated); notice('Outbound deleted. Referenced routes now use the replacement you selected.'); await poll();
     } catch(error) { errorIn(e.target,error); }
-    finally { button.disabled = false; }
+    finally { if(generation === sessionGeneration) button.disabled = false; }
   });
   $('docker-form').addEventListener('submit',async e => {
     e.preventDefault();
@@ -1209,7 +1339,7 @@ function startUI() {
   navigate(location.hash.slice(1));
   i18n.ready.then(() => switchLocale(i18n.locale));
   restartFlowPolling();
-  if(token) load().catch(e => { displayError($('login-error'),e); logout(); });
+  if(token) { const generation = ++sessionGeneration; load().catch(e => { if(generation !== sessionGeneration) return; displayError($('login-error'),e); logout(); }); }
 }
 if(document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded',startUI,{once:true});

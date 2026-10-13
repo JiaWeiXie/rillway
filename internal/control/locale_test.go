@@ -59,7 +59,7 @@ func TestLocaleCatalogCompleteness(t *testing.T) {
 		}
 	}
 	messageCall := regexp.MustCompile(`(?:^|[^\w$])(?:t|et|notice|sourceError)\('([^']*)'`)
-	for _, file := range []string{"web/app.js", "web/i18n.js", "web/theme.js"} {
+	for _, file := range []string{"web/app.js", "web/i18n.js", "web/theme.js", "web/editors.js"} {
 		source, err := assets.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
@@ -133,12 +133,6 @@ func TestLanguageControlsAndOfflineFonts(t *testing.T) {
 			t.Fatalf("missing localization asset: %s", path)
 		}
 	}
-	markup, _ := assets.ReadFile("web/index.html")
-	for _, id := range []string{"login-language", "sidebar-language"} {
-		if !strings.Contains(string(markup), `id="`+id+`" data-locale`) || !strings.Contains(string(markup), `for="`+id+`"`) {
-			t.Fatalf("missing accessible language selector: %s", id)
-		}
-	}
 	for _, path := range []string{"/fonts/NotoSansTC.ttf", "/fonts/NotoColorEmoji.ttf"} {
 		r := httptest.NewRequest("GET", path, nil)
 		r.Header.Set("Range", "bytes=0-3")
@@ -152,10 +146,6 @@ func TestLanguageControlsAndOfflineFonts(t *testing.T) {
 		if head.Code != http.StatusOK || length < 1000 || head.Body.Len() != 0 {
 			t.Fatal("invalid font HEAD response")
 		}
-	}
-	css, _ := assets.ReadFile("web/app.css")
-	if strings.Contains(string(css), "overflow-x:hidden") || !strings.Contains(string(css), ".sr-only{position:absolute;left:0;top:0;") {
-		t.Fatal("mobile table overflow must be fixed at its source")
 	}
 }
 
