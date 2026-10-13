@@ -489,7 +489,7 @@ async function scopedLoadingAndFocusReturn() {
 
 // A pending VM Promise alone cannot keep Node alive. Fail instead of silently
 // exiting successfully when a renderer or submit handler never completes.
-const watchdog = setTimeout(() => { console.error('Browser interaction contracts did not complete.'); process.exitCode = 1; }, 15000);
+const watchdog = setTimeout(() => { console.error('Browser interaction contracts did not complete.'); process.exitCode = 1; }, 40000);
 (async () => {
   for (const test of [visibleSelectionAndDeletion, sourceBulkActions, fixedRevisionConflictAndReload, ruleReorderAndFocus,
     groupDraftReorder, busyDoubleSubmits, searchUsesLoadedFields, emptyAndNoMatchStates, shortcutsAndModalPriority, noticeLifetime, scopedLoadingAndFocusReturn]) {

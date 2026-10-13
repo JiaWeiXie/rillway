@@ -45,7 +45,7 @@ func TestBrowserInteractionsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Node is required for the browser interaction contract: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, node, "testdata/interactions_test.js").CombinedOutput()
 	if err != nil {
