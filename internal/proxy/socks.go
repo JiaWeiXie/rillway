@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"rillway/internal/authguard"
+	"rillway/internal/routeinfo"
 	"strconv"
 	"sync"
 	"time"
@@ -124,7 +125,7 @@ func (s *Server) socksConnection(ctx context.Context, client net.Conn) {
 	if err := client.SetDeadline(time.Time{}); err != nil {
 		return
 	}
-	upstream, err := s.dialContext(ctx, "tcp", address)
+	upstream, err := s.dialContext(routeinfo.With(ctx, requestInfo(client.RemoteAddr().String(), "socks5")), "tcp", address)
 	// Bound the reply write separately; the relay clears it afterwards.
 	if deadlineErr := client.SetDeadline(time.Now().Add(s.handshakeTimeout)); deadlineErr != nil {
 		if upstream != nil {

@@ -40,9 +40,10 @@ func testEngine() (*Engine, *time.Time) {
 func TestRulesFixedPrecedenceAndDomainBoundary(t *testing.T) {
 	e, _ := testEngine()
 	e.cfg.Rules = []config.Rule{{ID: "auto", Suffixes: []string{"example.com"}, Adaptive: true, Candidates: []string{"direct", "warp"}}, {ID: "fixed", Domains: []string{"api.example.com"}, Outbound: "warp"}, {ID: "suffix", Suffixes: []string{"githubassets.com"}, Outbound: "warp"}, {ID: "cidr", CIDRs: []string{"203.0.113.0/24"}, Outbound: "warp", Family: "ipv4"}}
+	e.Update(e.cfg, e.providers)
 	for _, tt := range []struct{ host, rule string }{{"api.example.com", "fixed"}, {"cdn.githubassets.com", "suffix"}, {"githubassets.com", "suffix"}, {"evilgithubassets.com", "default"}, {"203.0.113.10", "cidr"}, {"other.example.com", "auto"}} {
 		t.Run(tt.host, func(t *testing.T) {
-			r, err := e.selectRoute(tt.host)
+			r, err := e.selectRoute(target{host: tt.host})
 			if err != nil || r.rule != tt.rule {
 				t.Fatalf("route=%+v err=%v", r, err)
 			}
@@ -54,12 +55,13 @@ func TestPrivateDestinationsNeverUsePublicOutbound(t *testing.T) {
 	e, _ := testEngine()
 	e.cfg.DefaultOutbound = "warp"
 	for _, host := range []string{"service.company.example", "nas", "box.local", "100.100.100.100", "127.0.0.1", "10.0.0.2", "::1", "fd00::1"} {
-		if _, err := e.selectRoute(host); err == nil {
+		if _, err := e.selectRoute(target{host: host}); err == nil {
 			t.Errorf("private host allowed: %s", host)
 		}
 	}
 	e.cfg.Rules = []config.Rule{{ID: "company", Suffixes: []string{"company.example"}, Outbound: "private"}}
-	r, err := e.selectRoute("service.company.example")
+	e.Update(e.cfg, e.providers)
+	r, err := e.selectRoute(target{host: "service.company.example"})
 	if err != nil || r.outbound != "private" || len(r.candidates) != 0 {
 		t.Fatalf("private route: %+v %v", r, err)
 	}
@@ -70,7 +72,8 @@ func TestFixedWireGuardCanServePrivateNetwork(t *testing.T) {
 	e.cfg.Outbounds = append(e.cfg.Outbounds, config.Outbound{ID: "company-vpn", Type: "wireguard", Enabled: true, PublicInternet: true})
 	e.providers["company-vpn"] = testProvider{id: "company-vpn"}
 	e.cfg.Rules = []config.Rule{{ID: "company", Suffixes: []string{"company.example"}, Outbound: "company-vpn"}}
-	r, err := e.selectRoute("service.company.example")
+	e.Update(e.cfg, e.providers)
+	r, err := e.selectRoute(target{host: "service.company.example"})
 	if err != nil || r.outbound != "company-vpn" || len(r.candidates) != 0 {
 		t.Fatalf("fixed private WireGuard route: %+v %v", r, err)
 	}
@@ -82,13 +85,14 @@ func TestPublicWireGuardDefaultCannotReceivePrivateNames(t *testing.T) {
 	e.providers["public-vpn"] = testProvider{id: "public-vpn"}
 	e.cfg.DefaultOutbound = "public-vpn"
 	for _, host := range []string{"nas", "service.company.example", "100.100.100.100", "10.0.0.1"} {
-		if _, err := e.selectRoute(host); err == nil {
+		if _, err := e.selectRoute(target{host: host}); err == nil {
 			t.Errorf("private destination sent to default public WireGuard: %s", host)
 		}
 	}
 	e.cfg.Adaptive.Enabled = false
 	e.cfg.Rules = []config.Rule{{ID: "adaptive-private", Suffixes: []string{"company.example"}, Outbound: "public-vpn", Adaptive: true, Candidates: []string{"direct", "public-vpn"}}}
-	if _, err := e.selectRoute("service.company.example"); err == nil {
+	e.Update(e.cfg, e.providers)
+	if _, err := e.selectRoute(target{host: "service.company.example"}); err == nil {
 		t.Fatal("disabled adaptive rule treated as explicit fixed private route")
 	}
 }
@@ -96,6 +100,7 @@ func TestPublicWireGuardDefaultCannotReceivePrivateNames(t *testing.T) {
 func TestUnavailableFixedOutboundDoesNotFallback(t *testing.T) {
 	e, _ := testEngine()
 	e.cfg.Rules = []config.Rule{{ID: "missing", Domains: []string{"github.com"}, Outbound: "missing"}}
+	e.Update(e.cfg, e.providers)
 	_, err := e.DialContext(context.Background(), "tcp", "github.com:443")
 	if err == nil || !strings.Contains(err.Error(), "no fallback") {
 		t.Fatalf("expected no fallback error, got %v", err)
@@ -368,7 +373,8 @@ func TestDisabledAdaptiveKeepsRuleAndAddressFamily(t *testing.T) {
 	e, _ := testEngine()
 	e.cfg.Adaptive.Enabled = false
 	e.cfg.Rules = []config.Rule{{ID: "manual-auto", Domains: []string{"example.com"}, Outbound: "warp", Family: "ipv4", Adaptive: true, Candidates: []string{"direct", "warp"}}}
-	r, err := e.selectRoute("example.com")
+	e.Update(e.cfg, e.providers)
+	r, err := e.selectRoute(target{host: "example.com"})
 	if err != nil || r.outbound != "warp" || r.family != "ipv4" || len(r.candidates) != 0 {
 		t.Fatalf("disabled adaptive ignored initial rule: %+v %v", r, err)
 	}
@@ -434,7 +440,7 @@ func FuzzRuleHostname(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, host string) {
 		r := config.Rule{Suffixes: []string{"github.com"}, CIDRs: []string{"10.0.0.0/8"}}
-		_ = matches(r, normalize(host))
+		_ = compileTarget(r).match(target{host: normalize(host)})
 		_ = privateHost(host, config.PAC{})
 	})
 }

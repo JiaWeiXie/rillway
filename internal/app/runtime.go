@@ -209,6 +209,10 @@ func clone(c config.Config) config.Config {
 }
 func (r *Runtime) Config() config.Config { r.mu.Lock(); defer r.mu.Unlock(); return clone(r.cfg) }
 
+func (r *Runtime) Explain(req config.ExplainRequest) (config.ExplainResult, error) {
+	return r.Engine.Explain(req)
+}
+
 // RestartRequiredOutbounds includes retired nodes with open connections. Their
 // state directories cannot be safely opened by a replacement provider yet.
 func (r *Runtime) RestartRequiredOutbounds() []string {
@@ -549,6 +553,12 @@ func (m *managed) isClosed() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closed
+}
+
+func (m *managed) InvalidateStatus() {
+	if refresher, ok := m.Provider.(outbound.StatusRefresher); ok {
+		refresher.InvalidateStatus()
+	}
 }
 
 func (m *managed) Action(ctx context.Context, a, v string) error {

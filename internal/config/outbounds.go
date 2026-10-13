@@ -12,6 +12,8 @@ const (
 
 // RemoveOutbound preserves rules and requires an explicit replacement for
 // references. It never turns removal of a fixed VPN route into implicit direct.
+// Enabled groups may replace fixed/default targets only; adaptive candidates
+// and group members/selected targets require an enabled outbound.
 // The caller owns revision checking, persistence and runtime publication.
 func RemoveOutbound(c Config, id, replacement string) (Config, error) {
 	if id == "direct" {
@@ -30,18 +32,38 @@ func RemoveOutbound(c Config, id, replacement string) (Config, error) {
 	if index < 0 {
 		return Config{}, PublicError{Message: OutboundMissing}
 	}
+	fixed := c.DefaultOutbound == id
 	adaptive := slices.Contains(c.Adaptive.Candidates, id)
-	referenced := c.DefaultOutbound == id || adaptive
 	for _, rule := range c.Rules {
-		referenced = referenced || rule.Outbound == id || slices.Contains(rule.Candidates, id)
+		fixed = fixed || rule.Outbound == id
 		adaptive = adaptive || slices.Contains(rule.Candidates, id)
 	}
-	if referenced || replacement != "" {
-		if substitute.ID == "" || substitute.ID == id || !substitute.Enabled {
+	member := false
+	for _, g := range c.OutboundGroups {
+		member = member || slices.Contains(g.Members, id) || g.Selected == id
+	}
+	if fixed || adaptive || member || replacement != "" {
+		if replacement == "" || replacement == id {
 			return Config{}, PublicError{Message: ReplacementRequired}
 		}
-		if adaptive && (!substitute.PublicInternet || substitute.Type == "tailscale") {
-			return Config{}, PublicError{Message: ReplacementPublic}
+		if substitute.ID != "" {
+			if !substitute.Enabled {
+				return Config{}, PublicError{Message: ReplacementRequired}
+			}
+			if adaptive && (!substitute.PublicInternet || substitute.Type == "tailscale") {
+				return Config{}, PublicError{Message: ReplacementPublic}
+			}
+		} else {
+			enabledGroup := false
+			for _, g := range c.OutboundGroups {
+				if g.ID == replacement && g.Enabled {
+					enabledGroup = true
+					break
+				}
+			}
+			if !enabledGroup || adaptive || member {
+				return Config{}, PublicError{Message: ReplacementRequired}
+			}
 		}
 	}
 	replaceCandidates := func(ids []string) []string {
@@ -71,6 +93,13 @@ func RemoveOutbound(c Config, id, replacement string) (Config, error) {
 		c.DefaultOutbound = replacement
 	}
 	c.Adaptive.Candidates = replaceCandidates(c.Adaptive.Candidates)
+	c.OutboundGroups = slices.Clone(c.OutboundGroups)
+	for i := range c.OutboundGroups {
+		c.OutboundGroups[i].Members = replaceCandidates(c.OutboundGroups[i].Members)
+		if c.OutboundGroups[i].Selected == id {
+			c.OutboundGroups[i].Selected = replacement
+		}
+	}
 	if err := Validate(c); err != nil {
 		return Config{}, PublicError{Message: "Configuration validation failed: " + err.Error(), Err: err}
 	}

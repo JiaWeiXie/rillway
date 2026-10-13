@@ -3,6 +3,21 @@
 set -Eeuo pipefail
 umask 077
 
+on_error() {
+  local status=$1 line=$2
+  printf 'Service acceptance failed at line %s.\n' "$line" >&2
+  exit "$status"
+}
+trap 'on_error "$?" "$LINENO"' ERR
+
+systemd_log_level_is() {
+  local expected=$1 actual
+  actual=$(systemctl show -p LogLevelMax --value warp-svc)
+  case "$expected:$actual" in
+    info:info|info:6|debug:debug|debug:7) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 if [ "${RILLWAY_SERVICE_ACCEPTANCE:-}" != "1" ]; then
   echo 'Set RILLWAY_SERVICE_ACCEPTANCE=1 on a fresh Ubuntu 24.04/26.04 VM.' >&2
   exit 1
@@ -50,6 +65,7 @@ task_temp=$(mktemp -d)
 task_installed=0
 dummy_warp_created=0
 dummy_legacy_created=0
+warp_failure_dir=
 
 cleanup() {
   local exit_code=$?
@@ -76,6 +92,10 @@ cleanup() {
     sudo rm -f /etc/systemd/system/warp-svc.service
     sudo rm -rf /etc/systemd/system/warp-svc.service.d
     sudo systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
+  if [ -n "$warp_failure_dir" ]; then
+    sudo rm -rf -- "$warp_failure_dir"
   fi
 
   # Remove resource control state directory and socket if remaining after test
@@ -166,20 +186,20 @@ fi
 
 # Existing memory limit configuration must be preserved
 test "$(sudo cat /var/lib/rillway-resource-control/memory-limit.conf)" = "$(printf '[Service]\nMemoryMax=512M')"
-test -L /etc/systemd/system/rillway.service.d/zzzz-rillway-memory.conf
+sudo test -L /etc/systemd/system/rillway.service.d/zzzz-rillway-memory.conf
 test "$(sudo readlink -f /etc/systemd/system/rillway.service.d/zzzz-rillway-memory.conf)" = /var/lib/rillway-resource-control/memory-limit.conf
 
 # 7. Verify WARP service logging reconciliation
 # Managed state file must exist with default info level
-test -f /var/lib/rillway-resource-control/warp-log-level.conf
+sudo test -f /var/lib/rillway-resource-control/warp-log-level.conf
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '[Service]\nLogLevelMax=info')"
 
 # Systemd drop-in must be a symlink pointing to the managed state file
-test -L /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf
+sudo test -L /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf
 test "$(sudo readlink -f /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf)" = /var/lib/rillway-resource-control/warp-log-level.conf
 
 # Effective LogLevelMax of warp-svc must be info
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = info
+systemd_log_level_is info
 
 # 8. Wait for Rillway control and proxy services
 task_attempt=0
@@ -254,7 +274,7 @@ stale_resp=$(curl_api PUT "/api/v1/service/logging/warp" '{"level":"debug","revi
 stale_code=$(echo "$stale_resp" | tail -n 1)
 test "$stale_code" = "409"
 # Effective level must remain unchanged
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = info
+systemd_log_level_is info
 
 # 12. Verify invalid level validation (422)
 invalid_level_resp=$(curl_api PUT "/api/v1/service/logging/warp" "{\"level\":\"unsupported_level\",\"revision\":\"$initial_revision\"}")
@@ -277,15 +297,33 @@ test "$debug_revision" != "$initial_revision"
 
 # Verify systemd state and effective LogLevelMax
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = debug
+systemd_log_level_is debug
 
 # Verify that warp-svc was restarted (Main PID changed)
 warp_pid_after=$(systemctl show -p MainPID --value warp-svc)
 test "$warp_pid_before" != "$warp_pid_after"
 
 # 14. Verify restart failure rollback behavior
-# Temporarily break warp-svc.service unit so restarting it fails
-sudo sed -i 's|ExecStart=/bin/sleep infinity|ExecStart=/bin/false|' /etc/systemd/system/warp-svc.service
+# Fail only the apply restart; the rollback restart must succeed.
+warp_failure_dir=$(sudo mktemp -d /run/rillway-acceptance.XXXXXX)
+sudo mkdir "$warp_failure_dir/pending"
+sudo tee "$warp_failure_dir/start" > /dev/null <<'EOF'
+#!/bin/sh
+set -eu
+if rmdir "$1/pending" 2>/dev/null; then
+  exit 1
+fi
+test ! -e "$1/pending"
+touch "$1/recovered"
+EOF
+sudo chmod 0700 "$warp_failure_dir/start"
+# Previous successful fixture starts must not exhaust the rollback's start budget.
+sudo systemctl reset-failed warp-svc.service
+sudo sed -i \
+  -e 's|Type=simple|Type=oneshot|' \
+  -e "s|ExecStart=/bin/sleep infinity|ExecStart=$warp_failure_dir/start $warp_failure_dir|" \
+  -e 's|Restart=always|Restart=no|' \
+  /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
 
 # Attempt to change level to warning - restart will fail and helper must roll back to debug
@@ -296,9 +334,15 @@ test "$rollback_code" != "200"
 
 # Managed state file must have been restored to debug (NOT warning)
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
+sudo test -f "$warp_failure_dir/recovered"
+systemd_log_level_is debug
 
 # Restore warp-svc.service unit
-sudo sed -i 's|ExecStart=/bin/false|ExecStart=/bin/sleep infinity|' /etc/systemd/system/warp-svc.service
+sudo sed -i \
+  -e 's|Type=oneshot|Type=simple|' \
+  -e "s|ExecStart=$warp_failure_dir/start $warp_failure_dir|ExecStart=/bin/sleep infinity|" \
+  -e 's|Restart=no|Restart=always|' \
+  /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
 sudo systemctl restart warp-svc.service
 

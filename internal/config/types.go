@@ -1,5 +1,7 @@
 package config
 
+const ConfigVersion = 3
+
 // Config is the versioned, portable configuration. Secrets are file references.
 type Config struct {
 	Version          int              `json:"version"`
@@ -9,10 +11,33 @@ type Config struct {
 	ConnectionLimits ConnectionLimits `json:"connection_limits"`
 	SourceAccess     SourceAccess     `json:"source_access"`
 	Outbounds        []Outbound       `json:"outbounds"`
+	OutboundGroups   []OutboundGroup  `json:"outbound_groups"`
+	RuleSets         []RuleSet        `json:"rule_sets"`
 	Rules            []Rule           `json:"rules"`
 	DefaultOutbound  string           `json:"default_outbound"`
 	Adaptive         Adaptive         `json:"adaptive"`
 	PAC              PAC              `json:"pac"`
+}
+
+// OutboundGroup addresses several outbounds through one ID. Members are
+// outbound IDs, never other groups and never any direct-type outbound.
+type OutboundGroup struct {
+	ID       string   `json:"id"`
+	Type     string   `json:"type"` // "select" | "fallback" | "load-balance"
+	Enabled  bool     `json:"enabled"`
+	Members  []string `json:"members"`
+	Strategy string   `json:"strategy,omitempty"` // load-balance: "consistent-hashing" | "round-robin"
+	Key      string   `json:"key,omitempty"`      // load-balance + consistent-hashing: "destination" | "source"
+	Selected string   `json:"selected,omitempty"` // select: member ID
+}
+
+type RuleSet struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Domains  []string `json:"domains,omitempty"`
+	Suffixes []string `json:"suffixes,omitempty"`
+	CIDRs    []string `json:"cidrs,omitempty"`
+	Sources  []string `json:"sources,omitempty"`
 }
 
 type Listeners struct {
@@ -89,6 +114,10 @@ type Rule struct {
 	Domains    []string `json:"domains,omitempty"`
 	Suffixes   []string `json:"suffixes,omitempty"`
 	CIDRs      []string `json:"cidrs,omitempty"`
+	Sources    []string `json:"sources,omitempty"`
+	Inbounds   []string `json:"inbounds,omitempty"`
+	Ports      []string `json:"ports,omitempty"`
+	Sets       []string `json:"sets,omitempty"`
 	Outbound   string   `json:"outbound,omitempty"`
 	Adaptive   bool     `json:"adaptive,omitempty"`
 	Candidates []string `json:"candidates,omitempty"`

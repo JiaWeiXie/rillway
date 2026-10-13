@@ -2,6 +2,78 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## Unreleased
+
+### Features
+
+- **config:** add outbound groups and composite rule schema
+- **routing:** match source inbound port and rule sets
+- **engine:** select and balance outbound groups
+- **control:** explain routes and manage outbound groups
+- **web:** add accessible light and dark themes
+- **web:** add group rule-set and route preview editors
+- **web:** style search bulk and responsive controls
+- **control:** improve management web interactions
+- **tui:** display outbound groups
+
+### Fixes
+
+- **config:** allow group replacements for fixed routes
+- **web:** invalidate previews only on revision change
+- **routing:** preserve legacy rule matching
+- address proxy core review findings
+- **tui:** bound group rows to viewport
+
+### Refactoring
+
+- **web:** make browser initialization explicit
+
+### Maintenance
+
+- **engine:** cover disabled preview targets
+- **web:** cover logout busy cleanup
+- **tui:** cover service switch log reset
+## 0.6.0 - 2026-10-12
+
+### Features
+
+- **resource-control:** manage WARP service logging
+- **control:** add WARP service logging management and migrate resource control
+- **web:** add WARP logging and refresh controls
+- **tui:** add WARP logging and refresh controls
+- **resource-control:** manage WARP service logging
+
+### Fixes
+
+- **tui:** gate status refresh during loading
+- **warp:** preserve forced status refresh
+- **web:** correct outbound refresh scheduling
+- **web:** translate WARP logging status
+- **tui:** translate WARP logging status
+- **control:** localize WARP logging errors
+- **web:** complete resource-control error translations
+- **tui:** complete resource control message translations
+- **i18n:** cover resource control messages
+- **web:** translate unavailable resource control reason
+- **resource-control:** roll back failed socket activation
+- **platform:** satisfy release lint checks
+- **resource-control:** format Linux helper imports
+
+### Performance
+
+- **warp:** reduce status polling overhead
+
+### Refactoring
+
+- **resource-control:** generalize privileged helper
+
+### Documentation
+
+- **verification:** record v0.5.1 release deployment and post-deployment checks
+
+### Maintenance
+
+- **resource-control:** cover migration and acceptance
 ## 0.5.1 - 2026-10-11
 
 ### Fixes

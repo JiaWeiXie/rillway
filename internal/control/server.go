@@ -26,6 +26,7 @@ import (
 type Backend interface {
 	Config() config.Config
 	Apply(context.Context, config.Config) error
+	Explain(config.ExplainRequest) (config.ExplainResult, error)
 	Snapshot() any
 	Statuses(context.Context, bool) []outbound.Status
 	Action(context.Context, string, string, string) error
@@ -68,6 +69,8 @@ func New(backend Backend, adminToken string) http.Handler {
 	mux.HandleFunc("GET /api/v1/stats", h.protect(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, h.backend.Snapshot()) }))
 	mux.HandleFunc("GET /api/v1/source-clients", h.protect(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, h.backend.SourceClients()) }))
 	mux.HandleFunc("POST /api/v1/source-clients/block", h.protect(h.blockSource))
+	mux.HandleFunc("POST /api/v1/route/explain", h.protect(h.explainRoute))
+	mux.HandleFunc("DELETE /api/v1/groups/{id}", h.protect(h.deleteGroup))
 	mux.HandleFunc("GET /api/v1/outbounds", h.protect(h.getOutbounds))
 	mux.HandleFunc("PUT /api/v1/outbounds", h.protect(h.saveOutbound))
 	mux.HandleFunc("DELETE /api/v1/outbounds/{id}", h.protect(h.deleteOutbound))
@@ -86,7 +89,7 @@ func New(backend Backend, adminToken string) http.Handler {
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		brandType := brandContentType(name)
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/app.css" && r.URL.Path != "/i18n.js" && r.URL.Path != "/locales.json" && brandType == "" {
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/app.css" && r.URL.Path != "/i18n.js" && r.URL.Path != "/theme.js" && r.URL.Path != "/editors.js" && r.URL.Path != "/locales.json" && brandType == "" {
 			http.NotFound(w, r)
 			return
 		}

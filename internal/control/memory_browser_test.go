@@ -10,7 +10,7 @@ import (
 func TestBrowserMemoryFormContract(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("Node unavailable")
+		t.Fatalf("Node is required for the browser form contracts: %v", err)
 	}
 	for _, script := range []string{"testdata/memory_test.js", "testdata/capacity_test.js"} {
 		t.Run(script, func(t *testing.T) {

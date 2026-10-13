@@ -6,6 +6,7 @@ import (
 	"net"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
+	"slices"
 	"sort"
 	"sync"
 	"syscall"
@@ -29,6 +30,7 @@ type adaptiveState struct {
 	winner                            string
 	winnerEvidence, nextSample        uint64
 	streak, probeIndex                int
+	target                            target // Immutable ingress snapshot used to reselect this policy on Update.
 }
 
 func adaptiveDefaults(a config.Adaptive) config.Adaptive {
@@ -60,10 +62,10 @@ func adaptiveDefaults(a config.Adaptive) config.Adaptive {
 }
 
 func (e *Engine) destinationLocked(key, address, network string, r route) *adaptiveState {
-	if d := e.destinations[key]; d != nil {
+	if d := e.destinations[key]; d != nil && sameAdaptivePolicy(d, r) {
 		return d
 	}
-	if len(e.destinations) >= maxDestinations {
+	if e.destinations[key] == nil && len(e.destinations) >= maxDestinations {
 		var oldestKey string
 		var oldest time.Time
 		for k, d := range e.destinations {
@@ -88,9 +90,13 @@ func initialOutbound(r route) string {
 	return r.candidates[0]
 }
 
+func sameAdaptivePolicy(d *adaptiveState, r route) bool {
+	return len(r.candidates) > 0 && r.rule == d.rule && r.family == d.family && slices.Equal(r.candidates, d.candidates) && initialOutbound(r) == d.initial
+}
+
 func newAdaptiveState(address, network string, r route, now time.Time) *adaptiveState {
 	current := initialOutbound(r)
-	return &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", rule: r.rule, family: r.family, initial: current, candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now}
+	return &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", rule: r.rule, family: r.family, initial: current, candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now, target: r.target}
 }
 
 func (e *Engine) chooseLocked(d *adaptiveState) string { return d.current }
@@ -311,6 +317,9 @@ func (e *Engine) completeProbe(job probeJob, started time.Time, conn net.Conn, e
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.probes--
+	if job.state != nil && e.destinations[job.key] == job.state || sameProvider(job.provider, e.providers[job.id]) {
+		e.recordHealthLocked(job.id, err)
+	}
 	if e.destinations[job.key] == job.state {
 		if internal {
 			delete(e.destinations, job.key)

@@ -2,6 +2,14 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-13：WARP rollback 服務驗收 fixture
+
+- **故障注入**：改用 root 擁有的單次失敗標記與 `Type=oneshot`／`Restart=no`，第一次 restart 同步失敗，rollback restart 成功。驗收同時檢查 API 非 200、受管設定還原為 debug、成功執行標記與實際 LogLevelMax。
+- **還原流程**：成功結束的 oneshot unit 可能被 systemd 卸載；移除還原正常服務前多餘的 `reset-failed`，保留故障注入前對 dummy unit 的啟動計數重設。
+- **實際 systemd smoke**：隔離 Ubuntu 24.04／systemd 255 確認第一次 restart 失敗、第二次成功、有效 debug 還原，最後正常長駐服務回到 active；測試 unit 與標記已清除。
+- **本機品質**：`bash -n scripts/acceptance-ubuntu.sh` 與 `mise run check` 通過，涵蓋 lint、Go race／shuffle／coverage 與 8 個 Python tests。
+- **限制**：隔離 OrbStack 完整 API 驗收在進入故障注入前的 log-level 更新超過既有 5 秒期限，amd64 與 ARM64 binary 都未通過；沒有放寬 timeout。上述 systemd smoke 不等同完整服務驗收或正式 WARP client 驗證。GitHub CI 結果須另依對應 commit 核對。
+
 ## 2026-10-12：v0.5.1 發布、正式服務升級與基本驗收
 
 - **現行資源邊界**：部署 VM 為 4 vCPU、約 5.28 GiB RAM；Rillway 的實際 systemd 配額維持 1 CPU、MemoryMax 1 GiB、MemoryHigh 768 MiB、Go runtime 軟預算 704 MiB。程序 FD 軟／硬限制為 524,287／524,288，觀察當下 FD 136、RSS 約 70 MiB、cgroup 約 25 MiB，沒有 OOM 或自動重啟。這是讀取當下的狀態，並非容量壓測。

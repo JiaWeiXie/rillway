@@ -363,7 +363,7 @@ func TestSaveFailureDoesNotApply(t *testing.T) {
 	if err = r.Apply(t.Context(), next); err == nil {
 		t.Fatal("saving to directory succeeded")
 	}
-	if r.Config().Revision != 1 || len(r.Config().Rules) != 2 {
+	if r.Config().Revision != c.Revision || len(r.Config().Rules) != len(c.Rules) {
 		t.Fatal("failed disk save changed active config")
 	}
 }
@@ -394,7 +394,7 @@ func TestRuntimeStatusesInvalidatesStatusRefresher(t *testing.T) {
 
 	p := &fakeRefresherProvider{id: "warp"}
 	r.mu.Lock()
-	r.providers["warp"] = p
+	r.providers["warp"] = &managed{Provider: p}
 	r.mu.Unlock()
 
 	// 1. Statuses with force=false should NOT invalidate

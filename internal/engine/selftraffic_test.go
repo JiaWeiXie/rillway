@@ -144,7 +144,7 @@ func TestProbeResolvingToSelfIsDiscardedAndClosed(t *testing.T) {
 	defer func() { _ = l.Close() }()
 	e, _ := testEngine()
 	key := "alias.invalid:443|tcp"
-	r, err := e.selectRoute("alias.invalid")
+	r, err := e.selectRoute(target{host: "alias.invalid"})
 	if err != nil {
 		t.Fatal(err)
 	}

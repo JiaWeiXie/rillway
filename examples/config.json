@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "revision": 1,
   "listeners": {
     "http": "127.0.0.1:17890",
@@ -37,9 +37,12 @@
     {"id": "company", "type": "tailscale", "enabled": false, "public_internet": false, "state_dir": "./.local/tailscale", "hostname": "rillway"},
     {"id": "wg", "type": "wireguard", "enabled": false, "public_internet": true, "config_file": "./.local/secrets/wg.conf"}
   ],
+  "outbound_groups": [],
+  "rule_sets": [],
   "rules": [
     {"id": "github-origin", "domains": ["github.com", "api.github.com", "codeload.github.com"], "outbound": "direct", "family": "auto"},
-    {"id": "github-cdn", "domains": ["raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"], "suffixes": ["githubassets.com"], "outbound": "warp", "family": "auto"}
+    {"id": "github-cdn", "domains": ["raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"], "outbound": "warp", "family": "auto"},
+    {"id": "github-assets", "suffixes": ["githubassets.com"], "outbound": "warp", "family": "auto"}
   ],
   "default_outbound": "direct",
   "adaptive": {

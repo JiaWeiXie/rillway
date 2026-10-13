@@ -166,6 +166,12 @@ func (c *Client) Apply(ctx context.Context, cfg config.Config) (config.Config, e
 	return v, err
 }
 
+func (c *Client) Explain(ctx context.Context, req config.ExplainRequest) (config.ExplainResult, error) {
+	var result config.ExplainResult
+	err := c.request(ctx, http.MethodPost, "/api/v1/route/explain", req, &result)
+	return result, err
+}
+
 func (c *Client) Snapshot(ctx context.Context) (json.RawMessage, error) {
 	var v json.RawMessage
 	err := c.request(ctx, "GET", "/api/v1/stats", nil, &v)

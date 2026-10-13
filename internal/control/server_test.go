@@ -16,6 +16,7 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/buildinfo"
 	"rillway/internal/config"
+	"rillway/internal/engine"
 	"rillway/internal/outbound"
 	"strings"
 	"sync"
@@ -37,6 +38,12 @@ func newBackend() *fakeBackend {
 	return &fakeBackend{cfg: config.Config{Version: 1, Revision: 7, Outbounds: []config.Outbound{{ID: "warp", Type: "warp", Enabled: true}}}}
 }
 func (b *fakeBackend) Config() config.Config { b.mu.Lock(); defer b.mu.Unlock(); return b.cfg }
+func (b *fakeBackend) Explain(req config.ExplainRequest) (config.ExplainResult, error) {
+	e := engine.New(b.Config(), nil)
+	defer func() { _ = e.Close() }()
+	return e.Explain(req)
+}
+
 func (b *fakeBackend) Apply(_ context.Context, c config.Config) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

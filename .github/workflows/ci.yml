@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
@@ -91,4 +92,4 @@ jobs:
         with:
           cache: false
       - run: mise run build
-      - run: RILLWAY_SERVICE_ACCEPTANCE=1 sh scripts/acceptance-ubuntu.sh
+      - run: RILLWAY_SERVICE_ACCEPTANCE=1 bash scripts/acceptance-ubuntu.sh

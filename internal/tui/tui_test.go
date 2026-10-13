@@ -105,6 +105,33 @@ func TestNavigationAndFlowSelection(t *testing.T) {
 	}
 }
 
+func TestOutboundGroupsAreReadOnlyAndLocalized(t *testing.T) {
+	m := model{ready: true, page: 1, height: 25, cfg: config.Config{
+		Outbounds: []config.Outbound{{ID: "warp", Type: "warp"}, {ID: "vpn-b", Type: "wireguard"}},
+		OutboundGroups: []config.OutboundGroup{
+			{ID: "fallback-a", Type: "fallback", Members: []string{"warp", "vpn-b"}},
+			{ID: "select-a", Type: "select", Members: []string{"warp", "vpn-b"}, Selected: "vpn-b"},
+		},
+	}}
+	for range 3 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(model)
+	}
+	if m.selected != 1 {
+		t.Fatalf("group rows entered the outbound selection range: %d", m.selected)
+	}
+	view := m.View()
+	for _, want := range []string{"Group fallback-a · fallback · warp, vpn-b", "Group select-a · select · warp, vpn-b · selected vpn-b"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing group display %q in:\n%s", want, view)
+		}
+	}
+	m.locale = i18n.TraditionalChinese
+	if view := m.View(); !strings.Contains(view, "群組 fallback-a · 備援") || !strings.Contains(view, "群組 select-a · 選擇 · warp, vpn-b · 已選擇 vpn-b") {
+		t.Fatalf("group display was not localized:\n%s", view)
+	}
+}
+
 func TestUnknownRemoteDNSIsNotInvented(t *testing.T) {
 	m := model{ready: true, height: 30, flows: []flow{{Host: "github.com", Outbound: "warp"}}}
 	if !strings.Contains(m.View(), "IP not reported by upstream") {
