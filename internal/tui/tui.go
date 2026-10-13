@@ -1166,6 +1166,13 @@ func (m model) outboundsView() string {
 			}
 		}
 	}
+	for _, group := range m.cfg.OutboundGroups {
+		members := strings.Join(group.Members, ", ")
+		if group.Type == "select" {
+			members += " · " + m.text("selected") + " " + group.Selected
+		}
+		fmt.Fprintf(&b, m.text("\n  Group %s · %s · %s\n"), group.ID, m.text(group.Type), members)
+	}
 	return b.String()
 }
 

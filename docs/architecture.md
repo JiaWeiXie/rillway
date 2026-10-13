@@ -25,6 +25,12 @@ flowchart LR
 
 刪除其他出口前，Web UI 會列出引用它的規則、預設路由與自適應設定，要求明確選擇已啟用的替代出口。確認後原子刪除並替換所有引用、去除候選重複項，保留規則 ID／匹配條件／順序；不默默刪規則或轉成 direct。替換自適應候選時，替代出口需具公網能力且不可為 Tailscale。只有完全沒有引用時才可省略替代出口。取消、失敗與 revision 衝突均保留原設定，既有連線繼續使用原 provider。移除 profile 不會取消官方 WARP 註冊或刪除 VPN 憑證。
 
+## 出口群組與規則集
+
+規則可指向單一出口或已啟用的出口群組。群組成員只能是已啟用的非 direct 出口，不能巢狀；`select` 使用指定成員，`fallback` 依成員順序在同一連線 context 內嘗試，`load-balance` 使用 round-robin 或以來源／目的地為 key 的一致性雜湊。固定規則選定群組後，不會因成員失敗改走 direct。
+
+規則的 domains、suffixes、CIDRs、來源 CIDRs、inbounds、ports 與 rule sets 是 AND 條件；每個欄位內的多個值是 OR。Rule set 只提供可重用的本地網域／網段／來源條件，沒有遠端訂閱、腳本或 DNS 預先查詢。Web UI 可完整編輯群組、規則集與路由規則；TUI 僅在 Outbounds 頁顯示群組，不能編輯或選取群組列。
+
 網域先轉小寫並移除結尾句點。`domains` 精確比對；`suffixes` 同時匹配本身與子網域，`example.com` 不會匹配 `notexample.com`。同類固定規則依設定順序，固定規則始終優先於自適應規則。要讓既有固定網域改用自適應，需移除／修改該固定規則。
 
 CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 DNS 解析 hostname 再套 CIDR，避免在選定出口前洩漏名稱。網域流量請使用網域規則；要求 `ipv4`、`ipv6` 或 `auto` 會傳入該出口。WARP 的遠端 SOCKS DNS 無法保證 hostname 強制 family，會回報不支援。
@@ -55,7 +61,7 @@ WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用
 
 Proxy（HTTP／CONNECT 與 SOCKS5）在 TCP socket accept 後、通訊協定解析前進行 pre-parser 入口審查。管理介面與 PAC 則獨立使用各自的授權與監聽邏輯，不經由 Proxy 連線守衛。
 
-- **雙軌 ACL 與設定版本**：`config.json` 版本為 2。`security.allowed_clients` 維持唯讀，作為 HTTPS 管理介面與 HTTP PAC 端點存取的網路邊界；`source_access.rules` 則專門用於 Proxy 連入存取。若版本 2 的 `source_access.rules` 為空，表示明確全域拒絕（deny-all），不再回退至預設或 `security.allowed_clients`。
+- **雙軌 ACL 與設定版本**：`config.json` 版本為 3。`security.allowed_clients` 維持唯讀，作為 HTTPS 管理介面與 HTTP PAC 端點存取的網路邊界；`source_access.rules` 則專門用於 Proxy 連入存取。版本 1／2 讀取時會升級為版本 3，保留既有 source access；版本 3 的 `source_access.rules` 為空表示明確全域拒絕（deny-all），不再回退至預設或 `security.allowed_clients`。
 - **規則匹配語意**：規則採用前綴二元樹（Trie）評估。各規則定義動作（`allow` 或 `deny`）、啟用狀態與 CIDR 前綴列表。當有多條規則覆蓋同一個 IP 時，以最長前綴（longest/deepest prefix）優先；若在前綴長度完全相同時發生衝突，則以拒絕優先（deny beats allow）；若前綴長度相同且動作一致，則由設定順序中較早啟用的規則決定 `rule_id`。未匹配任何規則的連線預設拒絕（fail closed）。
 - **連線容量與限流防護**：`connection_limits.max_connections`／`max_connections_per_source` 預設為 256／256，保留既有全域預算；總上限省略或填 0 使用預設，來源上限省略或填 0 使用預設與生效總上限中較小者，不代表無上限。既有明確設定值保持不變，設定上限不代表經實測的安全容量。整數最大 65,536，生效後單一來源上限不得大於總上限。HTTP 轉發、CONNECT 與 SOCKS5 的握手、閒置及傳輸中入口 socket 共用預算；同一標準化 IP 的多個應用程式／profile 共用來源額度。容量拒絕發生於協定解析前，直接關閉 socket。來源政策拒絕優先；若兩項容量都滿額，記為 `total_limit`。
 - **容量設定 publication**：Web 來源存取表單與 `PUT /api/v1/config` 使用同一驗證、revision 及原子持久化流程，成功寫入後更新共用 guard，不需重啟。提高上限立即允許新准入；降低上限保留既有串流，活躍數可暫時高於新上限，直到兩項預算都有餘額才接受新連線。直接修改主機設定檔仍需重啟載入。
