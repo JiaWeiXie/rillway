@@ -9,6 +9,15 @@ on_error() {
   exit "$status"
 }
 trap 'on_error "$?" "$LINENO"' ERR
+
+systemd_log_level_is() {
+  local expected=$1 actual
+  actual=$(systemctl show -p LogLevelMax --value warp-svc)
+  case "$expected:$actual" in
+    info:info|info:6|debug:debug|debug:7) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 if [ "${RILLWAY_SERVICE_ACCEPTANCE:-}" != "1" ]; then
   echo 'Set RILLWAY_SERVICE_ACCEPTANCE=1 on a fresh Ubuntu 24.04/26.04 VM.' >&2
   exit 1
@@ -185,7 +194,7 @@ sudo test -L /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf
 test "$(sudo readlink -f /etc/systemd/system/warp-svc.service.d/zzzz-rillway-log-level.conf)" = /var/lib/rillway-resource-control/warp-log-level.conf
 
 # Effective LogLevelMax of warp-svc must be info
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = info
+systemd_log_level_is info
 
 # 8. Wait for Rillway control and proxy services
 task_attempt=0
@@ -260,7 +269,7 @@ stale_resp=$(curl_api PUT "/api/v1/service/logging/warp" '{"level":"debug","revi
 stale_code=$(echo "$stale_resp" | tail -n 1)
 test "$stale_code" = "409"
 # Effective level must remain unchanged
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = info
+systemd_log_level_is info
 
 # 12. Verify invalid level validation (422)
 invalid_level_resp=$(curl_api PUT "/api/v1/service/logging/warp" "{\"level\":\"unsupported_level\",\"revision\":\"$initial_revision\"}")
@@ -283,7 +292,7 @@ test "$debug_revision" != "$initial_revision"
 
 # Verify systemd state and effective LogLevelMax
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
-test "$(systemctl show -p LogLevelMax --value warp-svc)" = debug
+systemd_log_level_is debug
 
 # Verify that warp-svc was restarted (Main PID changed)
 warp_pid_after=$(systemctl show -p MainPID --value warp-svc)
