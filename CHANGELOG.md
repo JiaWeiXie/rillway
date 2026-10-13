@@ -2,17 +2,17 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
-## Unreleased
+## 0.7.0 - 2026-10-13
 
 ### Features
 
 - **config:** add outbound groups and composite rule schema
-- **routing:** match source inbound port and rule sets
+- **routing:** match source, inbound, port, and rule sets
 - **engine:** select and balance outbound groups
 - **control:** explain routes and manage outbound groups
 - **web:** add accessible light and dark themes
-- **web:** add group rule-set and route preview editors
-- **web:** style search bulk and responsive controls
+- **web:** add group, rule-set, and route-preview editors
+- **web:** add search, bulk actions, keyboard flows, and responsive controls
 - **control:** improve management web interactions
 - **tui:** display outbound groups
 
@@ -33,6 +33,7 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 - **engine:** cover disabled preview targets
 - **web:** cover logout busy cleanup
 - **tui:** cover service switch log reset
+
 ## 0.6.0 - 2026-10-12
 
 ### Features
