@@ -214,6 +214,25 @@ func Default(stateDir string) Config {
 	}
 }
 
+type legacyRule struct {
+	ID         string   `json:"id"`
+	Domains    []string `json:"domains,omitempty"`
+	Suffixes   []string `json:"suffixes,omitempty"`
+	CIDRs      []string `json:"cidrs,omitempty"`
+	Outbound   string   `json:"outbound,omitempty"`
+	Adaptive   bool     `json:"adaptive,omitempty"`
+	Candidates []string `json:"candidates,omitempty"`
+	Family     string   `json:"family,omitempty"`
+}
+
+func currentRules(rules []legacyRule) []Rule {
+	current := make([]Rule, len(rules))
+	for i, rule := range rules {
+		current[i] = Rule{ID: rule.ID, Domains: rule.Domains, Suffixes: rule.Suffixes, CIDRs: rule.CIDRs, Outbound: rule.Outbound, Adaptive: rule.Adaptive, Candidates: rule.Candidates, Family: rule.Family}
+	}
+	return current
+}
+
 type rawConfigV1 struct {
 	Version          int              `json:"version"`
 	Revision         uint64           `json:"revision"`
@@ -221,7 +240,7 @@ type rawConfigV1 struct {
 	Security         Security         `json:"security"`
 	ConnectionLimits ConnectionLimits `json:"connection_limits"`
 	Outbounds        []Outbound       `json:"outbounds"`
-	Rules            []Rule           `json:"rules"`
+	Rules            []legacyRule     `json:"rules"`
 	DefaultOutbound  string           `json:"default_outbound"`
 	Adaptive         Adaptive         `json:"adaptive"`
 	PAC              PAC              `json:"pac"`
@@ -235,7 +254,7 @@ type rawConfigV2 struct {
 	ConnectionLimits ConnectionLimits `json:"connection_limits"`
 	SourceAccess     SourceAccess     `json:"source_access"`
 	Outbounds        []Outbound       `json:"outbounds"`
-	Rules            []Rule           `json:"rules"`
+	Rules            []legacyRule     `json:"rules"`
 	DefaultOutbound  string           `json:"default_outbound"`
 	Adaptive         Adaptive         `json:"adaptive"`
 	PAC              PAC              `json:"pac"`
@@ -310,7 +329,7 @@ func migrateV1(v1 rawConfigV1) Config {
 		Outbounds:        v1.Outbounds,
 		OutboundGroups:   []OutboundGroup{},
 		RuleSets:         []RuleSet{},
-		Rules:            migrateLegacyRules(v1.Rules),
+		Rules:            migrateLegacyRules(currentRules(v1.Rules)),
 		DefaultOutbound:  v1.DefaultOutbound,
 		Adaptive:         v1.Adaptive,
 		PAC:              v1.PAC,
@@ -370,7 +389,7 @@ func Decode(data []byte) (Config, error) {
 			Outbounds:        v2.Outbounds,
 			OutboundGroups:   []OutboundGroup{},
 			RuleSets:         []RuleSet{},
-			Rules:            migrateLegacyRules(v2.Rules),
+			Rules:            migrateLegacyRules(currentRules(v2.Rules)),
 			DefaultOutbound:  v2.DefaultOutbound,
 			Adaptive:         v2.Adaptive,
 			PAC:              v2.PAC,

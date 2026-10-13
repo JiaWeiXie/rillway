@@ -137,6 +137,11 @@ func (e *Engine) Explain(req config.ExplainRequest) (config.ExplainResult, error
 			}
 		}
 	} else {
+		for _, outbound := range e.cfg.Outbounds {
+			if outbound.ID == resolved && !outbound.Enabled {
+				return explainBlock(result, &routeBlockError{reason: "target_unavailable", message: "outbound is disabled"}), nil
+			}
+		}
 		result.ResolvedID = resolved
 	}
 	return result, nil

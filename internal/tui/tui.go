@@ -1166,12 +1166,17 @@ func (m model) outboundsView() string {
 			}
 		}
 	}
-	for _, group := range m.cfg.OutboundGroups {
+	groupLimit := max(0, m.height-17-(end-start))
+	width := m.width
+	if width <= 0 {
+		width = 120
+	}
+	for _, group := range m.cfg.OutboundGroups[:min(len(m.cfg.OutboundGroups), groupLimit)] {
 		members := strings.Join(group.Members, ", ")
 		if group.Type == "select" {
 			members += " · " + m.text("selected") + " " + group.Selected
 		}
-		fmt.Fprintf(&b, m.text("\n  Group %s · %s · %s\n"), group.ID, m.text(group.Type), members)
+		fmt.Fprintf(&b, m.text("\n  Group %s · %s · %s\n"), strings.TrimSpace(cell(group.ID, 25)), strings.TrimSpace(cell(m.text(group.Type), 16)), strings.TrimSpace(cell(members, max(0, width-50))))
 	}
 	return b.String()
 }

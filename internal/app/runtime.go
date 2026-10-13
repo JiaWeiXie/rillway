@@ -555,6 +555,12 @@ func (m *managed) isClosed() bool {
 	return m.closed
 }
 
+func (m *managed) InvalidateStatus() {
+	if refresher, ok := m.Provider.(outbound.StatusRefresher); ok {
+		refresher.InvalidateStatus()
+	}
+}
+
 func (m *managed) Action(ctx context.Context, a, v string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

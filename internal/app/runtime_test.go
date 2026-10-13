@@ -394,7 +394,7 @@ func TestRuntimeStatusesInvalidatesStatusRefresher(t *testing.T) {
 
 	p := &fakeRefresherProvider{id: "warp"}
 	r.mu.Lock()
-	r.providers["warp"] = p
+	r.providers["warp"] = &managed{Provider: p}
 	r.mu.Unlock()
 
 	// 1. Statuses with force=false should NOT invalidate

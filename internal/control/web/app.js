@@ -171,15 +171,19 @@ async function reorderRule(id,destination,attribute = 'data-up-rule') {
   catch(error) { if(generation === sessionGeneration && !error.stale) { notice(error,true); if(error.status === 409) { rulesNeedReload = true; $('rules-reload').hidden = false; } } }
   finally { if(generation === sessionGeneration) { ruleMutationPending = false; renderRules(); restoreRuleFocus(id,attribute); } }
 }
-let busyButtons = new WeakSet();
+let busyButtons = new Map();
+function resetBusyButtons() {
+  for(const [button,state] of busyButtons) { button.disabled = state.disabled; button.textContent = state.text; button.removeAttribute('aria-busy'); }
+  busyButtons = new Map();
+}
 async function withBusy(button,action) {
   const locks = busyButtons;
   if(locks.has(button)) return;
-  locks.add(button);
-  const disabled = button.disabled, text = button.textContent;
+  const state = {disabled:button.disabled,text:button.textContent};
+  locks.set(button,state);
   button.disabled = true; button.setAttribute('aria-busy','true');
   try { return await action(); }
-  finally { if(locks === busyButtons) { locks.delete(button); button.disabled = disabled; button.textContent = text; button.removeAttribute('aria-busy'); } }
+  finally { if(locks === busyButtons) { locks.delete(button); button.disabled = state.disabled; button.textContent = state.text; button.removeAttribute('aria-busy'); } }
 }
 const modalOpeners = new WeakMap();
 function openModal(dialog,trigger = document.activeElement,fallback = null) {
@@ -758,7 +762,7 @@ function filterGlossary() {
   $('glossary-empty').hidden = shown !== 0;
 }
 function clearOutboundSecrets() { outboundGeneration++; $('out-profile').value = ''; $('out-key').value = ''; $('out-upload').value = ''; outboundDrafts = {}; }
-function logout() { busyButtons = new WeakSet(); sessionGeneration++; active = false; clearTimeout(noticeTimer); noticeTimer = null; lastNotice = null; clearSelections(); bulkContext = null; rulesNeedReload = false; sourceRulesNeedReload = false; ruleMutationPending = false; $('bulk-delete-dialog').close(); $('shortcuts-dialog').close(); loadedCollections.clear(); editors.reset(); ruleDraft = null; ruleOpening = false; $('rule-dialog').close(); $('rule-form').reset(); $('rule-latest').textContent = ''; $('rule-mine').textContent = ''; $('rule-review-panel').hidden = true; memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacityDraftRevision = null; capacitySaving = false; clearError($('source-capacity-form')); if($('warp-log-form')) clearError($('warp-log-form')); clearOutboundSecrets(); $('outbound-dialog').close(); active = false; stopSourcePolling(); stopOutboundPolling(); $('source-rule-dialog').close(); $('block-source-dialog').close(); sourceClients = []; sourceSnapshotGeneratedAt = null; sourceCapacity = null; serverInfo = null; latestSnapshot = {}; $('advanced-info').open = false; token = ''; try { sessionStorage.removeItem('rillway-token'); } catch (_) {} $('app').hidden = true; $('login').hidden = false; $('token').value = ''; }
+function logout() { resetBusyButtons(); sessionGeneration++; active = false; clearTimeout(noticeTimer); noticeTimer = null; lastNotice = null; clearSelections(); bulkContext = null; rulesNeedReload = false; sourceRulesNeedReload = false; ruleMutationPending = false; $('bulk-delete-dialog').close(); $('shortcuts-dialog').close(); loadedCollections.clear(); editors.reset(); ruleDraft = null; ruleOpening = false; $('rule-dialog').close(); $('rule-form').reset(); $('rule-latest').textContent = ''; $('rule-mine').textContent = ''; $('rule-review-panel').hidden = true; memoryStatus = null; memoryDirty = false; memoryDraftRevision = ''; $('memory-fields').disabled = true; warpLogStatus = null; warpLogDirty = false; warpLogDraftRevision = ''; if($('warp-log-fields')) $('warp-log-fields').disabled = true; capacityDirty = false; capacitySaving = false; capacityDraftRevision = null; if($('capacity-fields')) $('capacity-fields').disabled = true; if($('login')) $('login').hidden = false; if($('main')) $('main').hidden = true; cfg = null; clearOutboundSecrets(); }
 async function openOutbound(index = -1) {
   try { formDefaults = await api('/defaults'); }
   catch(error) { notice(error,true); return; }
@@ -1340,11 +1344,8 @@ function bindUI() {
   });
   $('block-source-form').addEventListener('submit',async e => {
     e.preventDefault();
-    const generation = sessionGeneration;
     if(!blockSourceContext) return;
-    const btn = $('confirm-block-source');
-    if(btn.disabled) return;
-    btn.disabled = true;
+    return withBusy($('confirm-block-source'), async () => {
     clearError(e.target);
     const {address,revision} = blockSourceContext;
     try {
@@ -1358,7 +1359,7 @@ function bindUI() {
       if(generation !== sessionGeneration) return;
       focusSource(address);
     } catch(error) { errorIn(e.target,error); }
-    finally { if(generation === sessionGeneration) btn.disabled = false; }
+    });
   });
   $('capacity-max-total').addEventListener('input', onCapacityEdit);
   $('capacity-max-per-source').addEventListener('input', onCapacityEdit);
@@ -1444,13 +1445,13 @@ function bindUI() {
     e.preventDefault(); if(!deletingOutbound) return;
     const generation = sessionGeneration;
     const {id,config:c} = deletingOutbound, button = e.target.querySelector('button.primary');
-    button.disabled = true;
+    return withBusy(button, async () => {
     try {
       const updated = await api(`/outbounds/${encodeURIComponent(id)}`,{method:'DELETE',body:JSON.stringify({revision:c.revision,replacement:$('delete-replacement-section').hidden ? '' : $('delete-replacement').value})});
       if(generation !== sessionGeneration) return;
       $('delete-outbound-dialog').close(); publishConfig(updated); notice('Outbound deleted. Referenced routes now use the replacement you selected.'); await poll();
     } catch(error) { errorIn(e.target,error); }
-    finally { if(generation === sessionGeneration) button.disabled = false; }
+    });
   });
   $('docker-form').addEventListener('submit',async e => {
     e.preventDefault();

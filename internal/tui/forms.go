@@ -188,6 +188,8 @@ func (m model) updateFields(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.tokenVisible = false
 			m.advancedVisible = false
 			m.serverInfo = control.Info{}
+			m.warpLogLoading = false
+			m.warpLogStatus = resourcecontrol.WarpLogStatus{}
 			m.generation++
 			m.statusSequence++
 			m.ready = false
