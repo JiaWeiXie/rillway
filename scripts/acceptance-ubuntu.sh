@@ -65,6 +65,7 @@ task_temp=$(mktemp -d)
 task_installed=0
 dummy_warp_created=0
 dummy_legacy_created=0
+warp_failure_dir=
 
 cleanup() {
   local exit_code=$?
@@ -91,6 +92,10 @@ cleanup() {
     sudo rm -f /etc/systemd/system/warp-svc.service
     sudo rm -rf /etc/systemd/system/warp-svc.service.d
     sudo systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+
+  if [ -n "$warp_failure_dir" ]; then
+    sudo rm -rf -- "$warp_failure_dir"
   fi
 
   # Remove resource control state directory and socket if remaining after test
@@ -299,10 +304,24 @@ warp_pid_after=$(systemctl show -p MainPID --value warp-svc)
 test "$warp_pid_before" != "$warp_pid_after"
 
 # 14. Verify restart failure rollback behavior
-# Temporarily make warp-svc.service fail synchronously so restart returns non-zero.
+# Fail only the apply restart; the rollback restart must succeed.
+warp_failure_dir=$(sudo mktemp -d /run/rillway-acceptance.XXXXXX)
+sudo mkdir "$warp_failure_dir/pending"
+sudo tee "$warp_failure_dir/start" > /dev/null <<'EOF'
+#!/bin/sh
+set -eu
+if rmdir "$1/pending" 2>/dev/null; then
+  exit 1
+fi
+test ! -e "$1/pending"
+touch "$1/recovered"
+EOF
+sudo chmod 0700 "$warp_failure_dir/start"
+# Previous successful fixture starts must not exhaust the rollback's start budget.
+sudo systemctl reset-failed warp-svc.service
 sudo sed -i \
   -e 's|Type=simple|Type=oneshot|' \
-  -e 's|ExecStart=/bin/sleep infinity|ExecStart=/bin/false|' \
+  -e "s|ExecStart=/bin/sleep infinity|ExecStart=$warp_failure_dir/start $warp_failure_dir|" \
   -e 's|Restart=always|Restart=no|' \
   /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
@@ -315,11 +334,13 @@ test "$rollback_code" != "200"
 
 # Managed state file must have been restored to debug (NOT warning)
 test "$(sudo cat /var/lib/rillway-resource-control/warp-log-level.conf)" = "$(printf '# rillway-resource-control\n[Service]\nLogLevelMax=debug')"
+sudo test -f "$warp_failure_dir/recovered"
+systemd_log_level_is debug
 
 # Restore warp-svc.service unit
 sudo sed -i \
   -e 's|Type=oneshot|Type=simple|' \
-  -e 's|ExecStart=/bin/false|ExecStart=/bin/sleep infinity|' \
+  -e "s|ExecStart=$warp_failure_dir/start $warp_failure_dir|ExecStart=/bin/sleep infinity|" \
   -e 's|Restart=no|Restart=always|' \
   /etc/systemd/system/warp-svc.service
 sudo systemctl daemon-reload
