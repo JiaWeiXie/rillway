@@ -79,7 +79,12 @@ function element(id = '') {
     getAttribute(name){return this.attributes[name] ?? null;},
     setAttribute(name,value){this.attributes[name] = value;},
     removeAttribute(name){delete this.attributes[name];},focus(){},reset(){},
-    showModal(){this.open=true;},close(){if(!this.open)return;this.open=false;this.events.close?.();},contains(){return false;}, querySelector(){return null;}, querySelectorAll(){return [];}};
+    showModal(){this.open=true;},close(){if(!this.open)return;this.open=false;this.events.close?.();},contains(){return false;},
+    querySelector(selector){
+      if(selector === 'p') return this.paragraph ||= element();
+      if(selector === 'button.primary') return this.submitButton ||= element();
+      return null;
+    }, querySelectorAll(){return [];}};
   return el;
 }
 function storage(initial = {}) {
@@ -120,6 +125,7 @@ async function browser(initialLocale, preferences = {}) {
     createTreeWalker(){let index=-1; const nodes=[label,userText,glossaryCopy];return {
       nextNode(){index++;this.currentNode=nodes[index];return index<nodes.length;}};},
     querySelector(selector){
+      if(selector === '.skip-link') return get('skip-link');
       if(selector === 'meta[name="color-scheme"]') return null;
       return null;
     },

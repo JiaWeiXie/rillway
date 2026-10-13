@@ -40,6 +40,19 @@ func TestBrowserEditorsContract(t *testing.T) {
 	}
 }
 
+func TestBrowserInteractionsContract(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("Node is required for the browser interaction contract: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, node, "testdata/interactions_test.js").CombinedOutput()
+	if err != nil {
+		t.Fatalf("browser interaction contract: %v\n%s", err, output)
+	}
+}
+
 func TestEditorsAssetServingContract(t *testing.T) {
 	h := New(newBackend(), "private-management-token")
 	embedded, err := assets.ReadFile("web/editors.js")

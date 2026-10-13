@@ -11,7 +11,7 @@ function get(id) {
     attributes:{},setAttribute(name,value){this.attributes[name]=String(value);},
     getAttribute(name){return this.attributes[name]??null;},removeAttribute(name){delete this.attributes[name];},
     querySelectorAll(){return [];},focus(){},close(){},reset(){},
-    querySelector(){return get('error');},
+    querySelector(selector){return get(selector==='button.primary'?id+'-submit':id+'-error');},
     addEventListener(event,callback){
       this.events[event]=callback;
       this.eventCounts[event]=(this.eventCounts[event]||0)+1;
@@ -24,7 +24,7 @@ const context=vm.createContext({
   document:{
     readyState:'loading',documentElement:{removeAttribute(){},setAttribute(){}},getElementById:get,body:{querySelectorAll(){return [];}},
     createTreeWalker(){return {nextNode(){return false;}};},
-    querySelector(){return null;},
+    querySelector(selector){return selector==='.skip-link'?get('skip-link'):null;},
     querySelectorAll(){return [];},
     addEventListener(event,callback){documentEvents[event]=callback;}
   },

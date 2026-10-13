@@ -73,7 +73,9 @@
     }
     function renderGroups() {
       const groups = getConfig()?.outbound_groups || [];
-      $('group-list').innerHTML = groups.map(group => `<article class="outbound-card group-card"><div class="outbound-heading"><h3>${esc(group.id)}</h3><span class="badge">${esc(groupTypeName(group.type))}</span><span class="badge">${et(group.enabled ? 'Enabled' : 'Disabled')}</span></div><p class="group-members-summary">${et('Members in configured order')}: ${esc(group.members.join(' → '))}</p>${group.type === 'select' ? `<p>${et('Selected member')}: ${esc(group.selected)}</p>` : ''}<div class="button-row"><button type="button" class="quiet" data-edit-group="${esc(group.id)}">${et('Edit')}</button><button type="button" class="quiet danger" data-delete-group="${esc(group.id)}">${et('Delete')}</button></div></article>`).join('');
+      const query = ($('outbound-search')?.value || '').trim().toLowerCase();
+      const visible = groups.filter(group => [group.id,group.type,groupTypeName(group.type),...group.members].join(' ').toLowerCase().includes(query));
+      $('group-list').innerHTML = visible.map(group => `<article class="outbound-card group-card"><div class="outbound-heading"><h3>${esc(group.id)}</h3><span class="badge">${esc(groupTypeName(group.type))}</span><span class="badge">${et(group.enabled ? 'Enabled' : 'Disabled')}</span></div><p class="group-members-summary">${et('Members in configured order')}: ${esc(group.members.join(' → '))}</p>${group.type === 'select' ? `<p>${et('Selected member')}: ${esc(group.selected)}</p>` : ''}<div class="button-row"><button type="button" class="quiet" data-edit-group="${esc(group.id)}">${et('Edit')}</button><button type="button" class="quiet danger" data-delete-group="${esc(group.id)}">${et('Delete')}</button></div></article>`).join('');
       $('groups-empty').hidden = groups.length > 0;
     }
     function renderRuleSets() {

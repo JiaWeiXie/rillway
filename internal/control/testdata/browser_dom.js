@@ -16,7 +16,7 @@ class Node {
     this.style = {};
     this.events = new Map();
     this.value = '';
-    this.checked = this.disabled = this.hidden = this.open = false;
+    this.checked = this.disabled = this.hidden = this.open = this.indeterminate = false;
     this.readOnly = this.required = false;
     this._text = '';
     this.classList = {
@@ -35,7 +35,23 @@ class Node {
   get id() { return this.attributes.id || ''; }
   get className() { return this.attributes.class || ''; }
   set className(value) { this.attributes.class = String(value); }
+  get checked() { return !!this._checked; }
+  set checked(value) { this._checked = !!value; }
+  get disabled() { return !!this._disabled; }
+  set disabled(value) { this._disabled = !!value; if(this._disabled) this.attributes.disabled = ''; else delete this.attributes.disabled; }
+  get hidden() { return !!this._hidden; }
+  set hidden(value) { this._hidden = !!value; if(this._hidden) this.attributes.hidden = ''; else delete this.attributes.hidden; }
+  get open() { return !!this._open; }
+  set open(value) { this._open = !!value; if(this._open) this.attributes.open = ''; else delete this.attributes.open; }
+  get readOnly() { return !!this._readOnly; }
+  set readOnly(value) { this._readOnly = !!value; if(this._readOnly) this.attributes.readonly = ''; else delete this.attributes.readonly; }
+  get required() { return !!this._required; }
+  set required(value) { this._required = !!value; if(this._required) this.attributes.required = ''; else delete this.attributes.required; }
   get isConnected() { return this === this.ownerDocument.root || !!this.parentElement?.isConnected; }
+  get isContentEditable() {
+    const value = this.getAttribute('contenteditable');
+    return value === null ? !!this.parentElement?.isContentEditable : value !== 'false';
+  }
   get options() { return this.querySelectorAll('option'); }
   get selectedOptions() { return this.options.filter(option => option.value === this.value); }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
@@ -134,8 +150,8 @@ class Node {
     }
   }
   focus() { this.ownerDocument.activeElement = this; }
-  showModal() { this.open = true; this.querySelector('input,select,textarea,button')?.focus(); }
-  close() { if (!this.open) return; this.open = false; this.dispatch('close', {bubbles: false}); }
+  showModal() { this.open = true; this.setAttribute('open', ''); this.querySelector('input,select,textarea,button')?.focus(); }
+  close() { if (!this.open) return; this.open = false; this.removeAttribute('open'); this.dispatch('close', {bubbles: false}); }
   async dispatch(type, properties = {}) {
     const event = {type, target: this, currentTarget: this, defaultPrevented: false, bubbles: true,
       preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.bubbles = false; }, ...properties};
@@ -179,6 +195,8 @@ function parseInto(root, markup) {
 function createDocument(markup) {
   const document = {readyState: 'loading', hidden: false, activeElement: null, events: new Map()};
   document.root = new Node(document, 'document');
+  // Native events bubble to Document listeners, including keyboard shortcuts.
+  document.root.events = document.events;
   parseInto(document.root, markup);
   document.documentElement = document.root.querySelector('html');
   document.body = document.root.querySelector('body');
