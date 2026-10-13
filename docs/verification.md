@@ -2,6 +2,13 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-13：v0.7.0 發布、正式服務升級與基本驗收
+
+- **發布來源與供應鏈**：`v0.7.0` 標籤指向通過公開來源檢查的 `main` commit；對應 pull request 的 required checks 包含 Ubuntu service acceptance。GitHub release workflow 通過 security、lint、race／shuffle／coverage、fuzz 與跨平台建置後建立 provenance attestation。下載的 Linux amd64 發布檔符合 `SHA256SUMS`，`gh attestation verify` 確認 signer workflow 與 GitHub-hosted runner 條件。
+- **原子替換與復原點**：升級前保存現行 binary、設定、systemd units／drop-ins、socket 狀態及受管資源控制檔案；停止服務後以同一檔案系統上的暫存檔原子替換。停止至健康狀態為 1 秒；執行中程序雜湊符合發布檔。Rillway 與 WARP 服務均為 `active (running)`，`NRestarts=0`，Rillway 主程序以專用服務帳號執行。
+- **基本驗收**：可信 CA 驗證的管理 API 回報 `v0.7.0` 與 config revision 56；未認證請求回傳 401。PAC、HTTP forward、HTTPS CONNECT、SOCKS5、WARP logging control，以及 Rillway／WARP service 狀態皆通過。
+- **限制**：本次未執行外部帳號或 live VPN tests，未變更主機 VPN、DNS 或 proxy 設定，也不把基本代理傳輸驗收當成容量壓測或所有 outbound group 路由情境的正式環境證明。主機識別、位址、憑證路徑、服務雜湊與完整營運 receipt 僅保存在受限制的本機營運目錄。
+
 ## 2026-10-13：WARP rollback 服務驗收 fixture
 
 - **故障注入**：改用 root 擁有的單次失敗標記與 `Type=oneshot`／`Restart=no`，第一次 restart 同步失敗，rollback restart 成功。驗收同時檢查 API 非 200、受管設定還原為 debug、成功執行標記與實際 LogLevelMax。
