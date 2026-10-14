@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// ErrWARPReset identifies a potentially transient local WARP SOCKS handshake
+// failure. A SOCKS5 general failure alone does not establish a stream limit.
+var ErrWARPReset = errors.New("transient WARP proxy handshake failure")
+
 // dialSOCKS keeps domain resolution at the upstream. SOCKS5 has no way to ask
 // for an address family when sending a domain; reject that combination rather
 // than silently resolving it outside the tunnel.
@@ -59,6 +63,12 @@ func dialSOCKS(ctx context.Context, proxy, network, address string) (net.Conn, e
 	d := net.Dialer{Timeout: 10 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", proxy)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if isTransientSOCKSError(err) {
+			return nil, fmt.Errorf("WARP proxy listener (%w): %w", ErrWARPReset, err)
+		}
 		return nil, fmt.Errorf("WARP proxy listener: %w", err)
 	}
 	good := false
@@ -72,25 +82,31 @@ func dialSOCKS(ctx context.Context, proxy, network, address string) (net.Conn, e
 		deadline = dl
 	}
 	if err = conn.SetDeadline(deadline); err != nil {
-		return nil, err
+		return nil, wrapHandshakeReset(ctx, err)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	if _, err = conn.Write([]byte{5, 1, 0}); err != nil {
-		return nil, err
+		return nil, wrapHandshakeReset(ctx, err)
 	}
 	var greeting [2]byte
 	if _, err = io.ReadFull(conn, greeting[:]); err != nil {
+		return nil, wrapHandshakeReset(ctx, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if greeting != [2]byte{5, 0} {
 		return nil, errors.New("upstream SOCKS5 does not accept unauthenticated local connections")
 	}
 	if _, err = conn.Write(req); err != nil {
-		return nil, err
+		return nil, wrapHandshakeReset(ctx, err)
 	}
 	var head [4]byte
 	if _, err = io.ReadFull(conn, head[:]); err != nil {
+		return nil, wrapHandshakeReset(ctx, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if head[0] != 5 || head[2] != 0 {
@@ -108,17 +124,17 @@ func dialSOCKS(ctx context.Context, proxy, network, address string) (net.Conn, e
 	case 3:
 		var l [1]byte
 		if _, err = io.ReadFull(conn, l[:]); err != nil {
-			return nil, err
+			return nil, wrapHandshakeReset(ctx, err)
 		}
 		n = int(l[0])
 	default:
 		return nil, errors.New("invalid SOCKS5 address type")
 	}
 	if _, err = io.CopyN(io.Discard, conn, int64(n+2)); err != nil {
-		return nil, err
+		return nil, wrapHandshakeReset(ctx, err)
 	}
 	if err = conn.SetDeadline(time.Time{}); err != nil {
-		return nil, err
+		return nil, wrapHandshakeReset(ctx, err)
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
@@ -131,6 +147,8 @@ func socksReplyError(code byte) error {
 	message := fmt.Sprintf("upstream SOCKS5 connect rejected (code %d)", code)
 	var cause error
 	switch code {
+	case 1:
+		cause = ErrWARPReset
 	case 3:
 		cause = syscall.ENETUNREACH
 	case 4:
@@ -144,4 +162,23 @@ func socksReplyError(code byte) error {
 		return errors.New(message)
 	}
 	return fmt.Errorf("%s: %w", message, cause)
+}
+
+func isTransientSOCKSError(err error) bool {
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EPIPE)
+}
+
+func wrapHandshakeReset(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err != nil && isTransientSOCKSError(err) {
+		return fmt.Errorf("%w: %w", ErrWARPReset, err)
+	}
+	return err
 }

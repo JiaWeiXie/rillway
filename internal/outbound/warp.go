@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"regexp"
 	"rillway/internal/config"
+	"rillway/internal/routeinfo"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +74,14 @@ type (
 
 		verified   time.Time
 		manualStop bool
+
+		handshakeSem chan struct{}
+		paceMu       sync.Mutex
+		lastDial     time.Time
+		burstTokens  float64
+		burstCap     float64
+		paceInterval time.Duration
+		sleep        func(context.Context, time.Duration) error
 	}
 )
 
@@ -110,8 +119,13 @@ func newWARP(cfg config.Outbound) *warp {
 		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
-		now:         time.Now,
-		dialContext: (&net.Dialer{Timeout: time.Second}).DialContext,
+		now:          time.Now,
+		dialContext:  (&net.Dialer{Timeout: time.Second}).DialContext,
+		handshakeSem: make(chan struct{}, 8),
+		burstTokens:  4,
+		burstCap:     4,
+		paceInterval: 10 * time.Millisecond,
+		sleep:        sleepContext,
 	}
 }
 func (w *warp) ID() string   { return w.cfg.ID }
@@ -139,14 +153,133 @@ func (w *warp) cli(ctx context.Context, args ...string) (string, error) {
 	return string(b), nil
 }
 
-func (w *warp) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	w.mu.RLock()
-	stopped := w.manualStop
-	w.mu.RUnlock()
-	if stopped {
-		return nil, errors.New("WARP was manually stopped")
+var (
+	warpFixedBackoffs = []time.Duration{
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		850 * time.Millisecond,
+		1200 * time.Millisecond,
+		1300 * time.Millisecond,
 	}
-	return dialSOCKS(ctx, w.cfg.ProxyAddress, network, address)
+	warpFastFailoverBackoffs = []time.Duration{
+		150 * time.Millisecond,
+	}
+)
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *warp) acquireHandshakeSlot(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if w.handshakeSem != nil {
+		select {
+		case w.handshakeSem <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	release := func() {
+		if w.handshakeSem != nil {
+			<-w.handshakeSem
+		}
+	}
+	if w.paceInterval <= 0 {
+		if err := ctx.Err(); err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	}
+	sleepFn := w.sleep
+	if sleepFn == nil {
+		sleepFn = sleepContext
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			release()
+			return nil, err
+		}
+		w.paceMu.Lock()
+		now := w.clock()
+		if !w.lastDial.IsZero() && now.After(w.lastDial) {
+			w.burstTokens += float64(now.Sub(w.lastDial)) / float64(w.paceInterval)
+			if w.burstTokens > w.burstCap {
+				w.burstTokens = w.burstCap
+			}
+			w.lastDial = now
+		}
+		if w.burstTokens >= 1 {
+			if err := ctx.Err(); err != nil {
+				w.paceMu.Unlock()
+				release()
+				return nil, err
+			}
+			w.burstTokens--
+			w.lastDial = now
+			w.paceMu.Unlock()
+			return release, nil
+		}
+		wait := time.Duration((1 - w.burstTokens) * float64(w.paceInterval))
+		if wait < time.Nanosecond {
+			wait = time.Nanosecond
+		}
+		w.paceMu.Unlock()
+		if err := sleepFn(ctx, wait); err != nil {
+			release()
+			return nil, err
+		}
+	}
+}
+
+func (w *warp) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	backoffs := warpFixedBackoffs
+	if routeinfo.From(ctx).FastFailover {
+		backoffs = warpFastFailoverBackoffs
+	}
+	for attempt := 0; ; attempt++ {
+		w.mu.RLock()
+		stopped := w.manualStop
+		w.mu.RUnlock()
+		if stopped {
+			return nil, errors.New("WARP was manually stopped")
+		}
+		release, err := w.acquireHandshakeSlot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		conn, err := dialSOCKS(ctx, w.cfg.ProxyAddress, network, address)
+		release()
+		if err == nil {
+			return conn, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if !errors.Is(err, ErrWARPReset) || attempt >= len(backoffs) {
+			return nil, err
+		}
+		sleepFn := w.sleep
+		if sleepFn == nil {
+			sleepFn = sleepContext
+		}
+		if sleepErr := sleepFn(ctx, backoffs[attempt]); sleepErr != nil {
+			return nil, sleepErr
+		}
+	}
 }
 
 func (w *warp) clock() time.Time {

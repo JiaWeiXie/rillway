@@ -10,8 +10,9 @@ import (
 // A zero Info means the source address and inbound are unknown; conditions
 // that require them then never match.
 type Info struct {
-	SourceIP netip.Addr // Unmapped; invalid when unknown.
-	Inbound  string     // "http" or "socks5"; empty when unknown.
+	SourceIP     netip.Addr // Unmapped; invalid when unknown.
+	Inbound      string     // "http" or "socks5"; empty when unknown.
+	FastFailover bool       // True when caller has an immediate fallback candidate ready.
 }
 
 type contextKey struct{}
