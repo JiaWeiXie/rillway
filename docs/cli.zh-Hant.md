@@ -186,6 +186,8 @@ sudo rillway client restore --backup "$HOME/rillway-proxy-backup.json"
 
 PAC 自動讓已設定的 Proxy 主機直連，包含已確認指向該 IP 的別名；即使停用其他 bypass 項目也保留。若明確經 Proxy 連到 Rillway 自己的管理介面／PAC，這些流量不列入統計或自適應判斷，管理介面的登入驗證仍有效；連回代理埠則會被拒絕，防止迴圈。
 
+PAC 載入時先解析 bypass 規則；沒有 CIDR 或 Proxy 自身 IP 比對需求時跳過 DNS。有效 DNS 答案產生的 DIRECT／PROXY 判斷最多快取 30 秒、512 個 hostname，滿額時以 FIFO 逐筆淘汰；失敗、空白或無效答案不快取。切換 VPN／網路後，舊的成功判斷可能維持到期限，之後的下一次呼叫才重新解析。此快取不會清除瀏覽器／系統 DNS 快取，也不與出口的 resolver 共用。
+
 `client` 只支援 macOS。list 列出 **network service 名稱**，例如 Wi-Fi、USB Ethernet，不是 en0。apply 接受 `--service`（預設 Wi-Fi）、必填 `--pac-url`、`--backup`（預設目前目錄的 `rillway-proxy-backup.json`）。先備份 PAC URL／狀態及手動 Proxy 啟用狀態，再設定 PAC、停用手動 Proxy；保留原 server／port／憑證。拒絕覆寫既有備份，套用失敗會嘗試還原。`restore --backup FILE` 還原後才刪除快照。只有此明確指令會修改選定的 Mac 網路服務。
 
 ## `docker export`：Engine、Build、容器

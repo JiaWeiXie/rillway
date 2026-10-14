@@ -2,6 +2,17 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-14：WARP 建連韌性、自適應親和性與 PAC DNS 判斷
+
+- **WARP 回歸**：本機 SOCKS listener 與可控制時鐘涵蓋暫時性握手失敗、固定／備援重試次數、目的地拒絕不重試、成功回覆尾段中斷、握手與退避取消、取消後不殘留 pacing 預約，以及握手完成後可保留超過握手槽數的串流。SOCKS general failure 只是可重試分類，不代表已證明官方 client 發生 StreamLimitHit。
+- **自適應回歸**：先重現根網域／子網域政策互相覆寫、設定更新後以舊候選探測新增固定規則的目的地，以及自身別名提前成為共享探測目標並清除既有狀態。修正後，包含來源／inbound 條件、名為 `default` 的明確規則、共享學習、固定路由隔離、近期樣本抑制與既有設定世代測試均通過。
+- **PAC 實際執行**：將 `pac_js_test.go` 改名為 `pac_script_test.go`；原名稱被 Go 視為 JS 架構限定檔，macOS／Linux 一般測試不會執行。Node-backed 測試現在涵蓋 IPv4／IPv6／mapped IPv4、自身 bypass、30 秒到期後雙向路徑改判、解析失敗恢復、512 筆 FIFO 汰除與 `dnsResolveEx` 多答案；本機已實際執行，非 skip。
+- **真實本機 daemon smoke**：用重建 binary、暫存設定與 loopback SOCKS 故障模擬器啟動隔離 daemon。HTTP 固定 WARP 路徑經兩次合成失敗後成功；自適應在同次 dial 改用候選，HTTP 與 SOCKS5 入口皆收到完整回應。持續失敗的固定路由嘗試七次後回 HTTP 502，沒有嘗試另一出口。以測試 CA 驗證的 HTTPS 管理 API 確認三個子網域共用一個 `example.net:80` 狀態，三條備援 flows 記錄正確。
+- **實際供應的 PAC**：從該 daemon 取得 `/proxy.pac` 並在 Node 執行；同 hostname 的 20 次呼叫只查 DNS 一次，控制時鐘到期及解析失敗後恢復時均重新判斷 DIRECT／PROXY。沒有修改主機 PAC 或 DNS 設定。
+- **完整品質檢查**：`mise run check` 通過 lint、Go race／shuffle／coverage 與 8 個 Python tests；`mise run build` 通過。隔離 daemon 已停止，暫存憑證、設定與 smoke script 已移除。
+
+限制：本次未部署，未呼叫官方 WARP 註冊／連線操作、未執行 live VPN tests，也未更動主機 VPN／DNS／Proxy。合成 SOCKS 失敗可證明重試與路由行為，不能證明官方 WARP 的重連時間、最高安全容量，或原始 Mac 日常瀏覽的斷線與載入速度已改善。4.2 秒／150 ms 是重試退避等待預算，不是含排隊與握手的完整建連期限。
+
 ## 2026-10-13：v0.7.0 發布、正式服務升級與基本驗收
 
 - **發布來源與供應鏈**：`v0.7.0` 標籤指向通過公開來源檢查的 `main` commit；對應 pull request 的 required checks 包含 Ubuntu service acceptance。GitHub release workflow 通過 security、lint、race／shuffle／coverage、fuzz 與跨平台建置後建立 provenance attestation。下載的 Linux amd64 發布檔符合 `SHA256SUMS`，`gh attestation verify` 確認 signer workflow 與 GitHub-hosted runner 條件。

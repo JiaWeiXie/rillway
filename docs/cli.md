@@ -252,6 +252,15 @@ settings. The daemon also serves it at `/proxy.pac`. Company domains/CIDRs bypas
 on the Mac; public traffic uses Ubuntu. PAC always bypasses the configured proxy
 host itself, including confirmed IP aliases, to keep Rillway access local. This
 does not add a general DIRECT fallback for public traffic.
+
+PAC pre-parses bypass rules and skips DNS when neither a bypass CIDR nor an IP-based
+proxy-self check is needed. Valid DNS-based DIRECT/PROXY decisions are cached for
+at most 30 seconds and 512 hostnames, with FIFO eviction of individual entries.
+Failed, empty, or invalid DNS answers are not cached. After a VPN/network change,
+an old successful decision may remain until expiry; the next call then resolves
+again. This PAC cache does not flush browser/OS DNS caches and is separate from
+outbound-provider resolution.
+
 On macOS, open Network, choose the service, open Details and Proxies, then enable
 Automatic Proxy Configuration and enter the PAC URL. See [Apple's Mac proxy
 settings guide](https://support.apple.com/zh-tw/guide/mac-help/mchlp25912/mac) for

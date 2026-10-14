@@ -1,6 +1,6 @@
 # VPN 出口設定與驗證
 
-Rillway 的分流只作用於送進 HTTP／SOCKS5 Proxy 的 TCP 連線。每個出口自行建立連線；指定出口失敗時回報錯誤，不改用直連。變更規則只影響新連線，手動斷開 VPN 則會影響正在使用該 VPN 的流量。
+Rillway 的分流只作用於送進 HTTP／SOCKS5 Proxy 的 TCP 連線。每個出口自行建立連線；固定規則指定的出口失敗時回報錯誤，不改用直連。自適應路由可在同次建連失敗後嘗試其他已設定候選，詳見[分流契約](architecture.md#自適應)。變更規則只影響新連線，手動斷開 VPN 則會影響正在使用該 VPN 的流量。
 
 直接連線使用宿主 resolver，WARP 使用官方 Proxy 的 resolver；這兩類出口不接受 Rillway 的 `dns` 覆寫。`dns` 設定只用於 WireGuard 與 Tailscale，填在其他出口會明確拒絕。
 
@@ -48,6 +48,10 @@ listener 存在、帳號為 Unlimited，都不能單獨證明 tunnel 正常。`v
 Local Proxy 不支援目前帳號／版本時，Rillway 回報錯誤，不改成全機 tunnel，也不改用非官方 WARP 註冊服務。官方 WARP daemon 負責自身連線維持；Rillway 不在背景重複註冊或重新連線，手動斷線後也不會重啟它。
 
 SOCKS5 以網域發起連線時，由 WARP 解析 DNS，Rillway 不會猜測目的 IP。SOCKS5 協定無法同時指定網域與強制 IP 類型，因此 WARP 的網域規則請使用 `auto`；`ipv4`／`ipv6` 只有在目的地是相符的 literal IP 時可用。使用者傳入網址 hostname 的連線，目的 IP 顯示為未知。
+
+每個 WARP provider 最多同時處理 8 個 SOCKS5 握手，允許 4 個突發請求，之後每 10 ms 補一個准入 token。握手完成就釋放額度；這不是已建立串流的容量上限，不會關閉既有連線，也不會修改 Proxy 的半關閉語意或 HTTP 連線重用設定。取消等待不保留未來時段。
+
+Local Proxy listener 暫時拒絕連線、握手 EOF／reset、SOCKS5 general failure 可重試；general failure 只能表示可能的暫時性故障，不能單靠它證明 MASQUE stream limit。固定路由與最後一個候選最多重試 6 次，退避等待合計 4.2 秒；有下一個候選可用的非固定路由只等待 150 ms 並重試 1 次，再把錯誤交給 Engine。這些是退避等待預算，**不是整段 dial 的時間上限**：握手、排隊仍受原本 timeout 與呼叫端 context 限制。目的地明確拒絕連線、驗證或協定錯誤不套用 WARP 暫時性重試；取消立即結束。既有串流斷線不會重播或自動重建。
 
 ## Tailscale
 
