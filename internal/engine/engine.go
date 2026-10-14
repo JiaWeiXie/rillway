@@ -408,44 +408,66 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	case "ipv6":
 		network = "tcp6"
 	}
+	groupAddr := address
 	key := address + "|" + network
 	var state *adaptiveState
 	generation := e.generation
 	policyRoute := r
 	if len(r.candidates) > 0 {
+		groupAddr = adaptiveGroupAddress(address)
+		key = adaptiveDestinationKey(groupAddr, network, r)
 		state = e.destinations[key]
 		if state == nil || !sameAdaptivePolicy(state, r) {
 			// Do not publish a new adaptive destination until provider resolution
 			// confirms it is not this daemon. Otherwise probes can race the dial.
-			state = newAdaptiveState(address, network, r, e.now())
+			state = newAdaptiveState(groupAddr, network, r, e.now())
 		}
 		r.outbound = e.chooseLocked(state)
-		state.lastUsed = e.now()
 	}
 	single := [1]string{r.outbound}
 	order := single[:]
+	adaptiveFallback := false
 	if g := e.groups[r.outbound]; g != nil {
 		order, err = e.groupAttemptOrderLocked(g, t, r.fixed, e.now())
 		if err != nil {
 			e.mu.Unlock()
 			return nil, err
 		}
+	} else if len(r.candidates) > 1 {
+		order = e.adaptiveAttemptOrderLocked(r.outbound, r.candidates, e.now())
+		adaptiveFallback = len(order) > 1
 	}
 	// Update replaces this map rather than mutating it. All attempts use the
 	// same routing/provider snapshot even if configuration changes mid-dial.
 	providers := e.providers
 	started := e.now()
 	e.mu.Unlock()
+	type failedAttempt struct {
+		id      string
+		elapsed time.Duration
+		err     error
+	}
+	var failedAttempts []failedAttempt
 	var conn net.Conn
-	for _, id := range order {
+	var attemptElapsed time.Duration
+	for i, id := range order {
 		if err = ctx.Err(); err != nil {
 			break
 		}
 		p := providers[id]
 		r.outbound = id
-		conn, err = p.DialContext(ctx, network, address)
+		dialCtx := ctx
+		if !r.fixed && i < len(order)-1 {
+			fastInfo := info
+			fastInfo.FastFailover = true
+			dialCtx = routeinfo.With(ctx, fastInfo)
+		}
+		attemptStart := e.now()
+		conn, err = p.DialContext(dialCtx, network, address)
+		attemptElapsed = e.now().Sub(attemptStart)
 		e.mu.Lock()
-		if e.generation == generation || sameProvider(p, e.providers[id]) {
+		sameGen := e.generation == generation
+		if sameGen || sameProvider(p, e.providers[id]) {
 			e.recordHealthLocked(id, err)
 		}
 		e.mu.Unlock()
@@ -456,16 +478,19 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 			err = ctxErr
 			break
 		}
+		if adaptiveFallback {
+			if !sameGen || !networkFailure(err) {
+				break
+			}
+			if i < len(order)-1 {
+				failedAttempts = append(failedAttempts, failedAttempt{id: id, elapsed: attemptElapsed, err: err})
+			}
+		}
 	}
 	elapsed := e.now().Sub(started)
 	if err == nil && conn != nil && policy != nil {
 		blocked, internal := policy(conn.RemoteAddr().String())
 		if blocked || internal {
-			e.mu.Lock()
-			if state != nil && e.destinations[key] == state {
-				delete(e.destinations, key)
-			}
-			e.mu.Unlock()
 			if blocked {
 				_ = conn.Close()
 				return nil, errors.New("proxy destination resolves to a local proxy listener")
@@ -482,9 +507,14 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		e.mu.Lock()
 		// An in-flight dial from a previous config must not populate the new policy.
 		if e.generation == generation {
-			state = e.destinationLocked(key, address, network, policyRoute)
+			state = e.destinationLocked(key, groupAddr, network, policyRoute)
+			state.probeAddress = address
+			state.target = t
 			state.lastUsed = e.now()
-			e.recordFamilyLocked(state, r.outbound, elapsed, err, family)
+			for _, fa := range failedAttempts {
+				e.recordFamilyLocked(state, fa.id, fa.elapsed, fa.err, "unknown")
+			}
+			e.recordFamilyLocked(state, r.outbound, attemptElapsed, err, family)
 		}
 		e.mu.Unlock()
 	}

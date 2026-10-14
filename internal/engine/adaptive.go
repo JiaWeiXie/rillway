@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/netip"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
 	"slices"
@@ -11,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 type sample struct {
@@ -22,15 +26,17 @@ type sample struct {
 	failure  bool
 }
 type adaptiveState struct {
-	address, network, current, reason string
-	rule, family, initial             string
-	candidates                        []string
-	samples                           map[string][]sample
-	lastUsed, switched, lastProbe     time.Time
-	winner                            string
-	winnerEvidence, nextSample        uint64
-	streak, probeIndex                int
-	target                            target // Immutable ingress snapshot used to reselect this policy on Update.
+	address, probeAddress         string
+	network, current, reason      string
+	rule, family, initial         string
+	matched                       bool
+	candidates                    []string
+	samples                       map[string][]sample
+	lastUsed, switched, lastProbe time.Time
+	winner                        string
+	winnerEvidence, nextSample    uint64
+	streak, probeIndex            int
+	target                        target // Ingress of the last published probe address, revalidated on Update.
 }
 
 func adaptiveDefaults(a config.Adaptive) config.Adaptive {
@@ -59,6 +65,31 @@ func adaptiveDefaults(a config.Adaptive) config.Adaptive {
 		a.ProbeTimeoutSeconds = 4
 	}
 	return a
+}
+
+func adaptiveGroupAddress(address string) string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return address
+	}
+	host = normalize(host)
+	if host == "" {
+		return address
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return net.JoinHostPort(host, port)
+	}
+	if etld1, err := publicsuffix.EffectiveTLDPlusOne(host); err == nil && etld1 != "" {
+		return net.JoinHostPort(etld1, port)
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func adaptiveDestinationKey(address, network string, r route) string {
+	if r.matched {
+		return address + "|" + network + "|" + r.rule
+	}
+	return address + "|" + network
 }
 
 func (e *Engine) destinationLocked(key, address, network string, r route) *adaptiveState {
@@ -91,22 +122,44 @@ func initialOutbound(r route) string {
 }
 
 func sameAdaptivePolicy(d *adaptiveState, r route) bool {
-	return len(r.candidates) > 0 && r.rule == d.rule && r.family == d.family && slices.Equal(r.candidates, d.candidates) && initialOutbound(r) == d.initial
+	return len(r.candidates) > 0 && r.matched == d.matched && r.rule == d.rule && r.family == d.family && slices.Equal(r.candidates, d.candidates) && initialOutbound(r) == d.initial
 }
 
 func newAdaptiveState(address, network string, r route, now time.Time) *adaptiveState {
 	current := initialOutbound(r)
-	return &adaptiveState{address: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", rule: r.rule, family: r.family, initial: current, candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now, target: r.target}
+	return &adaptiveState{address: address, probeAddress: address, network: network, current: current, reason: "initial policy; waiting for comparable samples", rule: r.rule, matched: r.matched, family: r.family, initial: current, candidates: append([]string(nil), r.candidates...), samples: make(map[string][]sample), lastUsed: now, switched: now, target: r.target}
 }
 
 func (e *Engine) chooseLocked(d *adaptiveState) string { return d.current }
+
+func (e *Engine) adaptiveAttemptOrderLocked(primary string, candidates []string, now time.Time) []string {
+	order := make([]string, 1, len(candidates))
+	order[0] = primary
+	for _, id := range candidates {
+		if id != primary && e.providers[id] != nil {
+			order = append(order, id)
+		}
+	}
+	copy(order[1:], preferAvailable(order[1:], e, now, e.cfg.Adaptive))
+	return order
+}
 
 func networkFailure(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
 	var nerr net.Error
-	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &nerr) && nerr.Timeout() || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ECONNREFUSED)
+	return errors.Is(err, context.DeadlineExceeded) ||
+		errors.As(err, &nerr) && nerr.Timeout() ||
+		errors.Is(err, outbound.ErrWARPReset) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ENETUNREACH) ||
+		errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 func (e *Engine) recordLocked(d *adaptiveState, id string, latency time.Duration, err error) {
@@ -256,20 +309,44 @@ func (e *Engine) scheduleProbes() []probeJob {
 			break
 		}
 		d := e.destinations[key]
-		host, port, err := net.SplitHostPort(d.address)
+		probeAddr := d.probeAddress
+		if probeAddr == "" {
+			probeAddr = d.address
+		}
+		host, port, err := net.SplitHostPort(probeAddr)
 		if err != nil || (port != "80" && port != "443") || privateHost(normalize(host), e.cfg.PAC) || now.Sub(d.lastUsed) > 5*time.Minute || !d.lastProbe.IsZero() && now.Sub(d.lastProbe) < time.Minute || len(d.candidates) < 2 {
 			continue
 		}
-		id := d.candidates[d.probeIndex%len(d.candidates)]
-		d.probeIndex++
-		p := e.providers[id]
-		if p == nil {
+		// A shared domain's last-used host can acquire a different rule or
+		// ingress policy after a config update. Never probe it using old candidates.
+		t := d.target
+		t.host, t.port = normalize(host), port
+		r, err := e.selectRoute(t)
+		if err != nil || !sameAdaptivePolicy(d, r) {
 			continue
 		}
+		id := ""
+		for range len(d.candidates) {
+			cand := d.candidates[d.probeIndex%len(d.candidates)]
+			d.probeIndex++
+			if e.providers[cand] == nil {
+				continue
+			}
+			ss := d.samples[cand]
+			if len(ss) > 0 && now.Sub(ss[len(ss)-1].at) < time.Minute {
+				continue
+			}
+			id = cand
+			break
+		}
+		if id == "" {
+			continue
+		}
+		p := e.providers[id]
 		d.lastProbe = now
 		e.probeTimes = append(e.probeTimes, now)
 		e.probes++
-		jobs = append(jobs, probeJob{key: key, id: id, address: d.address, network: d.network, state: d, provider: p, timeout: time.Duration(a.ProbeTimeoutSeconds) * time.Second})
+		jobs = append(jobs, probeJob{key: key, id: id, address: probeAddr, network: d.network, state: d, provider: p, timeout: time.Duration(a.ProbeTimeoutSeconds) * time.Second})
 	}
 	return jobs
 }
@@ -322,7 +399,9 @@ func (e *Engine) completeProbe(job probeJob, started time.Time, conn net.Conn, e
 	}
 	if e.destinations[job.key] == job.state {
 		if internal {
-			delete(e.destinations, job.key)
+			if job.address == job.state.probeAddress {
+				delete(e.destinations, job.key)
+			}
 		} else {
 			e.recordFamilyLocked(job.state, job.id, e.now().Sub(started), err, family)
 		}

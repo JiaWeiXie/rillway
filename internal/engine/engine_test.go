@@ -7,6 +7,7 @@ import (
 	"net"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
+	"rillway/internal/routeinfo"
 	"strings"
 	"sync"
 	"syscall"
@@ -159,7 +160,7 @@ func TestProbeBudgetActivityAndPrivateExclusions(t *testing.T) {
 	e, now := testEngine()
 	for i, host := range []string{"one.example:443", "two.example:80", "three.example:443", "nas:443", "service.company.example:443", "four.example:8443"} {
 		key := string(rune('a' + i))
-		e.destinationLocked(key, host, "tcp", route{outbound: "direct", candidates: []string{"direct", "warp"}})
+		e.destinationLocked(key, host, "tcp", route{rule: "default", family: "auto", outbound: "direct", candidates: []string{"direct", "warp"}})
 	}
 	jobs := e.scheduleProbes()
 	if len(jobs) != 2 {
@@ -315,7 +316,9 @@ func TestUpdateKeepsLearnedRouteOnlyForUnchangedAdaptivePolicy(t *testing.T) {
 			t.Fatalf("initial route %q", got)
 		}
 		e.mu.Lock()
-		e.destinations[host+"|tcp"].current = id
+		for _, state := range e.destinations {
+			state.current = id
+		}
 		e.mu.Unlock()
 		if got := route(e); got != id {
 			t.Fatalf("learned route %q", got)
@@ -415,7 +418,7 @@ func TestEngineCloseCancelsOutstandingProbe(t *testing.T) {
 	e := New(cfg, map[string]outbound.Provider{"direct": testProvider{id: "direct", dial: blocking}, "warp": testProvider{id: "warp", dial: blocking}})
 	defer func() { _ = e.Close() }()
 	e.mu.Lock()
-	e.destinationLocked("x", "example.com:443", "tcp", route{outbound: "direct", candidates: []string{"direct", "warp"}})
+	e.destinationLocked("x", "example.com:443", "tcp", route{rule: "default", family: "auto", outbound: "direct", candidates: []string{"direct", "warp"}})
 	e.mu.Unlock()
 	select {
 	case <-started:
@@ -463,5 +466,145 @@ func TestAdaptiveHonorsZeroAbsoluteImprovement(t *testing.T) {
 	e.recordLocked(d, "warp", 20*time.Millisecond, nil)
 	if d.current != "warp" {
 		t.Fatal("configured zero millisecond threshold was replaced by the default")
+	}
+}
+
+func TestAdaptiveETLDPlusOneAffinityAndSubdomainSharing(t *testing.T) {
+	e, now := testEngine()
+	var dialed []string
+	var mu sync.Mutex
+	provider := func(id string, d time.Duration) outbound.Provider {
+		return testProvider{id: id, dial: func(_ context.Context, _, addr string) (net.Conn, error) {
+			mu.Lock()
+			dialed = append(dialed, id+":"+addr)
+			mu.Unlock()
+			*now = now.Add(d)
+			a, b := net.Pipe()
+			_ = b.Close()
+			return a, nil
+		}}
+	}
+	e.Update(e.cfg, map[string]outbound.Provider{
+		"direct":  provider("direct", 200*time.Millisecond),
+		"warp":    provider("warp", 20*time.Millisecond),
+		"private": provider("private", 10*time.Millisecond),
+	})
+
+	// Dialing chatgpt.com, ws.chatgpt.com, and ab.chatgpt.com must share a single eTLD+1 adaptive destination.
+	for _, host := range []string{"chatgpt.com:443", "ws.chatgpt.com:443", "ab.chatgpt.com:443"} {
+		c, err := e.DialContext(t.Context(), "tcp", host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c.Close()
+	}
+	snap := e.Snapshot()
+	if len(snap.Destinations) != 1 || snap.Destinations[0].Address != "chatgpt.com:443" {
+		t.Fatalf("expected single eTLD+1 destination chatgpt.com:443, got %+v", snap.Destinations)
+	}
+
+	// Once chatgpt.com switches to warp, both chatgpt.com and ws.chatgpt.com must use warp.
+	e.mu.Lock()
+	d := e.destinations["chatgpt.com:443|tcp"]
+	if d == nil || d.probeAddress != "ab.chatgpt.com:443" {
+		e.mu.Unlock()
+		t.Fatalf("unexpected adaptive state: %+v", d)
+	}
+	d.switched = now.Add(-11 * time.Minute)
+	for range 3 {
+		e.recordLocked(d, "warp", 20*time.Millisecond, nil)
+	}
+	e.recordLocked(d, "warp", 20*time.Millisecond, nil)
+	e.mu.Unlock()
+
+	mu.Lock()
+	dialed = nil
+	mu.Unlock()
+	for _, host := range []string{"chatgpt.com:443", "ws.chatgpt.com:443"} {
+		c, err := e.DialContext(t.Context(), "tcp", host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c.Close()
+	}
+	mu.Lock()
+	got := append([]string(nil), dialed...)
+	mu.Unlock()
+	want := []string{"warp:chatgpt.com:443", "warp:ws.chatgpt.com:443"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("subdomains split across outbounds: got %v, want %v", got, want)
+	}
+}
+
+func TestAdaptivePerDialImmediateFallbackAndFixedStrictIsolation(t *testing.T) {
+	e, _ := testEngine()
+	e.cfg.DefaultOutbound = "warp"
+	e.cfg.Adaptive.Candidates = []string{"warp", "direct"}
+	e.cfg.Rules = []config.Rule{
+		{ID: "fixed-warp", Domains: []string{"strict.example"}, Outbound: "warp"},
+	}
+	var warpFastFlags []bool
+	var mu sync.Mutex
+	e.Update(e.cfg, map[string]outbound.Provider{
+		"warp": testProvider{id: "warp", dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			mu.Lock()
+			warpFastFlags = append(warpFastFlags, routeinfo.From(ctx).FastFailover)
+			mu.Unlock()
+			return nil, outbound.ErrWARPReset
+		}},
+		"direct": testProvider{id: "direct", dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			if routeinfo.From(ctx).FastFailover {
+				t.Error("last fallback candidate should not have FastFailover set")
+			}
+			a, b := net.Pipe()
+			_ = b.Close()
+			return a, nil
+		}},
+		"private": testProvider{id: "private"},
+	})
+
+	// 1. Adaptive route immediately falls back to direct on the same dial when warp fails with ErrWARPReset.
+	c, err := e.DialContext(t.Context(), "tcp", "ws.chatgpt.com:443")
+	if err != nil {
+		t.Fatalf("adaptive dial did not fall back to direct: %v", err)
+	}
+	_ = c.Close()
+	snap := e.Snapshot()
+	if len(snap.Flows) != 1 || snap.Flows[0].Outbound != "direct" {
+		t.Fatalf("expected flow on fallback outbound direct, got %+v", snap.Flows)
+	}
+
+	// 2. Fixed route NEVER falls back to direct and passes FastFailover == false.
+	if _, err := e.DialContext(t.Context(), "tcp", "strict.example:443"); !errors.Is(err, outbound.ErrWARPReset) {
+		t.Fatalf("fixed route should fail with ErrWARPReset without falling back, got %v", err)
+	}
+	mu.Lock()
+	flags := append([]bool(nil), warpFastFlags...)
+	mu.Unlock()
+	if len(flags) != 2 || !flags[0] || flags[1] {
+		t.Fatalf("unexpected FastFailover flags [adaptive, fixed]: %v", flags)
+	}
+}
+
+func TestScheduleProbesSuppressesFreshPassiveCandidates(t *testing.T) {
+	e, now := testEngine()
+	e.cfg.DefaultOutbound = "warp"
+	e.cfg.Adaptive.Candidates = []string{"warp", "direct"}
+	d := e.destinationLocked("chatgpt.com:443|tcp", "chatgpt.com:443", "tcp", route{rule: "default", family: "auto", outbound: "warp", candidates: []string{"warp", "direct"}})
+	d.probeAddress = "ws.chatgpt.com:443"
+	// Record a fresh passive sample on "warp" (< 1 minute old); "direct" has no sample yet.
+	e.recordLocked(d, "warp", 30*time.Millisecond, nil)
+
+	jobs := e.scheduleProbes()
+	if len(jobs) != 1 || jobs[0].id != "direct" || jobs[0].address != "ws.chatgpt.com:443" {
+		t.Fatalf("expected probe to skip fresh warp and probe standby direct at ws.chatgpt.com:443, got %+v", jobs)
+	}
+
+	// Once "direct" also has a fresh sample (< 1 minute old), no probe should be scheduled even after lastProbe resets.
+	e.probes = 0
+	e.recordLocked(d, "direct", 25*time.Millisecond, nil)
+	d.lastProbe = now.Add(-2 * time.Minute)
+	if got := e.scheduleProbes(); len(got) != 0 {
+		t.Fatalf("expected 0 probes when all candidates have fresh passive samples, got %+v", got)
 	}
 }
