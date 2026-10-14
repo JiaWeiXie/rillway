@@ -25,11 +25,33 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 ### Features
 
-- **routing:** add outbound groups and route preview (#7)
+- **config:** add outbound groups and composite rule schema
+- **routing:** match source, inbound, port, and rule sets
+- **engine:** select and balance outbound groups
+- **control:** explain routes and manage outbound groups
+- **web:** add accessible light and dark themes
+- **web:** add group, rule-set, and route-preview editors
+- **web:** add search, bulk actions, keyboard flows, and responsive controls
+- **control:** improve management web interactions
+- **tui:** display outbound groups
+
+### Fixes
+
+- **config:** allow group replacements for fixed routes
+- **web:** invalidate previews only on revision change
+- **routing:** preserve legacy rule matching
+- address proxy core review findings
+- **tui:** bound group rows to viewport
+
+### Refactoring
+
+- **web:** make browser initialization explicit
 
 ### Maintenance
 
-- **release:** prepare v0.7.0 (#8)
+- **engine:** cover disabled preview targets
+- **web:** cover logout busy cleanup
+- **tui:** cover service switch log reset
 
 ## 0.6.0 - 2026-10-12
 
@@ -72,7 +94,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Maintenance
 
 - **resource-control:** cover migration and acceptance
-
 ## 0.5.1 - 2026-10-11
 
 ### Fixes
@@ -88,7 +109,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 - **deps:** patch Go and x/net security vulnerabilities
 - **release:** prepare v0.5.1 release notes
-
 ## 0.5.0 - 2026-10-08
 
 ### Features
@@ -103,7 +123,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 
 - **verification:** record v0.4.1 release and deployment acceptance
 - **release:** prepare v0.5.0 changelog
-
 ## 0.4.1 - 2026-10-08
 
 ### Fixes
@@ -113,7 +132,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Documentation
 
 - **release:** prepare v0.4.1 changelog
-
 ## 0.4.0 - 2026-10-06
 
 ### Features
@@ -127,7 +145,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Documentation
 
 - **release:** prepare v0.4.0 changelog
-
 ## 0.3.1 - 2026-10-05
 
 ### Fixes
@@ -137,7 +154,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Documentation
 
 - **release:** prepare v0.3.1 changelog
-
 ## 0.3.0 - 2026-10-05
 
 ### Features
@@ -147,7 +163,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Documentation
 
 - **release:** prepare operations skill release notes
-
 ## 0.2.2 - 2026-10-05
 
 ### Fixes
@@ -157,7 +172,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Maintenance
 
 - **release:** prepare v0.2.2 changelog
-
 ## 0.2.1 - 2026-10-05
 
 ### Fixes
@@ -174,7 +188,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 - **ci:** merge reviewed action updates and report dependencies monthly
 - **release:** prepare v0.2.1 changelog
 - **release:** refresh v0.2.1 notes after digest verification
-
 ## 0.2.0 - 2026-10-05
 
 ### Features
@@ -188,7 +201,6 @@ Generated from committed Git history with git-cliff. Regenerate before a release
 ### Maintenance
 
 - **release:** prepare v0.2.0 changelog
-
 ## 0.1.0 - 2026-10-05
 
 ### Features

@@ -40,6 +40,8 @@ mise run changelog:check
 
 `cliff.toml` 保留既有不符合新格式的提交，不改寫歷史。`vMAJOR.MINOR.PATCH` 及 prerelease／build metadata 標籤作為版本界線；最後一個版本之後的提交放入 Unreleased。無遠端 URL 時不產生無效的 commit 連結。
 
+既有版本段落以已提交內容為準。squash 後的提交無法由目前歷史重建先前手動整理的項目，因此發布準備只取用新版本段落，不覆寫舊版本內容。
+
 Changelog 以發布前更新為主，hooks 不會自動修改或暫存它。若要在建立提交前把該筆訊息納入，可使用 `--with-commit 'chore(release): prepare release notes'`，並以同樣訊息提交。
 
 要預覽下一版的發布內容，可明確指定版本名稱：
