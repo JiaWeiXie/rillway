@@ -29,7 +29,15 @@ func PAC(c config.PAC) (string, error) {
 			return "", err
 		}
 	}
-	domains, _ := json.Marshal(c.EnabledDomains())
+	rawDomains := c.EnabledDomains()
+	normalizedDomains := make([]string, 0, len(rawDomains))
+	for _, d := range rawDomains {
+		d = strings.TrimPrefix(strings.ToLower(strings.TrimSuffix(d, ".")), ".")
+		if d != "" {
+			normalizedDomains = append(normalizedDomains, d)
+		}
+	}
+	domains, _ := json.Marshal(normalizedDomains)
 	cidrs, _ := json.Marshal(cidrsEnabled)
 	proxy, _ := json.Marshal("PROXY " + c.ProxyAddress)
 	selfHost, _ := json.Marshal(proxyHost)
@@ -45,16 +53,34 @@ function addr(s) {
  if(h.length===1&&l.length!==8)return null;var a=l.slice();if(h.length===2){if(l.length+r.length>=8)return null;while(a.length<8-r.length)a.push("0");}a=a.concat(r);var out=[];
  for(var i=0;i<a.length;i++){if(!/^[0-9a-f]{1,4}$/i.test(a[i]))return null;var n=parseInt(a[i],16);out.push(n>>8,n&255);}return out.length===16?out:null;
 }
-function inside(ip,cidr){var p=cidr.split("/"),a=addr(ip),b=addr(p[0]),bits=+p[1];if(a&&b&&a.length===16&&b.length===4){var mapped=true;for(var k=0;k<10;k++)if(a[k]!==0)mapped=false;if(mapped&&a[10]===255&&a[11]===255)a=a.slice(12);}if(!a||!b||a.length!==b.length)return false;for(var i=0;i<a.length&&bits>0;i++,bits-=8){var mask=bits>=8?255:((255<<(8-bits))&255);if((a[i]&mask)!==(b[i]&mask))return false;}return true;}
-function bypassIP(ip){for(var i=0;i<bypassCIDRs.length;i++)if(inside(ip,bypassCIDRs[i]))return true;return false;}
+function parseCIDR(cidr){var p=cidr.split("/"),b=addr(p[0]);return b?{b:b,bits:+p[1]}:null;}
+function insideParsed(a,c){if(!a||!c)return false;var b=c.b,bits=c.bits;if(a.length===16&&b.length===4){var mapped=true;for(var k=0;k<10;k++)if(a[k]!==0)mapped=false;if(mapped&&a[10]===255&&a[11]===255)a=a.slice(12);}if(a.length!==b.length)return false;for(var i=0;i<a.length&&bits>0;i++,bits-=8){var mask=bits>=8?255:((255<<(8-bits))&255);if((a[i]&mask)!==(b[i]&mask))return false;}return true;}
+var parsedSelfCIDR=selfCIDR?parseCIDR(selfCIDR):null,parsedBypassCIDRs=[];
+for(var i=0;i<bypassCIDRs.length;i++){var pc=parseCIDR(bypassCIDRs[i]);if(pc)parsedBypassCIDRs.push(pc);}
+function bypassIPParsed(a){for(var i=0;i<parsedBypassCIDRs.length;i++)if(insideParsed(a,parsedBypassCIDRs[i]))return true;return false;}
+var dnsCache={},dnsQueue=[],dnsNext=0;
 function FindProxyForURL(url,host){
  host=host.toLowerCase().replace(/\.$/, "");
- if(host===selfHost||(selfCIDR&&inside(host,selfCIDR)))return "DIRECT";
+ if(host===selfHost)return "DIRECT";
  if(isPlainHostName(host)&&host.indexOf(":")<0)return "DIRECT";
- for(var i=0;i<bypassDomains.length;i++){var d=bypassDomains[i].replace(/^\./,"").toLowerCase();if(host===d||host.slice(-(d.length+1))==="."+d)return "DIRECT";}
- if(addr(host)){if(bypassIP(host))return "DIRECT";}
- else {var ips=typeof dnsResolveEx==="function"?dnsResolveEx(host):dnsResolve(host);if(ips){var list=ips.split(";");for(var j=0;j<list.length;j++)if((selfCIDR&&inside(list[j],selfCIDR))||bypassIP(list[j]))return "DIRECT";}}
- return %s;
+ for(var i=0;i<bypassDomains.length;i++){var d=bypassDomains[i];if(host===d||host.slice(-(d.length+1))==="."+d)return "DIRECT";}
+ var ip=addr(host);
+ if(ip){if((parsedSelfCIDR&&insideParsed(ip,parsedSelfCIDR))||bypassIPParsed(ip))return "DIRECT";return %s;}
+ if(!parsedSelfCIDR&&parsedBypassCIDRs.length===0)return %s;
+ var key="$"+host,now=Date.now(),cached=dnsCache[key];
+ if(Object.prototype.hasOwnProperty.call(dnsCache,key)&&now>=cached.at&&now-cached.at<30000)return cached.direct?"DIRECT":%s;
+ var direct=false,valid=false,ips;
+ try{ips=typeof dnsResolveEx==="function"?dnsResolveEx(host):dnsResolve(host);}catch(e){return %s;}
+ if(typeof ips==="string"){var list=ips.split(";");for(var j=0;j<list.length;j++){var a=addr(list[j].replace(/^\s+|\s+$/g,""));if(a){valid=true;if((parsedSelfCIDR&&insideParsed(a,parsedSelfCIDR))||bypassIPParsed(a)){direct=true;break;}}}}
+ if(valid){
+  if(Object.prototype.hasOwnProperty.call(dnsCache,key))dnsCache[key]={direct:direct,at:now};
+  else{
+   if(dnsQueue.length<512)dnsQueue.push(key);
+   else{delete dnsCache[dnsQueue[dnsNext]];dnsQueue[dnsNext]=key;dnsNext=(dnsNext+1)%%512;}
+   dnsCache[key]={direct:direct,at:now};
+  }
+ }
+ return direct?"DIRECT":%s;
 }
-`, domains, cidrs, selfHost, selfRange, proxy), nil
+`, domains, cidrs, selfHost, selfRange, proxy, proxy, proxy, proxy, proxy), nil
 }
