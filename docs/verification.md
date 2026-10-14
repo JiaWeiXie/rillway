@@ -2,6 +2,17 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-14：v0.8.0 發布、VM 升級與 PAC 驗收
+
+- **發布與供應鏈**：`v0.8.0` 標籤指向通過 `mise run security`（public-source、gitleaks、四平台 govulncheck、actionlint）的 `main` commit。Release workflow（run 38507850188）在 security、race／shuffle／coverage、fuzz 與四平台建置通過後產生 provenance attestation 與 draft release；部署前再核對 `SHA256SUMS` 與 `gh attestation verify` 皆通過，驗收後才發布 Release。
+- **原子替換**：停止服務後以同一檔案系統的暫存檔原子替換 binary，保留設定、憑證與 VPN state，並保留受管 unit／資源控制檔案的復原備份。停止至健康 2 秒；執行中程序雜湊符合發布檔；`NRestarts=0`、`ExecMainStatus=0`、unit 維持 enabled。
+- **管理與傳輸驗收**：可信 CA 的 HTTPS 管理 API 回報 `v0.8.0`；未認證請求 401；PAC 端點正常；HTTP 轉發、HTTPS CONNECT 與 SOCKS5 各有實際傳輸。WARP 固定規則目的地完成往返並在 stats 記錄於 `warp-plus` 出口；該次來源端回 403（GitHub 對部分 WARP 出口 IP 的政策），不代表代理失敗。
+- **PAC 客戶端行為**：從 Mac 取得實際供應的 PAC 後於 Node 執行：同一 hostname 連續 20 次呼叫只查 DNS 一次；30 秒到期後重新判斷；解析失敗不快取、恢復後可改判 DIRECT；快取上限 512 筆、FIFO 逐筆淘汰且保留近期項目。同一檢查在升級前（v0.7.0）測得 20 次呼叫產生 21 次 DNS 查詢。
+- **設定相容**：主機 WARP 記錄層級為 `inherit`，API 回報 `level=inherit`、`effective_level=-1`；此為產品契約允許的狀態（`internal/platform/install.go` 與其測試涵蓋），本次未變更 WARP 設定。
+- **首次部署中止與回滾**：第一次嘗試在 readiness gate 失敗後自動回滾，服務還原 v0.7.0。原因是驗收腳本假設 WARP `LogLevelMax` 為具體層級，與主機合法設定不符，產品端沒有缺陷；修正判定後重試成功。回滾前後的 `warp-log-level.conf` 內容一致。
+- **觀察**：控制監聽的連線守衛（總計 64、單一來源 16）由管理介面與 PAC 共用，同一來源若已對 Web UI 保持 16 條閒置連線，PAC 抓取會被拒絕；本機以保留 20 條連線重現，釋放後立即恢復 200。`internal/proxy/guard.go` 與 `internal/app/serve.go` 自 v0.7.0 起未變更，屬既有行為，列為後續評估項。
+- **限制**：只替換 binary，未變更 unit／設定／憑證／主機 VPN、DNS 或 Proxy，也未註冊、連線或授權 WARP；自適應與 WARP 韌性仍只在本機合成 SOCKS 上游驗證。未執行 live VPN tests 或容量壓測，不能宣稱原始 Mac 日常瀏覽的斷線與載入速度已改善。
+
 ## 2026-10-14：WARP 建連韌性、自適應親和性與 PAC DNS 判斷
 
 - **WARP 回歸**：本機 SOCKS listener 與可控制時鐘涵蓋暫時性握手失敗、固定／備援重試次數、目的地拒絕不重試、成功回覆尾段中斷、握手與退避取消、取消後不殘留 pacing 預約，以及握手完成後可保留超過握手槽數的串流。SOCKS general failure 只是可重試分類，不代表已證明官方 client 發生 StreamLimitHit。
