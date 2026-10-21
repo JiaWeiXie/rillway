@@ -2,6 +2,23 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## 0.9.0 - 2026-10-21
+
+### Features
+
+- **proxy:** add SOCKS5 UDP ASSOCIATE forwarding
+- **proxy:** isolate PAC capacity and observe SOCKS5 UDP relay
+
+### Fixes
+
+- **changelog:** keep curated entries when preparing a release
+- **web:** avoid repeating product name in SOCKS5 glossary
+- **deps:** update Go to 1.27.3 for GO-2026-6809
+
+### Documentation
+
+- **verification:** record v0.8.0 release, VM upgrade, and PAC checks
+
 ## 0.8.0 - 2026-10-14
 
 ### Features
