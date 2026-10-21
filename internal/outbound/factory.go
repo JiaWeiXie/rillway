@@ -51,9 +51,20 @@ func tcpNetwork(network string) error {
 	return nil
 }
 
+func providerNetwork(network string) error {
+	switch network {
+	case "tcp", "tcp4", "tcp6", "udp", "udp4", "udp6":
+		return nil
+	default:
+		return errors.New("only tcp, tcp4, tcp6, udp, udp4 and udp6 are supported")
+	}
+}
+
 func familyAllows(network string, addr netip.Addr) bool {
 	addr = addr.Unmap()
-	return network == "tcp" || network == "tcp4" && addr.Is4() || network == "tcp6" && addr.Is6()
+	return network == "tcp" || network == "udp" ||
+		(network == "tcp4" || network == "udp4") && addr.Is4() ||
+		(network == "tcp6" || network == "udp6") && addr.Is6()
 }
 
 type direct struct{ id string }
@@ -65,7 +76,7 @@ func (d *direct) Status(context.Context) Status {
 }
 
 func (d *direct) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if err := tcpNetwork(network); err != nil {
+	if err := providerNetwork(network); err != nil {
 		return nil, err
 	}
 	dialer := net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}

@@ -608,3 +608,57 @@ func TestScheduleProbesSuppressesFreshPassiveCandidates(t *testing.T) {
 		t.Fatalf("expected 0 probes when all candidates have fresh passive samples, got %+v", got)
 	}
 }
+
+func TestEngineUDPRoutingAndFlowAccounting(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pc.Close() }()
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			_, _ = pc.WriteTo(buf[:n], addr)
+		}
+	}()
+
+	e, _ := testEngine()
+	e.providers["direct"] = testProvider{id: "direct", dial: (&net.Dialer{}).DialContext}
+	c, err := e.DialContext(t.Context(), "udp", pc.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+
+	if _, err := c.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	res := make([]byte, 16)
+	n, err := c.Read(res)
+	if err != nil || string(res[:n]) != "ping" {
+		t.Fatalf("unexpected UDP echo: %q, %v", res[:n], err)
+	}
+
+	s := e.Snapshot()
+	if len(s.Flows) != 1 || s.Flows[0].Outbound != "direct" || s.Flows[0].UploadBytes != 4 || s.Flows[0].DownloadBytes != 4 {
+		t.Fatalf("flow accounting mismatch: %+v", s.Flows)
+	}
+
+	// Fixed routing to an unavailable provider must fail, not silently fallback to direct.
+	cfg := cloneConfig(e.cfg)
+	cfg.Rules = []config.Rule{{ID: "vpn-only", Ports: []string{"53"}, Outbound: "vpn"}}
+	e.Update(cfg, map[string]outbound.Provider{"direct": testProvider{id: "direct"}})
+	_, err = e.DialContext(t.Context(), "udp", "192.0.2.1:53")
+	if err == nil || !strings.Contains(err.Error(), "no fallback") {
+		t.Fatalf("expected no fallback error for unavailable provider, got: %v", err)
+	}
+
+	// Unsupported network
+	if _, err := e.DialContext(t.Context(), "unix", pc.LocalAddr().String()); err == nil {
+		t.Fatal("expected error for unsupported network")
+	}
+}

@@ -1,6 +1,6 @@
 # VPN 出口設定與驗證
 
-Rillway 的分流只作用於送進 HTTP／SOCKS5 Proxy 的 TCP 連線。每個出口自行建立連線；固定規則指定的出口失敗時回報錯誤，不改用直連。自適應路由可在同次建連失敗後嘗試其他已設定候選，詳見[分流契約](architecture.md#自適應)。變更規則只影響新連線，手動斷開 VPN 則會影響正在使用該 VPN 的流量。
+Rillway 的分流作用於送進 HTTP／SOCKS5 Proxy 的 TCP 連線與 SOCKS5 UDP ASSOCIATE 封包。每個出口自行建立連線；固定規則指定的出口失敗時回報錯誤，不改用直連。自適應路由可在同次建連失敗後嘗試其他已設定候選，詳見[分流契約](architecture.md#自適應)。變更規則只影響新連線，手動斷開 VPN 則會影響正在使用該 VPN 的流量。
 
 直接連線使用宿主 resolver，WARP 使用官方 Proxy 的 resolver；這兩類出口不接受 Rillway 的 `dns` 覆寫。`dns` 設定只用於 WireGuard 與 Tailscale，填在其他出口會明確拒絕。
 
@@ -135,4 +135,4 @@ WARP 測試先確認 Local Proxy 與端到端 trace；`warp-plus` 子測試還�
 
 WARP client 的版本、帳號狀態、連線協定及 Cloudflare colo 都可能改變。Rillway 會解析官方 Local Proxy 模式，並以端到端 trace 區分免費 WARP 與 WARP+；正式結果應保存在 repository 之外的受限制營運紀錄。缺少帳號、tailnet 或 WireGuard profile 時，一律標示 `NOT VERIFIED`，不得沿用其他環境的結果。
 
-所有出口目前只支援 TCP。此版不提供 UDP ASSOCIATE、整機流量接管、HTTPS 解密，或「低下載速度就保證換到更快線路」；自適應比較成功率與建連時間。
+WARP Local Proxy 目前僅支援 TCP。Direct、WireGuard 與 Tailscale 支援 TCP 及 SOCKS5 UDP ASSOCIATE 轉發。此版不提供整機流量接管、HTTPS 解密、WARP UDP 轉送，或「低下載速度就保證換到更快線路」；自適應比較成功率與建連時間。

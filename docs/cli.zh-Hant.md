@@ -35,12 +35,14 @@ Linux 優先採用 Rillway 安裝程式產生的 `/etc/systemd/system/rillway.se
 | `--listen IP` | `127.0.0.1` | 四個 listener 的指定本機 IPv4／IPv6 |
 | `--allow-client CSV` | 選定的監聽 IP | 允許的來源 IP／CIDR，以逗號分隔（同時初始化管理端 ACL 與來源存取規則） |
 | `--http-port PORT` | `17890` | HTTP forwarding／HTTPS CONNECT |
-| `--socks-port PORT` | `17891` | SOCKS5 TCP |
+| `--socks-port PORT` | `17891` | SOCKS5 TCP 與 UDP ASSOCIATE |
 | `--admin-port PORT` | `17892` | HTTPS 管理介面 |
 | `--pac-port PORT` | `17893` | HTTP PAC |
 | `--bypass-domains CSV` | `local,ts.net,tailscale.com` | Mac PAC 略過的公司網域／suffix |
 | `--yes` | `false` | 使用明確指定／預設值，不詢問；僅供首次安裝 |
 | `--no-install` | `false` | 建立設定／憑證，不註冊服務或要求 sudo |
+
+UDP ASSOCIATE 需要支援此協定的客戶端。TCP 控制連線使用 SOCKS5 listener；UDP 封包則送往 SOCKS5 回覆指定的 relay 位址與動態分配的 UDP 埠，不一定是 `--socks-port`。UDP 可使用 direct、WireGuard 與 Tailscale 出口；WARP UDP 會被拒絕，不回退至直連。詳見[出口限制](providers.md)。
 
 依序詢問 IP、來源、四個連接埠、公司略過網域，最後確認需輸入 `yes`。直接 Enter 保留顯示的預設值。IP 必須是目標主機已配置的位址；拒絕 `0.0.0.0`、`::`、multicast 與帶 zone 的位址。連接埠須互異、介於 `1024–65535`，並且沒有被占用。來源可填 CIDR，單一 IP 會轉成 `/32` 或 `/128`，另自動加入 loopback 與監聽位址本身。輸入驗證失敗時尚未寫檔或變更服務，請修正後重跑。輸入結束不代表同意安裝。
 
@@ -86,7 +88,9 @@ v1 與 v2 設定都支援選用的頂層 `connection_limits`：
 
 三個瀏覽器各開 10～20 個分頁，共用同一來源額度。分頁不等於連線：必要資源、持續連線及其他應用程式都會消耗 socket。既有串流壓測沒有確立最高安全 socket 數，不能以 RSS 或 worker 數線性推算。保留服務 CPU／記憶體限制，觀察實際負載的活躍 socket、拒絕增量及資源用量。
 
-HTTP 轉發、HTTPS CONNECT 與 SOCKS5 TCP 共用入口 socket 預算，包含握手中與閒置但仍開啟的連線。同一個標準化來源 IP 的所有應用程式與瀏覽器 profile 共用單一來源額度；計算的是連線數，非 HTTP 請求數。管理／PAC 容量獨立。超額 socket 在協定解析前關閉，瀏覽器可能直接收到連線錯誤，沒有 HTTP 或 SOCKS 錯誤回覆。
+HTTP 轉發、HTTPS CONNECT、SOCKS5 TCP 與 UDP ASSOCIATE 控制連線共用入口 socket 預算，包含握手中與閒置但仍開啟的連線。每個 UDP association 的 TCP 控制連線，在全域與單一來源上限各計入一個額度。同一個標準化來源 IP 的所有應用程式與瀏覽器 profile 共用單一來源額度；計算的是已接受的 TCP 連線數，非 HTTP 請求數或 UDP 封包數。管理／PAC 容量獨立。超額 socket 在協定解析前關閉，瀏覽器可能直接收到連線錯誤，沒有 HTTP 或 SOCKS 錯誤回覆。
+
+每個 UDP association 還可持有最多 32 個出口端目的地 UDP socket，由實作常數 `socksUDPMaxTargets` 獨立限制。這些目的地 socket 不額外消耗入口額度；修改 `connection_limits` 不會改變此 association 上限。因此，入口連線上限不等於程序持有的所有 socket 數量上限。
 
 使用 **來源存取 → 連線容量 → 儲存上限**，或附目前 revision 的 `PUT /api/v1/config`，驗證與持久化後立即套用，**不需重啟**。提高上限後新連線立即可用；降低上限保留既有串流，即使活躍數暫時超過新上限，直到兩項預算都有餘額才接受新 socket。只在主機修改設定檔則需重啟 daemon 才會載入；重啟會關閉連線並重設記憶體計數。
 

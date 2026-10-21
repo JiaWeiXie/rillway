@@ -187,6 +187,29 @@ func TestProviderRetirementKeepsActiveStream(t *testing.T) {
 	}
 }
 
+func TestProviderRetirementKeepsActiveUDPStream(t *testing.T) {
+	p := &testProvider{}
+	m := &managed{Provider: p}
+	conn, err := m.DialContext(t.Context(), "udp", "example.com:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.peer.Close() }()
+	if err = m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if p.closed.Load() != 0 {
+		t.Fatal("provider closed an active UDP stream")
+	}
+	if _, err = m.DialContext(t.Context(), "udp", "example.com:53"); err == nil {
+		t.Fatal("retired provider accepted a new UDP stream")
+	}
+	_ = conn.Close()
+	if p.closed.Load() != 1 {
+		t.Fatal("provider did not close exactly once after UDP stream closed")
+	}
+}
+
 func TestTailscaleStateDirectoryRemainsOwnedByRetiredProvider(t *testing.T) {
 	c := config.Default(t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.json")

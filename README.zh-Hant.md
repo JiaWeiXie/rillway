@@ -73,7 +73,7 @@ CLI 會自動讀取 OS 預設設定；`--config FILE` 可覆寫。Linux 優先�
 
 ## 功能與限制
 
-- HTTP forward proxy、HTTPS CONNECT、SOCKS5 TCP；來源 CIDR 限制與選用 Proxy 驗證。
+- HTTP forward proxy、HTTPS CONNECT、SOCKS5 TCP 與 UDP ASSOCIATE（支援 direct、WireGuard、Tailscale）；來源 CIDR 限制與選用 Proxy 驗證。
 - WARP／WARP+ 官方 Local Proxy 管理、嵌入式 Tailscale tsnet、WireGuard userspace netstack。
 - 網域、suffix、IP literal／CIDR 分流；固定 VPN 規則失敗不會偷偷改走直連。
 - HTTPS Web UI 與 Bubble Tea TUI 共用 `/api/v1`，支援權杖登入、設定版本衝突檢查及原子更新。
@@ -85,7 +85,7 @@ CLI 會自動讀取 OS 預設設定；`--config FILE` 可覆寫。Linux 優先�
 - 明確啟動的 GitHub 診斷與限量下載比較。
 - Docker pull／push、Build、容器 HTTP／HTTPS 代理匯出：daemon、client、環境變數、Compose；可合併既有 JSON，不改來源檔案。
 
-不提供整機 TUN、SOCKS5 UDP、HTTPS 解密或透明 Proxy。內建 `direct` 不可刪除或停用。初始 WARP 停用，其固定 GitHub CDN 規則會失敗，請先設定 WARP 或手動替換規則。公司與私網維持固定路由；流量速率觀察本身不能證明另一個出口更快。
+不提供整機 TUN、WARP UDP、HTTPS 解密或透明 Proxy。內建 `direct` 不可刪除或停用。初始 WARP 停用，其固定 GitHub CDN 規則會失敗，請先設定 WARP 或手動替換規則。公司與私網維持固定路由；流量速率觀察本身不能證明另一個出口更快。
 
 瀏覽器的 HTTP 與 HTTPS Proxy 都填 HTTP listener；SOCKS5 則使用 SOCKS listener，並啟用 Proxy 端 DNS。區網使用請將 loopback 改成 VM 位址。Mac PAC bypass 完全不經過 Rillway，不會顯示在觀察介面。
 

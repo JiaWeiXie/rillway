@@ -2,6 +2,38 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-16：SOCKS5 UDP ASSOCIATE 協定轉發與真實 Stack 整合驗證
+
+- **本機整合測試 (`internal/app/socks_udp_integration_test.go`)**：
+  - 使用真實 `Runtime`、SOCKS5 listener、`Engine` 與受管 direct provider；本機客戶端完成 UDP ASSOCIATE 握手，驗證 SOCKS UDP 標頭、完整 payload、回覆來源及 `Engine.Snapshot().Flows` 的上下載位元組。
+  - 固定規則指向停用的私人 WireGuard 出口，目的地是實際監聽中的本機 UDP socket。此案例走 unavailable-provider 錯誤路徑，不以 WARP 的私網政策拒絕代替出口失敗。
+  - 發送固定 VPN 封包後，同一 association 的另一個 direct 目的地仍可 echo；固定規則接收端在 300 ms 觀察期間只得到讀取逾時，沒有收到封包。其他 socket 錯誤不算通過。
+  - 正向對照只將該固定規則改為 direct；相同 association、接收 socket 與 payload 隨即完成往返。暫時將測試的初始規則也改為 direct，測試會因接收端收到 `"drop"` 失敗；該故障注入已還原。
+  - 上述結果支持此受控案例未回退至 direct，不能推論所有外部 VPN、用戶端或網路條件皆已驗收。
+- **獨立 daemon smoke**：重建 binary，以暫存設定、憑證及 loopback listener 啟動前景 `serve`。先直接送 UDP 至固定規則接收端，確認它能收到正向對照封包；再經真實 SOCKS5 UDP association 發送固定 VPN 封包，後續 direct echo 成功，接收端在 500 ms 觀察期間沒有收到 VPN payload。daemon 已停止，暫存設定、憑證及驗證程式已移除；未變更主機 VPN、DNS 或 Proxy。
+- **SOCKS5 入口與來源防護測試 (`internal/proxy/socks_udp_test.go`)**：
+  - 涵蓋 UDP ASSOCIATE 握手、來源 IP 鎖定、未指定埠時依首個有效封包鎖定來源埠、指定埠時拒絕異動。
+  - 拒絕分片（FRAG != 0）、格式錯誤標頭、保留埠；過大封包直接丟棄不截斷。
+  - 支援域名目標與 IPv6 標頭；支援連線關閉、TCP 控制斷線、來源 IP 封鎖與伺服器關閉時釋放所有關聯 UDP socket。
+  - 單一 association 限制 32 個活躍目的地 socket，滿額時淘汰最舊閒置 socket；2 分鐘無活動逾時關閉。
+  - 目的地為自身 UDP relay 監聽位址時明確阻斷，防止遞迴回環。
+- **出口通道與 Netstack 邊界測試 (`internal/outbound/udp_test.go`)**：
+  - `direct`：IPv4、IPv6、域名直連 UDP 封包傳輸，回報 `DestinationIP`。
+  - `wireguard`：userspace netstack（`DialUDPAddrPort`）加密 UDP 回音、AllowedIPs 邊界阻擋。
+  - `tailscale`：tsnet netstack（`DialContextUDPWithBind`）綁定來源位址、MagicDNS 域名查詢、非 tailnet/subnet 路由阻擋。
+  - `warp`：遇 UDP 網路請求明確回傳不支援錯誤。
+- **引擎與生命週期測試 (`internal/engine/engine_test.go`, `internal/app/runtime_test.go`)**：
+  - `Engine.DialContext` 支援 `udp` / `udp4` / `udp6`，記錄 `Flow` 流量。
+  - UDP 排除於以 TCP connect 延遲為基準的自適應探測與切換外。
+  - 服務熱更新時，退役 provider 維持活躍 UDP 封包連線，直至關閉才釋放舊 provider。
+- **品質檢查**：執行 `mise run check`，通過 `golangci-lint`（0 issues）、Go race detector（`-race`）、隨機測試（`-shuffle=on`）與 Python 腳本測試。
+
+**未驗證項目與限制（NOT VERIFIED / SKIP）**：
+1. **外部真實 VPN 連線**：未在真實外部 tailnet 或公共 WireGuard 伺服器驗證 UDP 傳輸；依專案規範僅於本機以 userspace netstack 與受控端點驗證。
+2. **應用程式相容性**：本次使用自行實作 SOCKS5 UDP ASSOCIATE 的本機客戶端，未驗收第三方瀏覽器、DNS、遊戲、語音或 QUIC／HTTP/3 應用。具備 SOCKS5 TCP 設定不代表會使用 UDP ASSOCIATE；不列未驗證的相容軟體範例，也不把任意 UDP payload 往返當成應用協定驗收。
+3. **容量乘數（Capacity Multiplier）**：每條 UDP association 控制 TCP 連線佔用 1 個 ingress guard 准入額度；該 association 內部可並行建立最多 32 個目的地 UDP socket，不額外消耗 ingress guard 額度，由 `socksUDPMaxTargets = 32` 獨立約束。
+4. **Flow 協定欄位**：`Flow` 尚無 `network` 欄位；現有流量畫面未區分 TCP 與 UDP。
+
 ## 2026-10-14：v0.8.0 發布、VM 升級與 PAC 驗收
 
 - **發布與供應鏈**：`v0.8.0` 標籤指向通過 `mise run security`（public-source、gitleaks、四平台 govulncheck、actionlint）的 `main` commit。Release workflow（run 38507850188）在 security、race／shuffle／coverage、fuzz 與四平台建置通過後產生 provenance attestation 與 draft release；部署前再核對 `SHA256SUMS` 與 `gh attestation verify` 皆通過，驗收後才發布 Release。

@@ -246,6 +246,9 @@ func (w *warp) acquireHandshakeSlot(ctx context.Context) (func(), error) {
 }
 
 func (w *warp) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if network == "udp" || network == "udp4" || network == "udp6" {
+		return nil, errors.New("WARP Local Proxy UDP is unsupported")
+	}
 	backoffs := warpFixedBackoffs
 	if routeinfo.From(ctx).FastFailover {
 		backoffs = warpFastFailoverBackoffs

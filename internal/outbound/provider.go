@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// Provider returns a connected TCP stream. It must never silently fall back to
-// another provider. address is a hostname or IP plus port; network is tcp/4/6.
+// Provider returns connected TCP streams or connected datagram-preserving UDP
+// connections. It must never silently fall back to another provider. address is
+// a hostname or IP plus port; network is tcp/4/6 or udp/4/6.
 type Provider interface {
 	ID() string
 	DialContext(context.Context, string, string) (net.Conn, error)

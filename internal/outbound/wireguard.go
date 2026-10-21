@@ -333,7 +333,7 @@ func (w *wireGuard) Status(context.Context) Status {
 }
 
 func (w *wireGuard) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if err := tcpNetwork(network); err != nil {
+	if err := providerNetwork(network); err != nil {
 		return nil, err
 	}
 	w.mu.RLock()
@@ -383,7 +383,22 @@ func (w *wireGuard) DialContext(ctx context.Context, network, address string) (n
 		if !familyAllows(network, ip) || !w.parsed.allows(ip) {
 			continue
 		}
-		conn, err := w.network.DialContextTCPAddrPort(ctx, netip.AddrPortFrom(ip, uint16(n)))
+		target := netip.AddrPortFrom(ip, uint16(n))
+		var conn net.Conn
+		if network == "udp" || network == "udp4" || network == "udp6" {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			conn, err = w.network.DialUDPAddrPort(netip.AddrPort{}, target)
+			if err == nil {
+				if canceled := ctx.Err(); canceled != nil {
+					_ = conn.Close()
+					return nil, canceled
+				}
+			}
+		} else {
+			conn, err = w.network.DialContextTCPAddrPort(ctx, target)
+		}
 		if err == nil {
 			return &destinationConn{Conn: conn, ip: ip.String()}, nil
 		}

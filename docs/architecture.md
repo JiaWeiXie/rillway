@@ -67,7 +67,7 @@ PAC 在載入時先整理網域與解析 CIDR。網域 bypass、Proxy 自身 hos
 
 ## 來源存取控制
 
-Proxy（HTTP／CONNECT 與 SOCKS5）在 TCP socket accept 後、通訊協定解析前進行 pre-parser 入口審查。管理介面與 PAC 則獨立使用各自的授權與監聽邏輯，不經由 Proxy 連線守衛。
+Proxy（HTTP／CONNECT 與 SOCKS5 TCP／UDP ASSOCIATE）在 TCP socket accept 後、通訊協定解析前進行 pre-parser 入口審查。管理介面與 PAC 則獨立使用各自的授權與監聽邏輯，不經由 Proxy 連線守衛。
 
 - **雙軌 ACL 與設定版本**：`config.json` 版本為 3。`security.allowed_clients` 維持唯讀，作為 HTTPS 管理介面與 HTTP PAC 端點存取的網路邊界；`source_access.rules` 則專門用於 Proxy 連入存取。版本 1／2 讀取時會升級為版本 3，保留既有 source access；版本 3 的 `source_access.rules` 為空表示明確全域拒絕（deny-all），不再回退至預設或 `security.allowed_clients`。
 - **規則匹配語意**：規則採用前綴二元樹（Trie）評估。各規則定義動作（`allow` 或 `deny`）、啟用狀態與 CIDR 前綴列表。當有多條規則覆蓋同一個 IP 時，以最長前綴（longest/deepest prefix）優先；若在前綴長度完全相同時發生衝突，則以拒絕優先（deny beats allow）；若前綴長度相同且動作一致，則由設定順序中較早啟用的規則決定 `rule_id`。未匹配任何規則的連線預設拒絕（fail closed）。

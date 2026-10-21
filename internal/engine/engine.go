@@ -370,8 +370,10 @@ func (e *Engine) protectRoute(r route, host string) (route, error) {
 }
 
 func (e *Engine) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if network != "tcp" && network != "tcp4" && network != "tcp6" {
-		return nil, errors.New("only TCP is supported")
+	switch network {
+	case "tcp", "tcp4", "tcp6", "udp", "udp4", "udp6":
+	default:
+		return nil, fmt.Errorf("unsupported network %q", network)
 	}
 	if err := e.ctx.Err(); err != nil {
 		return nil, errors.New("engine is closed")
@@ -402,11 +404,24 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		e.mu.Unlock()
 		return nil, err
 	}
+	isUDP := strings.HasPrefix(network, "udp")
+	if isUDP && len(r.candidates) > 0 {
+		r.outbound = initialOutbound(r)
+		r.candidates = nil
+	}
 	switch r.family {
 	case "ipv4":
-		network = "tcp4"
+		if isUDP {
+			network = "udp4"
+		} else {
+			network = "tcp4"
+		}
 	case "ipv6":
-		network = "tcp6"
+		if isUDP {
+			network = "udp6"
+		} else {
+			network = "tcp6"
+		}
 	}
 	groupAddr := address
 	key := address + "|" + network

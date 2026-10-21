@@ -23,20 +23,22 @@ import (
 )
 
 type tailscale struct {
-	cfg          config.Outbound
-	server       *tsnet.Server
-	stateLock    *os.File
-	closeOnce    sync.Once
-	closeErr     error
-	login        func(context.Context) error
-	logout       func(context.Context) error
-	setRunning   func(context.Context, bool) error
-	status       func(context.Context) (*ipnstate.Status, error)
-	addresses    func() (netip.Addr, netip.Addr)
-	dialNetstack func(context.Context, netip.Addr, netip.AddrPort) (net.Conn, error)
-	mu           sync.RWMutex
-	actionMu     sync.Mutex
-	stopped      bool
+	cfg             config.Outbound
+	server          *tsnet.Server
+	stateLock       *os.File
+	closeOnce       sync.Once
+	closeErr        error
+	login           func(context.Context) error
+	logout          func(context.Context) error
+	setRunning      func(context.Context, bool) error
+	status          func(context.Context) (*ipnstate.Status, error)
+	queryMagicDNS   func(context.Context, string, string) ([]byte, error)
+	addresses       func() (netip.Addr, netip.Addr)
+	dialNetstack    func(context.Context, netip.Addr, netip.AddrPort) (net.Conn, error)
+	dialNetstackUDP func(context.Context, netip.Addr, netip.AddrPort) (net.Conn, error)
+	mu              sync.RWMutex
+	actionMu        sync.Mutex
+	stopped         bool
 }
 
 func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error) {
@@ -116,10 +118,17 @@ func newTailscale(parent context.Context, cfg config.Outbound) (Provider, error)
 			_, err := lc.EditPrefs(ctx, &ipn.MaskedPrefs{Prefs: ipn.Prefs{WantRunning: running}, WantRunningSet: true})
 			return err
 		},
-		status:    lc.Status,
+		status: lc.Status,
+		queryMagicDNS: func(ctx context.Context, name, queryType string) ([]byte, error) {
+			packet, _, err := lc.QueryDNS(ctx, name, queryType)
+			return packet, err
+		},
 		addresses: s.TailscaleIPs,
 		dialNetstack: func(ctx context.Context, source netip.Addr, destination netip.AddrPort) (net.Conn, error) {
 			return ns.DialContextTCPWithBind(ctx, source, destination)
+		},
+		dialNetstackUDP: func(ctx context.Context, source netip.Addr, destination netip.AddrPort) (net.Conn, error) {
+			return ns.DialContextUDPWithBind(ctx, source, destination)
 		},
 	}, nil
 }
@@ -184,7 +193,7 @@ func routePermitted(st *ipnstate.Status, addr netip.Addr) bool {
 }
 
 func (t *tailscale) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if err := tcpNetwork(network); err != nil {
+	if err := providerNetwork(network); err != nil {
 		return nil, err
 	}
 	t.mu.RLock()
@@ -193,11 +202,7 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 	if stopped {
 		return nil, errors.New("tailscale was manually stopped")
 	}
-	lc, err := t.server.LocalClient()
-	if err != nil {
-		return nil, err
-	}
-	st, err := lc.Status(ctx)
+	st, err := t.status(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -226,12 +231,13 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 			name string
 			typ  dnsmessage.Type
 		}{{"A", dnsmessage.TypeA}, {"AAAA", dnsmessage.TypeAAAA}} {
-			if network == "tcp4" && qt.typ == dnsmessage.TypeAAAA || network == "tcp6" && qt.typ == dnsmessage.TypeA {
+			if (network == "tcp4" || network == "udp4") && qt.typ == dnsmessage.TypeAAAA ||
+				(network == "tcp6" || network == "udp6") && qt.typ == dnsmessage.TypeA {
 				continue
 			}
 			var packet []byte
 			if magic {
-				packet, _, err = lc.QueryDNS(ctx, host+".", qt.name)
+				packet, err = t.queryMagicDNS(ctx, host+".", qt.name)
 			} else {
 				// Non-MagicDNS private names require explicit DNS routed inside the
 				// tailnet. Never ask QueryDNS to fall back to the host/public resolver.
@@ -266,7 +272,14 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 		if !familyAllows(network, ip) || !routePermitted(st, ip) {
 			continue
 		}
-		c, e := t.dialTunnel(ctx, netip.AddrPortFrom(ip, uint16(portNumber)))
+		destination := netip.AddrPortFrom(ip, uint16(portNumber))
+		var c net.Conn
+		var e error
+		if network == "udp" || network == "udp4" || network == "udp6" {
+			c, e = t.dialUDPTunnel(ctx, destination)
+		} else {
+			c, e = t.dialTunnel(ctx, destination)
+		}
 		if e == nil {
 			return &destinationConn{Conn: c, ip: ip.String()}, nil
 		}
@@ -282,12 +295,40 @@ func (t *tailscale) DialContext(ctx context.Context, network, address string) (n
 // to the host network when a route disappears. The embedded netstack has no
 // host-network transport; a withdrawn route therefore fails closed.
 func (t *tailscale) dialTunnel(ctx context.Context, destination netip.AddrPort) (net.Conn, error) {
-	status, err := t.status(ctx)
+	source, err := t.tunnelSource(ctx, destination)
 	if err != nil {
 		return nil, err
 	}
+	return t.dialNetstack(ctx, source, destination)
+}
+
+func (t *tailscale) dialUDPTunnel(ctx context.Context, destination netip.AddrPort) (net.Conn, error) {
+	source, err := t.tunnelSource(ctx, destination)
+	if err != nil {
+		return nil, err
+	}
+	// The netstack UDP dial accepts a context but does not inspect it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	conn, err := t.dialNetstackUDP(ctx, source, destination)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (t *tailscale) tunnelSource(ctx context.Context, destination netip.AddrPort) (netip.Addr, error) {
+	status, err := t.status(ctx)
+	if err != nil {
+		return netip.Addr{}, err
+	}
 	if !routePermitted(status, destination.Addr()) {
-		return nil, errors.New("destination is no longer within an active Tailscale peer/subnet route")
+		return netip.Addr{}, errors.New("destination is no longer within an active Tailscale peer/subnet route")
 	}
 	v4, v6 := t.addresses()
 	source := v4
@@ -295,13 +336,9 @@ func (t *tailscale) dialTunnel(ctx context.Context, destination netip.AddrPort) 
 		source = v6
 	}
 	if !source.IsValid() {
-		return nil, errors.New("embedded Tailscale node has no source address for the requested family")
+		return netip.Addr{}, errors.New("embedded Tailscale node has no source address for the requested family")
 	}
-	conn, err := t.dialNetstack(ctx, source, destination)
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
+	return source, nil
 }
 
 func (t *tailscale) queryDNS(ctx context.Context, server netip.Addr, host string, typ dnsmessage.Type) ([]byte, error) {

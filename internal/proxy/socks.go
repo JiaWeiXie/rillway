@@ -112,6 +112,10 @@ func (s *Server) socksConnection(ctx context.Context, client net.Conn) {
 		socksReply(client, 1)
 		return
 	}
+	if request[1] == 3 {
+		s.socksAssociate(ctx, client, request[3])
+		return
+	}
 	if request[1] != 1 {
 		socksReply(client, 7)
 		return

@@ -50,12 +50,18 @@ Credentials are read from files; setup/init output only token paths.
 | `--listen IP` | `127.0.0.1` | Specific local IPv4/IPv6 address for all four listeners |
 | `--allow-client CSV` | Selected listener IP | Allowed source IPs/CIDRs, comma-separated (initializes both management ACL and source access rules) |
 | `--http-port PORT` | `17890` | HTTP forwarding and HTTPS CONNECT |
-| `--socks-port PORT` | `17891` | SOCKS5 TCP |
+| `--socks-port PORT` | `17891` | SOCKS5 TCP and UDP ASSOCIATE |
 | `--admin-port PORT` | `17892` | HTTPS management |
 | `--pac-port PORT` | `17893` | HTTP PAC endpoint |
 | `--bypass-domains CSV` | `local,ts.net,tailscale.com` | Company/domain suffixes bypassing the Mac PAC proxy |
 | `--yes` | `false` | Accept explicit/default settings without input; first installation only |
 | `--no-install` | `false` | Create configuration/credentials without service registration or sudo |
+
+UDP ASSOCIATE requires a client that implements it. Its TCP control connection uses
+the SOCKS5 listener; datagrams go to the relay address and dynamically assigned UDP
+port returned in the SOCKS5 reply, not necessarily `--socks-port`. UDP is supported
+through direct, WireGuard and Tailscale outbounds; WARP UDP is rejected without
+direct fallback. See [provider limits](providers.md).
 
 The wizard asks for the IP, client list, four ports, bypass domains, then final
 confirmation (`yes`). Press Enter to keep a shown default. The selected IP must
@@ -132,7 +138,9 @@ The global default preserves the existing 256-socket budget; the per-source defa
 
 Three browsers with 10–20 tabs each share the same source allowance. Tabs are not connections: required resources, persistent connections and other apps also consume sockets. Prior streaming benchmarks do not establish a maximum safe socket count; do not extrapolate it from RSS or worker counts. Keep service memory/CPU limits and observe active sockets, rejection deltas and resource usage for the actual workload.
 
-HTTP forwarding, HTTPS CONNECT and SOCKS5 TCP share one ingress-socket budget, including handshakes and idle accepted connections. The per-source allowance is shared by every application/profile using the same canonical source IP. It counts connections, not HTTP requests. Management/PAC capacity is separate. Rejected sockets close before protocol parsing, so browsers can see connection errors without an HTTP or SOCKS error response.
+HTTP forwarding, HTTPS CONNECT, SOCKS5 TCP and UDP ASSOCIATE control connections share one ingress-socket budget, including handshakes and idle accepted connections. Each UDP association's TCP control connection consumes one slot under both the global and per-source limits. The per-source allowance is shared by every application/profile using the same canonical source IP. It counts accepted TCP connections, not HTTP requests or UDP datagrams. Management/PAC capacity is separate. Rejected sockets close before protocol parsing, so browsers can see connection errors without an HTTP or SOCKS error response.
+
+Each UDP association can also hold up to 32 outbound destination UDP sockets, bounded independently by the implementation constant `socksUDPMaxTargets`. Those destination sockets do not consume additional ingress slots; changing `connection_limits` does not change this per-association cap. The ingress limits therefore do not represent a cap on all sockets owned by the process.
 
 Use **Source access → Connection capacity → Save limits**, or a revision-checked `PUT /api/v1/config`, to validate, persist and apply changes **without restarting**. Raising a limit allows new admissions immediately. Lowering a limit preserves existing streams, even if active usage temporarily exceeds the new limit; new sockets are rejected until both budgets have room. Editing only the host configuration file requires a daemon restart to load it. Restart closes connections and resets in-memory counters.
 

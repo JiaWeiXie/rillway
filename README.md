@@ -100,7 +100,7 @@ Release `rillway-ops.zip` contains only reviewed Skill files and license; no MCP
 
 ## Capabilities and limits
 
-- HTTP forwarding, HTTPS CONNECT, SOCKS5 TCP; source CIDR restrictions and optional proxy authentication.
+- HTTP forwarding, HTTPS CONNECT, SOCKS5 TCP and UDP ASSOCIATE (direct, WireGuard, Tailscale); source CIDR restrictions and optional proxy authentication.
 - Official WARP/WARP+ Local Proxy management, embedded Tailscale tsnet, userspace WireGuard.
 - Domain/suffix and literal IP/CIDR rules; failed fixed VPN routes never fall back to direct.
 - HTTPS Web UI and Bubble Tea TUI share `/api/v1`, token authentication, revision checks, and atomic configuration updates.
@@ -112,7 +112,7 @@ Release `rillway-ops.zip` contains only reviewed Skill files and license; no MCP
 - Explicit GitHub diagnostics and bounded download comparisons.
 - Docker pull/push, Build, and container HTTP/HTTPS exports: daemon, client, environment, Compose; merge existing JSON without modifying the input.
 
-No whole-host TUN, SOCKS5 UDP, HTTPS interception, or transparent proxy. Built-in
+No whole-host TUN, WARP UDP, HTTPS interception, or transparent proxy. Built-in
 `direct` cannot be deleted/disabled. Initial WARP is disabled: its fixed GitHub CDN
 rules fail until WARP is configured or you explicitly replace those rules. Company
 and private networks stay on fixed routes. Throughput observations alone do not

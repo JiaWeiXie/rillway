@@ -327,28 +327,14 @@ func TestSOCKSAuthenticatedTCP(t *testing.T) {
 	}
 }
 
-func TestSOCKSRejectsUDPAndAuthDowngrade(t *testing.T) {
-	t.Run("UDP", func(t *testing.T) {
-		s := testServer(t, false)
-		c := startSOCKS(t, s)
-		_, _ = c.Write([]byte{5, 1, 0})
-		var choice [2]byte
-		_, _ = io.ReadFull(c, choice[:])
-		_, _ = c.Write([]byte{5, 3, 0, 1})
-		var reply [10]byte
-		if _, err := io.ReadFull(c, reply[:]); err != nil || reply[1] != 7 {
-			t.Fatalf("UDP accepted: %v %v", reply, err)
-		}
-	})
-	t.Run("auth", func(t *testing.T) {
-		s := testServer(t, true)
-		c := startSOCKS(t, s)
-		_, _ = c.Write([]byte{5, 1, 0})
-		var reply [2]byte
-		if _, err := io.ReadFull(c, reply[:]); err != nil || reply[1] != 255 {
-			t.Fatalf("auth downgraded: %v %v", reply, err)
-		}
-	})
+func TestSOCKSRejectsAuthDowngrade(t *testing.T) {
+	s := testServer(t, true)
+	c := startSOCKS(t, s)
+	_, _ = c.Write([]byte{5, 1, 0})
+	var reply [2]byte
+	if _, err := io.ReadFull(c, reply[:]); err != nil || reply[1] != 255 {
+		t.Fatalf("auth downgraded: %v %v", reply, err)
+	}
 }
 
 type flakyListener struct {

@@ -1,5 +1,5 @@
-// Package proxy implements HTTP forwarding, CONNECT and SOCKS5 TCP without TLS
-// interception. Access controls are checked before parsing destination traffic.
+// Package proxy implements HTTP forwarding, CONNECT, SOCKS5 TCP and UDP ASSOCIATE
+// without TLS interception. Access controls precede destination traffic parsing.
 package proxy
 
 import (
@@ -41,6 +41,7 @@ type Server struct {
 	handshakeTimeout   time.Duration
 	dialTimeout        time.Duration
 	endpoints          []netip.AddrPort
+	udpEndpoints       map[netip.AddrPort]struct{}
 	internalEndpoints  []netip.AddrPort
 	localIPs           map[netip.Addr]bool
 }
@@ -59,7 +60,7 @@ func New(dialer Dialer, security config.Security, limits config.ConnectionLimits
 		return nil, err
 	}
 	eff := limits.Effective()
-	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
+	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), udpEndpoints: make(map[netip.AddrPort]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
 	s.sourcePolicy.Store(policy)
 	s.guard = NewConnectionGuard(eff.MaxConnections, eff.MaxConnectionsPerSource, func(ip netip.Addr) access.Decision {
 		p := s.sourcePolicy.Load()
