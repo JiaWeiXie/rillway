@@ -24,14 +24,25 @@ an upgrade; there is no long-term support branch yet.
 - The default listeners bind loopback. For LAN use, select a specific IP and the
   smallest source allowlist. Keep all four listeners behind the host firewall.
   Do not forward them from the Internet or use `0.0.0.0/0` / `::/0` as client ACLs.
-- HTTP/SOCKS5 share an admission budget of 256 open client sockets, with at most
-  64 per source IP. Management/PAC have an independent budget of 64 sockets,
-  16 per source IP. ACL and capacity checks run before parsing or TLS handshakes;
-  excess sockets are closed without waiting. Half-closed tunnels retain their
-  slot until fully closed. These limits do not cap bandwidth or total process RSS.
+- HTTP/SOCKS5 share a configurable admission budget (`connection_limits`, by
+  default 256 open client sockets, at most 256 per source IP). The management
+  listener and the PAC endpoint each have their own fixed budget of 128 sockets,
+  32 per source IP, so filling management does not block PAC. ACL and capacity
+  checks run before parsing or TLS handshakes; excess sockets are closed without
+  waiting. Half-closed tunnels retain their slot until fully closed. These limits
+  do not cap bandwidth or total process RSS.
   `GET /api/v1/stats` reports `proxy_admission_rejections`: counts since the
   listeners started of allowed-source HTTP/SOCKS5 sockets closed by the per-source
   or total limit. Clients see those as connection resets.
+- SOCKS5 UDP destination sockets are bounded per association (32) and by a global
+  budget of 4 × the effective `max_connections`. Datagrams over the global budget,
+  to a destination that failed in the same association within 5 seconds, to a
+  literal address of this daemon's own listener or a live UDP relay socket, or to
+  a hostname whose connected peer is a live relay socket are dropped and counted
+  in `proxy_udp_drops`. A hostname alias that resolves to Rillway's own HTTP/SOCKS5
+  proxy listener is refused and counted in `udp_dial_failures` as `blocked`.
+  Failure memory is never shared between clients. UDP counters record no
+  hostnames or IP addresses.
 - The proxy rejects destinations matching its own bound HTTP/SOCKS5 endpoints,
   including known local addresses for wildcard binds and DNS aliases confirmed
   by the selected outbound's connected peer. No extra host-DNS query is made.

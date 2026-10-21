@@ -3,11 +3,13 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"rillway/internal/config"
 	"rillway/internal/outbound"
 	"rillway/internal/routeinfo"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -644,7 +646,7 @@ func TestEngineUDPRoutingAndFlowAccounting(t *testing.T) {
 	}
 
 	s := e.Snapshot()
-	if len(s.Flows) != 1 || s.Flows[0].Outbound != "direct" || s.Flows[0].UploadBytes != 4 || s.Flows[0].DownloadBytes != 4 {
+	if len(s.Flows) != 1 || s.Flows[0].Network != "udp" || s.Flows[0].Outbound != "direct" || s.Flows[0].UploadBytes != 4 || s.Flows[0].DownloadBytes != 4 {
 		t.Fatalf("flow accounting mismatch: %+v", s.Flows)
 	}
 
@@ -660,5 +662,100 @@ func TestEngineUDPRoutingAndFlowAccounting(t *testing.T) {
 	// Unsupported network
 	if _, err := e.DialContext(t.Context(), "unix", pc.LocalAddr().String()); err == nil {
 		t.Fatal("expected error for unsupported network")
+	}
+}
+
+func TestEngineUDPFailuresCountedWithoutChangingHealth(t *testing.T) {
+	e, _ := testEngine()
+	refuseUDP := func(_ context.Context, network, _ string) (net.Conn, error) {
+		if strings.HasPrefix(network, "udp") {
+			return nil, fmt.Errorf("WARP Local Proxy: %w", outbound.ErrUDPUnsupported)
+		}
+		return nil, syscall.ECONNREFUSED
+	}
+	providers := map[string]outbound.Provider{
+		"direct": testProvider{id: "direct"},
+		"warp":   testProvider{id: "warp", dial: refuseUDP},
+		"off": testProvider{id: "off", dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, fmt.Errorf("outbound off %w: disabled", outbound.ErrUnavailable)
+		}},
+		"slow":     testProvider{id: "slow", dial: func(context.Context, string, string) (net.Conn, error) { return nil, context.DeadlineExceeded }},
+		"canceled": testProvider{id: "canceled", dial: func(context.Context, string, string) (net.Conn, error) { return nil, context.Canceled }},
+		"loop": testProvider{id: "loop", dial: func(context.Context, string, string) (net.Conn, error) {
+			client, server := net.Pipe()
+			t.Cleanup(func() { _ = server.Close() })
+			return client, nil
+		}},
+	}
+	cfg := cloneConfig(e.cfg)
+	cfg.Adaptive.Enabled = false
+	cfg.OutboundGroups = []config.OutboundGroup{{ID: "paused", Type: "fallback", Members: []string{"direct"}, Enabled: false}}
+	cfg.Rules = []config.Rule{
+		{ID: "quic", Ports: []string{"443"}, Outbound: "warp"},
+		{ID: "missing", Ports: []string{"53"}, Outbound: "vpn"},
+		{ID: "off", Ports: []string{"54"}, Outbound: "off"},
+		{ID: "slow", Ports: []string{"55"}, Outbound: "slow"},
+		{ID: "canceled", Ports: []string{"56"}, Outbound: "canceled"},
+		{ID: "paused", Ports: []string{"57"}, Outbound: "paused"},
+		{ID: "loop", Ports: []string{"58"}, Outbound: "loop"},
+		{ID: "company", Domains: []string{"company.example"}, Outbound: "warp"},
+	}
+	e.Update(cfg, providers)
+	// net.Pipe reports "pipe" as its peer: here that is this daemon's listener.
+	e.SetDestinationPolicy(func(address string) (bool, bool) { return address == "pipe", false })
+	for range 3 {
+		if _, err := e.DialContext(t.Context(), "udp", "192.0.2.1:443"); !errors.Is(err, outbound.ErrUDPUnsupported) {
+			t.Fatalf("UDP via WARP: %v", err)
+		}
+	}
+	for _, address := range []string{"192.0.2.1:53", "192.0.2.1:54", "192.0.2.1:55", "192.0.2.1:56", "192.0.2.1:57", "192.0.2.1:58", "company.example:443"} {
+		if _, err := e.DialContext(t.Context(), "udp", address); err == nil {
+			t.Fatalf("UDP to %s unexpectedly connected", address)
+		}
+	}
+	if health := e.health["warp"]; health != nil {
+		t.Fatalf("UDP refusals changed WARP health: %+v", health)
+	}
+	if _, err := e.DialContext(t.Context(), "tcp", "192.0.2.1:443"); err == nil {
+		t.Fatal("TCP refusal unexpectedly connected")
+	}
+	if health := e.health["warp"]; health == nil || health.consecutiveFailures != 1 {
+		t.Fatalf("TCP health must count only TCP attempts: %+v", health)
+	}
+	want := []UDPDialFailure{
+		{Outbound: "loop", Reason: UDPFailureBlocked, Count: 1},
+		{Outbound: "off", Reason: UDPFailureUnavailable, Count: 1},
+		{Outbound: "paused", Reason: UDPFailureUnavailable, Count: 1},
+		{Outbound: "slow", Reason: UDPFailureTimeout, Count: 1},
+		{Outbound: "vpn", Reason: UDPFailureUnavailable, Count: 1},
+		{Outbound: "warp", Reason: UDPFailureBlocked, Count: 1}, // private-network protection
+		{Outbound: "warp", Reason: UDPFailureUnsupported, Count: 3},
+	}
+	if got := e.Snapshot().UDPDialFailures; !slices.Equal(got, want) {
+		t.Fatalf("UDP failures = %+v, want %+v (TCP and cancellation excluded)", got, want)
+	}
+	delete(providers, "warp")
+	delete(providers, "loop")
+	cfg.OutboundGroups = nil
+	cfg.Rules = nil
+	e.Update(cfg, providers)
+	want = []UDPDialFailure{{Outbound: "off", Reason: UDPFailureUnavailable, Count: 1}, {Outbound: "slow", Reason: UDPFailureTimeout, Count: 1}}
+	if got := e.Snapshot().UDPDialFailures; !slices.Equal(got, want) {
+		t.Fatalf("removed outbounds kept UDP failure counters: %+v", got)
+	}
+	providers["direct"] = testProvider{id: "direct", dial: func(context.Context, string, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		t.Cleanup(func() { _ = server.Close() })
+		return client, nil
+	}}
+	e.Update(cfg, providers)
+	e.SetDestinationPolicy(nil)
+	conn, err := e.DialContext(t.Context(), "tcp", "192.0.2.1:80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if flows := e.Snapshot().Flows; len(flows) != 1 || flows[0].Network != "tcp" {
+		t.Fatalf("TCP flow network = %+v", flows)
 	}
 }

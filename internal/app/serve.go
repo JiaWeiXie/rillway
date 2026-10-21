@@ -33,6 +33,17 @@ type serverTimeouts struct {
 
 var defaultServerTimeouts = serverTimeouts{30 * time.Second, 2 * time.Minute, 10 * time.Second, 30 * time.Second}
 
+// Admin and PAC each get their own budget of this size. Management traffic is
+// limited to allowed networks; the per-source bound still caps one host.
+const (
+	managementMaxConnections          = 128
+	managementMaxConnectionsPerSource = 32
+)
+
+func newManagementGuard(policy *access.Policy) *proxy.ConnectionGuard {
+	return proxy.NewConnectionGuard(managementMaxConnections, managementMaxConnectionsPerSource, policy.Decide)
+}
+
 // Serve restarts its listeners and runtime in the same low-privilege process.
 // It needs no shell commands, sudo policy, or service-manager privileges.
 func Serve(ctx context.Context, path string, c config.Config, ready func(string)) error {
@@ -138,7 +149,8 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		readTimeout, writeTimeout time.Duration
 	}
 	var jobs []job
-	// Keep management/PAC capacity independent of saturated proxy traffic.
+	// Keep management and PAC capacity independent of saturated proxy traffic,
+	// and of each other: idle Web UI keep-alive sockets must not block PAC.
 	managementPolicy, err := access.CompileAllowlist(c.Security.AllowedClients)
 	if err != nil {
 		return err
@@ -147,7 +159,8 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		ip, err := access.ParsePeer(peer)
 		return err == nil && managementPolicy.Decide(ip).Allowed
 	}
-	controlGuard := proxy.NewConnectionGuard(64, 16, managementPolicy.Decide)
+	adminGuard := newManagementGuard(managementPolicy)
+	pacGuard := newManagementGuard(managementPolicy)
 	acl := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if !managementAllowed(req.RemoteAddr) {
@@ -162,12 +175,13 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		h                         http.Handler
 		tls                       bool
 		socks                     bool
+		guard                     *proxy.ConnectionGuard
 		readTimeout, writeTimeout time.Duration
 	}{
-		{c.Listeners.HTTP, p.HTTPHandler(), false, false, 0, 0},
-		{c.Listeners.SOCKS5, nil, false, true, 0, 0},
-		{c.Listeners.Admin, acl(control.New(r, token)), true, false, timeouts.adminRead, timeouts.adminWrite},
-		{c.Listeners.PAC, acl(pacHandler(r)), false, false, timeouts.pacRead, timeouts.pacWrite},
+		{c.Listeners.HTTP, p.HTTPHandler(), false, false, nil, 0, 0},
+		{c.Listeners.SOCKS5, nil, false, true, nil, 0, 0},
+		{c.Listeners.Admin, acl(control.New(r, token)), true, false, adminGuard, timeouts.adminRead, timeouts.adminWrite},
+		{c.Listeners.PAC, acl(pacHandler(r)), false, false, pacGuard, timeouts.pacRead, timeouts.pacWrite},
 	} {
 		if item.addr == "" {
 			continue
@@ -176,11 +190,11 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		if e != nil {
 			return e
 		}
-		if item.socks || item.addr == c.Listeners.HTTP {
+		if item.guard == nil {
 			l = p.GuardListener(l)
 		} else {
 			p.IgnoreListener(l)
-			l = controlGuard.Wrap(l)
+			l = item.guard.Wrap(l)
 		}
 		jobs = append(jobs, job{l, item.h, item.tls, item.socks, item.readTimeout, item.writeTimeout})
 	}

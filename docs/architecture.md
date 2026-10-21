@@ -53,7 +53,9 @@ CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 
 
 ## 可觀察資料
 
-每條已建立連線最多保存 hostname、port、已知目的 IP、family、流量、五秒窗口速率、建連時間、規則及出口。最多 2,048 條 flow 與 2,048 個自適應目的地；超過容量移除最舊資料，24 小時過期。統計不落盤，不記錄 payload、HTTPS path、cookie 或授權 header；畫面總計僅涵蓋保留的 flows。
+每條已建立連線最多保存 network（`tcp`／`udp`）、hostname、port、已知目的 IP、family、流量、五秒窗口速率、建連時間、規則及出口。最多 2,048 條 flow 與 2,048 個自適應目的地；超過容量移除最舊資料，24 小時過期。統計不落盤，不記錄 payload、HTTPS path、cookie 或授權 header；畫面總計僅涵蓋保留的 flows。
+
+UDP 另有兩組低基數計數，只存在記憶體，從 daemon 啟動起累計，重啟歸零，不記錄主機名稱或 IP。`udp_dial_failures` 以「出口 × 原因」累計無法轉送的 UDP 目的地，原因固定為 `unsupported`（出口無法承載 UDP，例如 WARP Local Proxy）、`unavailable`（出口或出口群組已停用、不存在、失敗或已退役，或群組沒有可用成員、選定成員無法使用；私網保護以外的路由拒絕都歸於此類）、`blocked`（私網保護拒絕使用公網出口，或選定出口連線後確認主機名稱別名指向 Rillway 自己的 HTTP／SOCKS5 Proxy listener）、`timeout`、`network`（其他網路錯誤）；出口為最後嘗試者，路由在嘗試前就拒絕時則是設定指定的目標。取消的建連不計入；設定中已移除的出口或群組，在套用時一併移除其計數。UDP 建連結果不更新出口健康狀態，也不寫入自適應學習；健康與自適應只採計 TCP，自適應路由規則下的 UDP 固定使用初始出口。`proxy_udp_drops` 記錄 SOCKS5 UDP relay 自行丟棄的封包：`target_limit`、`recent_failure`、`local_destination`，語意見[來源存取控制](#來源存取控制)。
 
 自身管理介面／PAC 的連線不建立 flow 或自適應樣本，HTTP／SOCKS5 的自身代理目的地則拒絕連線。判斷使用實際綁定的 IP／連接埠，wildcard 僅涵蓋已知本機位址；同一主機上其他經 Proxy 連線的服務仍會被記錄。已知的管理／PAC IP 直接在本機建連；別名只依所選出口連線結果判斷，不額外查詢主機 DNS。新自適應目的地在解析確認後才公開給探測排程，已排程的探測若連到自身也丟棄樣本。PAC 在用戶端自動 bypass 已設定的 Proxy 主機。
 
@@ -67,12 +69,13 @@ PAC 在載入時先整理網域與解析 CIDR。網域 bypass、Proxy 自身 hos
 
 ## 來源存取控制
 
-Proxy（HTTP／CONNECT 與 SOCKS5 TCP／UDP ASSOCIATE）在 TCP socket accept 後、通訊協定解析前進行 pre-parser 入口審查。管理介面與 PAC 則獨立使用各自的授權與監聽邏輯，不經由 Proxy 連線守衛。
+Proxy（HTTP／CONNECT 與 SOCKS5 TCP／UDP ASSOCIATE）在 TCP socket accept 後、通訊協定解析前進行 pre-parser 入口審查。管理介面與 PAC 端點不經由 Proxy 連線守衛，而是各自擁有獨立的准入守衛：每個最多 128 條、每個來源 IP 最多 32 條，同樣在解析前檢查 `security.allowed_clients`。管理介面額滿不會擋住 PAC 下載，兩者都不占用 Proxy 預算。
 
 - **雙軌 ACL 與設定版本**：`config.json` 版本為 3。`security.allowed_clients` 維持唯讀，作為 HTTPS 管理介面與 HTTP PAC 端點存取的網路邊界；`source_access.rules` 則專門用於 Proxy 連入存取。版本 1／2 讀取時會升級為版本 3，保留既有 source access；版本 3 的 `source_access.rules` 為空表示明確全域拒絕（deny-all），不再回退至預設或 `security.allowed_clients`。
 - **規則匹配語意**：規則採用前綴二元樹（Trie）評估。各規則定義動作（`allow` 或 `deny`）、啟用狀態與 CIDR 前綴列表。當有多條規則覆蓋同一個 IP 時，以最長前綴（longest/deepest prefix）優先；若在前綴長度完全相同時發生衝突，則以拒絕優先（deny beats allow）；若前綴長度相同且動作一致，則由設定順序中較早啟用的規則決定 `rule_id`。未匹配任何規則的連線預設拒絕（fail closed）。
 - **連線容量與限流防護**：`connection_limits.max_connections`／`max_connections_per_source` 預設為 256／256，保留既有全域預算；總上限省略或填 0 使用預設，來源上限省略或填 0 使用預設與生效總上限中較小者，不代表無上限。既有明確設定值保持不變，設定上限不代表經實測的安全容量。整數最大 65,536，生效後單一來源上限不得大於總上限。HTTP 轉發、CONNECT 與 SOCKS5 的握手、閒置及傳輸中入口 socket 共用預算；同一標準化 IP 的多個應用程式／profile 共用來源額度。容量拒絕發生於協定解析前，直接關閉 socket。來源政策拒絕優先；若兩項容量都滿額，記為 `total_limit`。
 - **容量設定 publication**：Web 來源存取表單與 `PUT /api/v1/config` 使用同一驗證、revision 及原子持久化流程，成功寫入後更新共用 guard，不需重啟。提高上限立即允許新准入；降低上限保留既有串流，活躍數可暫時高於新上限，直到兩項預算都有餘額才接受新連線。直接修改主機設定檔仍需重啟載入。
+- **SOCKS5 UDP 目的地預算**：每個 association 最多 32 個目的地 UDP socket（`socksUDPMaxTargets`），額滿時關閉最久未使用者；所有 association 另共用全域預算，為生效中 `max_connections` 的 4 倍（預設 1,024），隨容量設定即時調整，調低後等既有目的地 socket 關閉才生效。超出全域預算時丟棄封包並計入 `target_limit`。同一 association 內 5 秒內失敗過的目的地直接丟棄、不重新建連，計入 `recent_failure`；這份失敗紀錄只屬於該 association、不跨客戶端共用，最多 32 筆，每次套用設定即清空。目的地字面位址是本 daemon 自己的 listener 或使用中的 SOCKS5 UDP relay socket，或主機名稱實際連到的對端是使用中的 relay socket 時，封包計入 `local_destination`；主機名稱別名解析到自己的 HTTP／SOCKS5 Proxy listener 時，則在 `udp_dial_failures` 記為選定出口的 `blocked`。出口拒絕 UDP 時不改走 direct。
 - **連線遙測與即時阻斷**：來源紀錄有界，預設最多 1,024 筆；總容量調高時可保留所有活躍來源，最多 65,536 筆。降低容量仍保留既有活躍來源。閒置紀錄在上次連入達 24 小時且無活躍連線時過期，容量滿時移除最舊閒置列。每列保留 accepted、政策 denied、capacity_rejections 及 source_limit_rejections／total_limit_rejections；全域累積計數獨立於列的過期／移除，直到 listener 重啟才重設，不能用保留列加總代替。一般來源規則變更只影響新准入；Block source 仍會原子持久化 /32 或 /128 deny 規則並切斷該 IP 的既有 Proxy 連線，失敗保留原設定與串流。
 - **封鎖輸入與既有規則**：只接受單一 IP，拒絕 CIDR 與 `IP:port`；revision 衝突優先於內容驗證。既有停用規則及備註保持原樣；新增 host deny 規則的 ID 若已使用，依序加上 `-2`、`-3`，不覆寫既有規則。
 - **來源表單與重新載入**：Web 與 TUI 都可編輯 ID、名稱、動作、CIDR、啟用狀態及備註。409／422 保留草稿與原 revision；Web 表單的「重新載入設定」明確重新依 rule ID 載入，避免排序變動造成誤改。TUI 表單開啟期間不以背景快照取代來源資料；窄終端機以 grapheme-aware 來源卡片顯示。
@@ -86,7 +89,7 @@ Proxy（HTTP／CONNECT 與 SOCKS5 TCP／UDP ASSOCIATE）在 TCP socket accept �
 | GET `/api/v1/info` | 已驗證身分後取得 daemon 的程式版本；與設定 revision 各自獨立 |
 | GET `/api/v1/config` | 目前生效設定與 revision，秘密為檔案參照 |
 | PUT `/api/v1/config` | 完整設定，revision 必須與目前一致，成功後遞增 |
-| GET `/api/v1/stats` | flows、destinations、totals、config_revision、applied_at；`proxy_capacity` 包含 `active_connections` 與生效中的 `max_connections`／`max_connections_per_source`，其中 `source_limit`／`total_limit` 為啟動後累積容量拒絕數；既有 `proxy_admission_rejections` 保留相同兩項計數 |
+| GET `/api/v1/stats` | flows（含 `network`：`tcp`／`udp`）、destinations、totals、config_revision、applied_at；`proxy_capacity` 包含 `active_connections` 與生效中的 `max_connections`／`max_connections_per_source`，其中 `source_limit`／`total_limit` 為啟動後累積容量拒絕數；既有 `proxy_admission_rejections` 保留相同兩項計數；`udp_dial_failures` 為 `{outbound, reason, count}` 陣列（不為 null，依出口、原因排序），`proxy_udp_drops` 為 `target_limit`／`recent_failure`／`local_destination` 計數 |
 | GET `/api/v1/outbounds` | profile 狀態與可驗證的健康資訊 |
 | DELETE `/api/v1/outbounds/{id}` | `{"revision":CURRENT,"replacement":"OUTBOUND_ID"}`，刪除 profile 並原子替換所有引用；保護 direct、檢查 revision，成功後遞增 |
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |

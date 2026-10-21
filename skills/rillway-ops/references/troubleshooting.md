@@ -105,7 +105,7 @@ Narrow the ACL to individually approved clients; do not replace it with an empty
 list or disable authentication. Proxying the host's own outbound traffic back to
 Rillway must be corrected before restarting.
 
-HTTP/SOCKS sockets share configurable `connection_limits`, defaulting to 256 total/256 per source; management/PAC has a separate 64 total/16 per-source budget. Web Source access can save limits without restart; lowering leaves existing streams open. It also reports enforced active/limit values and capacity rejections separately from policy denials. `source_limit`/`total_limit` are cumulative rejection counters, independent of retained source rows. Record their before/after deltas alongside the browser error and required-resource failures during normal workload; zero policy denials does not imply zero capacity rejections. A successful HEAD request, isolated profile or larger limit does not establish the original browser failure is fixed. If no rejection coincides with the failure, inspect SOCKS negotiation, selected outbound/DNS, fixed routes and stream errors instead.
+HTTP/SOCKS sockets share configurable `connection_limits`, defaulting to 256 total/256 per source; the management listener and PAC endpoint each have their own fixed 128 total/32 per-source budget, so a saturated management listener does not block PAC. Web Source access can save limits without restart; lowering leaves existing streams open. It also reports enforced active/limit values and capacity rejections separately from policy denials. `source_limit`/`total_limit` are cumulative rejection counters, independent of retained source rows. Record their before/after deltas alongside the browser error and required-resource failures during normal workload; zero policy denials does not imply zero capacity rejections. A successful HEAD request, isolated profile or larger limit does not establish the original browser failure is fixed. If no rejection coincides with the failure, inspect SOCKS negotiation, selected outbound/DNS, fixed routes and stream errors instead.
 
 Check the installed version before assuming these protections exist. They do not limit network bandwidth, detect every multi-proxy loop, or provide an OS memory ceiling. Apply VM/service resource limits appropriate to the machine before controlled recovery; replacing only the binary does not update a unit.
 Resume with one approved client and observe memory and connection counts before
@@ -117,6 +117,27 @@ stop the official tunnel daemon or change registration to repair a tray failure.
 When multiple configuration files exist, inspect the unit's effective `--config`
 and use that file's certificate/token references; another config's certificate
 can produce repeated `tls: unknown certificate` failures.
+
+## SOCKS5 UDP failures
+
+UDP datagrams have no connection error to show the client, so read the counters in
+`agent stats`. They count since daemon start, reset on restart and contain no
+hostnames or IPs; compare before/after deltas while the client reproduces the
+problem. `flows[].network` separates `udp` flows from `tcp`. Older builds may lack
+these fields; check the installed version first.
+
+| Counter | Meaning and next decision |
+| --- | --- |
+| `udp_dial_failures` `unsupported` | The routed outbound cannot carry UDP; Rillway never falls back to direct by itself. Routing rules cannot match UDP separately from TCP: moving a domain/port rule off WARP also moves that destination's TCP. Prefer an outbound that carries both, such as WireGuard or Tailscale, or confirm the TCP move is acceptable |
+| `udp_dial_failures` `unavailable` | The outbound or outbound group is disabled, missing, failed or retired, or the group has no eligible member or its selected member is unavailable; check outbound/group state before changing routes |
+| `udp_dial_failures` `blocked` | Private-network protection refused a public outbound for a private destination, or a hostname alias resolved to Rillway's own HTTP/SOCKS5 proxy listener; route private names through a fixed rule to an outbound allowed for them, or correct the client's target |
+| `udp_dial_failures` `timeout`/`network` | Dial failed inside the outbound; check that outbound's tunnel and DNS |
+| `proxy_udp_drops.recent_failure` growing | A client keeps retrying a destination that failed in the same association within 5 seconds; fix the underlying failure. Applying a configuration clears this memory |
+| `proxy_udp_drops.target_limit` growing | The global live UDP destination budget (4 × effective `max_connections`) is full; raise `max_connections` or reduce concurrent UDP destinations |
+| `proxy_udp_drops.local_destination` | The client sent UDP to a literal address of Rillway's own listener or a live relay socket, or to a hostname whose connected peer is a live relay socket; correct the client's target |
+
+UDP failures never mark an outbound unhealthy; outbound health and adaptive routing
+use TCP only. Do not treat a healthy outbound as proof that it carries UDP.
 
 ## End-to-end and performance evidence
 

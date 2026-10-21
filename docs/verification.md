@@ -2,6 +2,25 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-21：管理介面／PAC 獨立容量、SOCKS5 UDP 資料路徑與觀測計數
+
+- **管理介面與 PAC 容量 (`internal/app/admission_test.go`)**：管理介面與 PAC 各自使用獨立的連線守衛（各 128 條，每來源 32 條）。同一來源以 32 條閒置 TLS 連線占滿管理介面後，PAC `GET` 仍回 200；第 33 條管理連線仍被拒絕。以暫時改回共用守衛的方式確認此測試會失敗（PAC 讀到 EOF），之後已還原。
+- **引擎 UDP 失敗計數 (`internal/engine/engine_test.go`)**：UDP 建連不寫入出口健康狀態；同一 WARP 出口連續 3 次 UDP `unsupported` 後，健康狀態仍為空，之後 1 次 TCP 失敗才計入。失敗原因依出口與固定分類計數：`unsupported`、停用出口、不存在的出口與停用群組為 `unavailable`、私有目的地保護與連回自身為 `blocked`、逾時為 `timeout`；取消不計入。設定移除出口後，對應計數一併清除。`Flow.network` 會區分 `tcp`／`udp`。
+- **SOCKS5 UDP relay (`internal/proxy/socks_udp_test.go`, `internal/proxy/guard_test.go`)**：
+  - 同一 association 內，目的地失敗後 5 秒內的重複封包直接丟棄並計入 `recent_failure`，不重新建連；另一個 association 不受影響；套用設定後重新建連。失敗記憶上限 32 筆，優先淘汰已過期或最早到期的項目。
+  - 全域 UDP 目的地預算為有效 `max_connections` 的 4 倍：上限 1 條連線時第 5 個目的地被丟棄並計入 `target_limit`，即時調高上限後可建立；association 關閉後所有額度歸還。
+  - 送往自身 relay 的封包計入 `local_destination`。舊 association 結束時，若同一埠已由新 association 使用，不會移除新 association 的迴圈防護。
+  - 端點清單改為 copy-on-write 快照，讀取不需鎖；relay 回寫用戶端時不再持有 association 鎖。
+- **整合測試 (`internal/app/socks_udp_integration_test.go`)**：固定路由改為 direct 並套用設定後，同一 association 立即成功轉送；此測試在加入「套用設定時重設失敗記憶」之前會失敗。
+- **Web 與 TUI**：`internal/control/testdata/interactions_test.js` 驗證 TCP／UDP 標籤、已知與未知原因（包含 `toString`）、計數、空狀態、雙語切換與焦點保留；`internal/tui/tui_test.go` 驗證流量明細顯示 `TCP`／`UDP`、未知值原樣顯示，以及舊版 daemon 未提供欄位時不留下分隔符號。
+- **本機 daemon smoke（code review 修正前）**：重建 binary，以暫存設定、憑證及 loopback listener 啟動前景 `serve`。真實 SOCKS5 UDP association 完成 direct echo；固定 WARP（停用）路由的接收端在 300 ms 內沒有收到封包。`rillway agent stats` 回報 `udp_dial_failures` 與 `proxy_udp_drops` 計數，flow 為 `udp`／`direct`。Web UI 的「UDP 轉送」面板在英文與繁中下顯示相同計數，展開流量列可看到 `UDP` 標籤；TUI 實際啟動後顯示 `127.0.0.1 · UDP · Active`；PAC 回 200。
+- **本機 daemon smoke（code review 修正後）**：以修正後的 binary 和新的暫存設定重跑。direct echo 成功；送往 loopback 埠、固定 WARP（停用）路由的封包未送達接收端（300 ms），`udp_dial_failures` 記錄 `warp`／`blocked` 1 次（私有目的地保護）；送往自身 relay 埠的封包記錄 `local_destination` 1 次；flow 為 `udp`。此輪未重拍 Web／TUI 畫面，未重測 `unavailable` 與 `recent_failure`，這兩項由上述自動化測試涵蓋。兩輪結束後 daemon 皆已停止、暫存檔已刪除；未變更主機 VPN、DNS 或 Proxy。
+- **品質檢查**：`mise run check`（`golangci-lint` 0 issues、`-race`、`-shuffle=on`、Python 腳本測試）通過。
+
+**未驗證項目與限制（NOT VERIFIED / SKIP）**：
+1. **外部真實 VPN 與第三方應用程式**：未在真實 WARP、WireGuard、Tailscale 帳號或第三方瀏覽器、DNS、QUIC／HTTP/3 應用驗證；計數器只證明本機受控案例的分類與丟棄行為。
+2. **容量數值**：全域 UDP 目的地預算（4 倍）與 5 秒失敗記憶為實作常數，未依正式環境流量調校。
+
 ## 2026-10-16：SOCKS5 UDP ASSOCIATE 協定轉發與真實 Stack 整合驗證
 
 - **本機整合測試 (`internal/app/socks_udp_integration_test.go`)**：

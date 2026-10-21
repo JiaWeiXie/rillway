@@ -96,7 +96,7 @@ func TestWARPUDPUnsupportedWithoutProxyDial(t *testing.T) {
 	provider := newWARP(config.Outbound{ID: "warp", ProxyAddress: "127.0.0.1:1"})
 	for _, network := range []string{"udp", "udp4", "udp6"} {
 		conn, err := provider.DialContext(t.Context(), network, "localhost:53")
-		if conn != nil || err == nil || !strings.Contains(err.Error(), "UDP is unsupported") {
+		if conn != nil || !errors.Is(err, ErrUDPUnsupported) {
 			t.Fatalf("%s: connection = %v, error = %v", network, conn, err)
 		}
 	}

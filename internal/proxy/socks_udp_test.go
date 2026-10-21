@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/netip"
 	"rillway/internal/access"
+	"rillway/internal/config"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -116,6 +118,16 @@ func readNoUDP(t *testing.T, client *net.UDPConn) {
 	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
 		t.Fatalf("UDP read = %v, want timeout", err)
 	}
+}
+
+func udpClient(t *testing.T, control net.Conn) *net.UDPConn {
+	t.Helper()
+	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: control.LocalAddr().(*net.TCPAddr).IP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }
 
 func TestSOCKSUDPAssociateEchoAndDatagramBoundaries(t *testing.T) {
@@ -553,11 +565,7 @@ func TestSOCKSUDPIdleAssociationClosesControl(t *testing.T) {
 func TestSOCKSUDPNoDirectFallback(t *testing.T) {
 	s, calls := metadataServer(t)
 	control, bound := udpSOCKSAssociation(t, s, false, 0)
-	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: control.LocalAddr().(*net.TCPAddr).IP})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = client.Close() }()
+	client := udpClient(t, control)
 	name := "route.example"
 	packet := append([]byte{0, 0, 0, 3, byte(len(name))}, name...)
 	packet = append(packet, 1, 187, 'n', 'o')
@@ -578,11 +586,7 @@ func TestSOCKSUDPNoDirectFallback(t *testing.T) {
 func TestSOCKSUDPRejectsOwnRelayDestination(t *testing.T) {
 	s, calls := metadataServer(t)
 	control, bound := udpSOCKSAssociation(t, s, false, 0)
-	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: control.LocalAddr().(*net.TCPAddr).IP})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = client.Close() }()
+	client := udpClient(t, control)
 	request := udpRequestIPv4(bound.IP, bound.Port, []byte("self"))
 	if _, err := client.WriteToUDP(request, bound); err != nil {
 		t.Fatal(err)
@@ -592,6 +596,151 @@ func TestSOCKSUDPRejectsOwnRelayDestination(t *testing.T) {
 	case call := <-calls:
 		t.Fatalf("routed datagram back into SOCKS UDP listener: %+v", call)
 	default:
+	}
+	// Datagrams are forwarded in order, so a routed one proves the first was handled.
+	if _, err := client.WriteToUDP(udpRequestIPv4(net.IPv4(192, 0, 2, 1), 53, []byte("x")), bound); err != nil {
+		t.Fatal(err)
+	}
+	<-calls
+	if drops := s.UDPDrops(); drops != (UDPDrops{LocalDestination: 1}) {
+		t.Fatalf("UDP drops = %+v", drops)
+	}
+}
+
+func expectUDPDial(t *testing.T, calls <-chan routeMetadataCall, address string) {
+	t.Helper()
+	select {
+	case call := <-calls:
+		if call.address != address {
+			t.Fatalf("UDP dial = %s, want %s", call.address, address)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("UDP dial to %s did not happen", address)
+	}
+}
+
+func TestSOCKSUDPRecentFailureSuppressesRedialPerAssociation(t *testing.T) {
+	failing, other := udpRequestIPv4(net.IPv4(192, 0, 2, 1), 443, []byte("q")), udpRequestIPv4(net.IPv4(192, 0, 2, 2), 443, []byte("q"))
+	s, calls := metadataServer(t)
+	control, bound := udpSOCKSAssociation(t, s, false, 0)
+	client := udpClient(t, control)
+	for _, packet := range [][]byte{failing, failing, other} {
+		if _, err := client.WriteToUDP(packet, bound); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expectUDPDial(t, calls, "192.0.2.1:443")
+	expectUDPDial(t, calls, "192.0.2.2:443") // The repeated datagram was dropped, not redialed.
+	if drops := s.UDPDrops(); drops != (UDPDrops{RecentFailure: 1}) {
+		t.Fatalf("UDP drops = %+v", drops)
+	}
+	// Another client association has its own failure history.
+	secondControl, secondBound := udpSOCKSAssociation(t, s, false, 0)
+	if _, err := udpClient(t, secondControl).WriteToUDP(failing, secondBound); err != nil {
+		t.Fatal(err)
+	}
+	expectUDPDial(t, calls, "192.0.2.1:443")
+
+	// After the retry delay the destination is dialed again.
+	s, calls = metadataServer(t)
+	s.udp.retryDelay = 0
+	control, bound = udpSOCKSAssociation(t, s, false, 0)
+	client = udpClient(t, control)
+	for range 2 {
+		if _, err := client.WriteToUDP(failing, bound); err != nil {
+			t.Fatal(err)
+		}
+		expectUDPDial(t, calls, "192.0.2.1:443")
+	}
+}
+
+func TestSOCKSUDPRetryBackoffResetsOnConfigurationApply(t *testing.T) {
+	failing := udpRequestIPv4(net.IPv4(192, 0, 2, 1), 443, []byte("q"))
+	s, calls := metadataServer(t)
+	control, bound := udpSOCKSAssociation(t, s, false, 0)
+	client := udpClient(t, control)
+	for range 2 {
+		if _, err := client.WriteToUDP(failing, bound); err != nil {
+			t.Fatal(err)
+		}
+		expectUDPDial(t, calls, "192.0.2.1:443")
+		// Runtime calls this after every apply; a new route may now reach it.
+		s.ResetUDPRetryBackoff()
+	}
+	if drops := s.UDPDrops(); drops.RecentFailure != 0 {
+		t.Fatalf("redial after configuration apply was dropped: %+v", drops)
+	}
+}
+
+func TestSOCKSUDPRelayEndpointSurvivesStaleUnregister(t *testing.T) {
+	s := testServer(t, false)
+	endpoint := netip.MustParseAddrPort("127.0.0.1:40000")
+	closed, reused := &net.UDPConn{}, &net.UDPConn{}
+	s.registerUDPRelay(endpoint, closed)
+	s.registerUDPRelay(endpoint, reused) // The kernel gave the closed relay port to a new association.
+	s.unregisterUDPRelay(endpoint, closed)
+	if !s.localDestination("udp", endpoint.String()) {
+		t.Fatal("live relay lost loop protection when an older association ended")
+	}
+	s.unregisterUDPRelay(endpoint, reused)
+	if s.localDestination("udp", endpoint.String()) {
+		t.Fatal("ended relay still blocks its address")
+	}
+}
+
+func TestSOCKSUDPFailureMemoryIsBounded(t *testing.T) {
+	now := time.Now()
+	a := &socksUDPAssociation{server: testServer(t, false), failures: map[string]time.Time{"expired": now.Add(-time.Second)}}
+	for i := 1; len(a.failures) < socksUDPMaxTargets; i++ { // all expire before a new entry
+		a.failures[strconv.Itoa(i)] = now.Add(time.Duration(i) * 100 * time.Millisecond)
+	}
+	a.rememberFailure("new")
+	if _, kept := a.failures["expired"]; kept || len(a.failures) != socksUDPMaxTargets {
+		t.Fatalf("expired entry kept or size %d", len(a.failures))
+	}
+	a.rememberFailure("newer")
+	if _, kept := a.failures["1"]; kept || len(a.failures) != socksUDPMaxTargets || a.failures["newer"].IsZero() {
+		t.Fatalf("entry nearest expiry kept or size %d", len(a.failures))
+	}
+}
+
+func TestSOCKSUDPGlobalTargetBudgetFollowsLimits(t *testing.T) {
+	origins := make([]*net.UDPConn, 5)
+	for i := range origins {
+		origins[i] = udpEcho(t)
+	}
+	dialer := udpCaptureDialer{connections: make(chan net.Conn, len(origins))}
+	s := testServer(t, false)
+	s.dialer = dialer
+	s.ApplyConnectionLimits(config.ConnectionLimits{MaxConnections: 1, MaxConnectionsPerSource: 1})
+	control, bound := udpSOCKSAssociation(t, s, false, 0)
+	client := udpClient(t, control)
+	send := func(origin *net.UDPConn) []byte {
+		addr := origin.LocalAddr().(*net.UDPAddr)
+		packet := udpRequestIPv4(addr.IP, addr.Port, []byte("ping"))
+		if _, err := client.WriteToUDP(packet, bound); err != nil {
+			t.Fatal(err)
+		}
+		return packet[:10]
+	}
+	for _, origin := range origins[:4] { // 1 connection x 4 targets
+		readUDPEcho(t, client, bound, send(origin), []byte("ping"))
+		<-dialer.connections
+	}
+	send(origins[4])
+	readUDPEcho(t, client, bound, send(origins[0]), []byte("ping"))
+	if drops, live := s.UDPDrops(), s.udp.targets.Load(); drops != (UDPDrops{TargetLimit: 1}) || live != 4 {
+		t.Fatalf("over budget: drops = %+v, live targets = %d", drops, live)
+	}
+	s.ApplyConnectionLimits(config.ConnectionLimits{MaxConnections: 2, MaxConnectionsPerSource: 2})
+	readUDPEcho(t, client, bound, send(origins[4]), []byte("ping"))
+	_ = control.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for s.udp.targets.Load() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("association shutdown kept %d target slots", s.udp.targets.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -613,11 +762,7 @@ func TestSOCKSUDPMultipleDestinations(t *testing.T) {
 	s := testServer(t, false)
 	control, bound := udpSOCKSAssociation(t, s, false, 0)
 	first, second := udpEcho(t), udpEcho(t)
-	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: control.LocalAddr().(*net.TCPAddr).IP})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = client.Close() }()
+	client := udpClient(t, control)
 	for i, origin := range []*net.UDPConn{first, second, first} {
 		peer := origin.LocalAddr().(*net.UDPAddr)
 		message := []byte{byte('0' + i)}

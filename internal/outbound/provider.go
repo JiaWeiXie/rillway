@@ -2,8 +2,18 @@ package outbound
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
+)
+
+// Callers classify these failures with errors.Is, never by message text.
+var (
+	// ErrUDPUnsupported marks an outbound that cannot carry UDP datagrams.
+	ErrUDPUnsupported = errors.New("UDP is unsupported")
+	// ErrUnavailable marks an outbound that cannot dial at all: disabled,
+	// failed to start, or retired by a configuration change.
+	ErrUnavailable = errors.New("unavailable")
 )
 
 // Provider returns connected TCP streams or connected datagram-preserving UDP

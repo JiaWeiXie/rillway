@@ -149,7 +149,7 @@ func TestRuntimeBlockSourceTransactionAndStreamSurvival(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	management.Listener = proxy.NewConnectionGuard(64, 16, managementPolicy.Decide).Wrap(management.Listener)
+	management.Listener = newManagementGuard(managementPolicy).Wrap(management.Listener)
 	management.StartTLS()
 	defer management.Close()
 	roots := x509.NewCertPool()

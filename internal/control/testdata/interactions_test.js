@@ -58,7 +58,8 @@ async function browser() {
   const document = createDocument(fs.readFileSync(path.join(web, 'index.html'), 'utf8'));
   const timers = clock(), localStorage = storage(), sessionStorage = storage();
   const requests = [], gates = new Map(), failures = new Map();
-  const b = {document, timers, localStorage, sessionStorage, requests, gates, failures, server: initialConfig(), clients: [], flowData: [], statusData: []};
+  const b = {document, timers, localStorage, sessionStorage, requests, gates, failures, server: initialConfig(), clients: [], flowData: [], statusData: [],
+    udpFailures: [], udpDrops: {target_limit: 0, recent_failure: 0, local_destination: 0}};
   const memory = {supported: true, minimum_reason: 'Direct and WARP safety floor', host_bytes: 4 * 1073741824, minimum_bytes: 256 * 1048576, maximum_bytes: 3 * 1073741824,
     current_bytes: 32 * 1048576, limit_bytes: 512 * 1048576, mode: 'MiB', value: '512', revision: 'memory-one'};
   const logging = {supported: true, level: 'info', effective_level: 'info', revision: 'log-one'};
@@ -85,7 +86,7 @@ async function browser() {
       }
       if (url === '/api/v1/config') return response(b.server);
       if (url === '/api/v1/defaults') return response(defaults);
-      if (url === '/api/v1/stats') return response({config_revision: b.server.revision, flows: b.flowData});
+      if (url === '/api/v1/stats') return response({config_revision: b.server.revision, flows: b.flowData, udp_dial_failures: b.udpFailures, proxy_udp_drops: b.udpDrops});
       if (url === '/api/v1/info') return response({version: 'test'});
       if (url === '/api/v1/outbounds' && request.method === 'PUT') {
         const outbound = request.body.outbound;
@@ -487,12 +488,56 @@ async function scopedLoadingAndFocusReturn() {
   assert.equal(b.get('main-content').getAttribute('tabindex'), '-1');
 }
 
+async function udpObservability() {
+  const b = await browser(); b.page('overview');
+  b.flowData = [{id: 1, host: 'quic.example', port: '443', outbound: 'vpn-a', network: 'udp'},
+    {id: 2, host: 'quic.example', port: '443', outbound: 'vpn-a', network: 'tcp'},
+    {id: 3, host: 'quic.example', port: '443', outbound: 'vpn-a'},
+    {id: 4, host: 'quic.example', port: '443', outbound: 'vpn-a', network: 'future<b>'}];
+  b.get('flow-search').focus();
+  await b.run('poll()');
+  assert.deepEqual(b.get('flow-groups').querySelectorAll('[data-network]').map(node => node.textContent), ['UDP', 'TCP', 'future<b>'],
+    'known protocols use uppercase names, missing values render no badge, unknown values stay verbatim text');
+  assert.equal(b.get('flow-groups').querySelector('b'), null, 'protocol data is text, never markup');
+  assert.equal(b.document.activeElement, b.get('flow-search'), 'stats refresh keeps search focus');
+  for (const id of ['udp-drop-target-limit', 'udp-drop-recent-failure', 'udp-drop-local-destination']) assert.equal(b.get(id).textContent, '0');
+  assert.equal(b.get('udp-dial-failures-empty').hidden, false, 'no failures shows the empty state');
+  assert.equal(b.get('udp-dial-failures-table').hidden, true);
+  assert.equal(b.get('udp-dial-failures').querySelectorAll('[data-udp-failure]').length, 0);
+
+  b.udpFailures = [{outbound: 'warp-公司😀', reason: 'unsupported', count: 3},
+    {outbound: 'wg-a', reason: 'future_reason', count: 1}, {outbound: 'wg-b', reason: 'toString', count: 2}];
+  b.udpDrops = {target_limit: 7, recent_failure: 2, local_destination: 1};
+  await b.run('poll()');
+  assert.deepEqual(['udp-drop-target-limit', 'udp-drop-recent-failure', 'udp-drop-local-destination'].map(id => b.get(id).textContent), ['7', '2', '1']);
+  assert.equal(b.get('udp-dial-failures-empty').hidden, true);
+  assert.equal(b.get('udp-dial-failures-table').hidden, false);
+  const rows = () => b.get('udp-dial-failures').querySelectorAll('[data-udp-failure]').map(row => ({
+    outbound: row.querySelector('[data-udp-failure-outbound]').textContent,
+    reason: row.querySelector('[data-udp-failure-reason]').textContent,
+    count: row.querySelector('[data-udp-failure-count]').textContent,
+  }));
+  let rendered = rows();
+  assert.deepEqual(rendered.map(row => row.outbound), ['warp-公司😀', 'wg-a', 'wg-b'], 'outbound IDs stay verbatim');
+  assert.deepEqual(rendered.map(row => row.count), ['3', '1', '2']);
+  assert.ok(rendered[0].reason.includes(catalog.en['UDP not supported']), 'known reasons use the catalog label');
+  assert.equal(rendered[1].reason, 'future_reason', 'unknown reasons stay verbatim');
+  assert.equal(rendered[2].reason, 'toString', 'inherited object keys are not treated as known reasons');
+  b.run("switchLocale('zh-Hant')");
+  rendered = rows();
+  assert.ok(rendered[0].reason.includes(catalog['zh-Hant']['UDP not supported']), 'known reasons follow the selected locale');
+  assert.equal(rendered[0].outbound, 'warp-公司😀');
+  assert.equal(rendered[1].reason, 'future_reason');
+  assert.equal(b.puts().length, 0, 'observability never writes configuration');
+}
+
 // A pending VM Promise alone cannot keep Node alive. Fail instead of silently
 // exiting successfully when a renderer or submit handler never completes.
 const watchdog = setTimeout(() => { console.error('Browser interaction contracts did not complete.'); process.exitCode = 1; }, 40000);
 (async () => {
   for (const test of [visibleSelectionAndDeletion, sourceBulkActions, fixedRevisionConflictAndReload, ruleReorderAndFocus,
-    groupDraftReorder, busyDoubleSubmits, searchUsesLoadedFields, emptyAndNoMatchStates, shortcutsAndModalPriority, noticeLifetime, scopedLoadingAndFocusReturn]) {
+    groupDraftReorder, busyDoubleSubmits, searchUsesLoadedFields, emptyAndNoMatchStates, shortcutsAndModalPriority, noticeLifetime, scopedLoadingAndFocusReturn,
+    udpObservability]) {
     await test(); console.log(`PASS ${test.name}`);
   }
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(watchdog));

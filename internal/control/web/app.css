@@ -347,3 +347,13 @@ table.source-table .selection-cell:focus-within{outline:3px solid var(--focus);o
   #shortcuts-dialog dd{margin-bottom:12px}
   #shortcuts-dialog dd:last-child{margin-bottom:0}
 }
+.udp-relay{max-width:none;margin-top:28px}
+.udp-relay h3{margin:22px 0 10px}
+.udp-drops{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0}
+.udp-drops>div{min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.udp-drops dt{font-size:.8rem;color:var(--muted)}
+.udp-drops dd{margin:4px 0 0}
+.udp-drops strong{display:block;font-size:1.25rem;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.udp-drops small{display:block;margin-top:6px;font-size:.8rem;line-height:1.5;color:var(--muted)}
+.flow-network{margin-left:6px;padding:2px 6px;font-size:.72rem;letter-spacing:.04em;vertical-align:middle}
+@media(max-width:900px){.udp-drops{grid-template-columns:minmax(0,1fr)}}

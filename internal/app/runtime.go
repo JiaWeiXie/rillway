@@ -234,8 +234,10 @@ func (r *Runtime) Snapshot() any {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var capacity access.ConnectionCapacity
+	var udpDrops proxy.UDPDrops
 	if r.proxy != nil {
 		capacity = r.proxy.Capacity()
+		udpDrops = r.proxy.UDPDrops()
 	}
 	return struct {
 		engine.Snapshot
@@ -243,7 +245,8 @@ func (r *Runtime) Snapshot() any {
 		AppliedAt  time.Time                 `json:"applied_at"`
 		Rejections proxy.AdmissionRejections `json:"proxy_admission_rejections"`
 		Capacity   access.ConnectionCapacity `json:"proxy_capacity"`
-	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity}
+		UDPDrops   proxy.UDPDrops            `json:"proxy_udp_drops"`
+	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity, udpDrops}
 }
 
 func (r *Runtime) attachProxy(p *proxy.Server) {
@@ -412,6 +415,7 @@ func (r *Runtime) applyLocked(ctx context.Context, c config.Config, policy *acce
 	if r.proxy != nil {
 		r.proxy.SetSourcePolicy(policy)
 		r.proxy.ApplyConnectionLimits(c.ConnectionLimits)
+		r.proxy.ResetUDPRetryBackoff()
 	}
 	r.cfg = clone(c)
 	r.providers = next
@@ -492,7 +496,7 @@ type unavailable struct {
 func (u *unavailable) ID() string   { return u.cfg.ID }
 func (u *unavailable) Close() error { return nil }
 func (u *unavailable) DialContext(context.Context, string, string) (net.Conn, error) {
-	return nil, fmt.Errorf("outbound %s unavailable: %s", u.cfg.ID, u.reason)
+	return nil, fmt.Errorf("outbound %s %w: %s", u.cfg.ID, outbound.ErrUnavailable, u.reason)
 }
 
 func (u *unavailable) Status(context.Context) outbound.Status {
@@ -516,7 +520,7 @@ func (m *managed) DialContext(ctx context.Context, network, address string) (net
 	m.mu.Lock()
 	if m.retired {
 		m.mu.Unlock()
-		return nil, errors.New("outbound configuration retired")
+		return nil, fmt.Errorf("outbound %s %w: configuration retired", m.ID(), outbound.ErrUnavailable)
 	}
 	m.active++
 	m.mu.Unlock()

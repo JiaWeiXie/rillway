@@ -52,21 +52,23 @@ func TestAliasCheckedUsingSelectedOutboundPeer(t *testing.T) {
 
 func TestOwnEndpointWildcardMappedIPv4AndRemoteHost(t *testing.T) {
 	s := testServer(t, false)
-	s.endpoints = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17890")}
+	s.updateEndpoints(func(e *localEndpoints) { e.proxy = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17890")} })
 	for _, address := range []string{"127.0.0.1:17890", "127.0.0.2:17890", "[::ffff:127.0.0.1]:17890"} {
-		if !s.ownEndpoint(address) {
+		if !s.localDestination("tcp", address) {
 			t.Fatal("local endpoint not identified", address)
 		}
 	}
-	if s.ownEndpoint("192.0.2.20:17890") || s.ownEndpoint("127.0.0.1:17893") {
+	if s.localDestination("tcp", "192.0.2.20:17890") || s.localDestination("tcp", "127.0.0.1:17893") {
 		t.Fatal("unrelated host or PAC port blocked")
 	}
 }
 
 func TestInternalPolicyMatchesOnlyOwnBoundServices(t *testing.T) {
 	s := testServer(t, false)
-	s.endpoints = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17890")}
-	s.internalEndpoints = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17893"), netip.MustParseAddrPort("[::1]:17892")}
+	s.updateEndpoints(func(e *localEndpoints) {
+		e.proxy = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17890")}
+		e.internal = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17893"), netip.MustParseAddrPort("[::1]:17892")}
+	})
 	for _, address := range []string{"127.0.0.1:17893", "[::ffff:127.0.0.1]:17893", "[::1]:17892"} {
 		blocked, internal := s.DestinationPolicy(address)
 		if blocked || !internal {

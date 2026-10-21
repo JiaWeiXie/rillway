@@ -10,6 +10,7 @@ import (
 	"rillway/internal/routeinfo"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,7 +19,57 @@ const (
 	socksUDPIdleTimeout  = 2 * time.Minute
 	socksUDPWriteTimeout = 5 * time.Second
 	socksUDPMaxPacket    = 65535
+	socksUDPRetryDelay   = 5 * time.Second
+	// Live UDP targets per admitted proxy connection; follows max_connections.
+	socksUDPTargetsPerConnection = 4
 )
+
+// UDPDrops counts SOCKS5 UDP datagrams the relay dropped before any outbound
+// saw them. Dial failures are counted per outbound by the engine.
+type UDPDrops struct {
+	TargetLimit      uint64 `json:"target_limit"`      // global live-target budget exhausted
+	RecentFailure    uint64 `json:"recent_failure"`    // destination failed within the retry delay
+	LocalDestination uint64 `json:"local_destination"` // own listener or relay socket
+}
+
+// udpRelay is shared by all associations. The target budget bounds sockets and
+// reader goroutines across clients; each association holds at most
+// socksUDPMaxTargets. A target map entry owns one slot until it is removed.
+type udpRelay struct {
+	limit, targets                               atomic.Int64
+	targetLimit, recentFailure, localDestination atomic.Uint64
+	routes                                       atomic.Uint64 // bumped per applied configuration
+	retryDelay                                   time.Duration
+}
+
+func (r *udpRelay) setLimit(maxConnections int) {
+	r.limit.Store(int64(maxConnections) * socksUDPTargetsPerConnection)
+}
+
+// acquire reserves a target slot. A lowered limit applies as targets close.
+func (r *udpRelay) acquire() bool {
+	for {
+		n := r.targets.Load()
+		if n >= r.limit.Load() {
+			r.targetLimit.Add(1)
+			return false
+		}
+		if r.targets.CompareAndSwap(n, n+1) {
+			return true
+		}
+	}
+}
+
+func (r *udpRelay) release() { r.targets.Add(-1) }
+
+// UDPDrops reports datagrams dropped by the SOCKS5 UDP relay.
+func (s *Server) UDPDrops() UDPDrops {
+	return UDPDrops{TargetLimit: s.udp.targetLimit.Load(), RecentFailure: s.udp.recentFailure.Load(), LocalDestination: s.udp.localDestination.Load()}
+}
+
+// ResetUDPRetryBackoff lets associations redial destinations that failed under
+// an earlier configuration: the new routes may reach them. Counters are kept.
+func (s *Server) ResetUDPRetryBackoff() { s.udp.routes.Add(1) }
 
 type socksUDPTarget struct {
 	address  string
@@ -36,11 +87,13 @@ type socksUDPAssociation struct {
 	client      netip.AddrPort
 	idleTimeout time.Duration
 
-	mu           sync.Mutex
-	lastActivity time.Time
-	targets      map[string]*socksUDPTarget
-	closed       bool
-	workers      sync.WaitGroup
+	mu            sync.Mutex
+	lastActivity  time.Time
+	targets       map[string]*socksUDPTarget
+	failures      map[string]time.Time // destination -> earliest redial; bounded like targets
+	failureRoutes uint64               // relay route generation of failures
+	closed        bool
+	workers       sync.WaitGroup
 }
 
 // The requested address can only identify the socket that will send datagrams.
@@ -131,14 +184,10 @@ func (s *Server) socksAssociate(ctx context.Context, control net.Conn, kind byte
 	bound := listener.LocalAddr().(*net.UDPAddr)
 	endpoint := bound.AddrPort()
 	endpoint = netip.AddrPortFrom(endpoint.Addr().WithZone("").Unmap(), endpoint.Port())
-	s.mu.Lock()
-	s.udpEndpoints[endpoint] = struct{}{}
-	s.mu.Unlock()
+	s.registerUDPRelay(endpoint, listener)
 	defer func() {
 		_ = listener.Close()
-		s.mu.Lock()
-		delete(s.udpEndpoints, endpoint)
-		s.mu.Unlock()
+		s.unregisterUDPRelay(endpoint, listener)
 		s.untrack(listener)
 	}()
 	if !socksUDPBoundReply(control, bound) {
@@ -209,22 +258,29 @@ func parseSOCKSUDPRequest(packet []byte) (string, []byte, []byte, bool) {
 	return address, packet[:end], packet[end:], true
 }
 
-// Also guard live UDP relay ports: otherwise a datagram addressed to another
-// association (or itself) could recursively enter a SOCKS UDP listener.
+// registerUDPRelay guards a live relay port: otherwise a datagram addressed to
+// another association (or itself) could recursively enter a SOCKS UDP listener.
+func (s *Server) registerUDPRelay(endpoint netip.AddrPort, listener *net.UDPConn) {
+	s.updateEndpoints(func(e *localEndpoints) { e.udp[endpoint] = listener })
+}
+
+// unregisterUDPRelay keeps the entry if the kernel already gave the closed
+// listener's port to a newer association.
+func (s *Server) unregisterUDPRelay(endpoint netip.AddrPort, listener *net.UDPConn) {
+	s.updateEndpoints(func(e *localEndpoints) {
+		if e.udp[endpoint] == listener {
+			delete(e.udp, endpoint)
+		}
+	})
+}
+
+// ownsUDPAddress matches relay sockets exactly: each binds a specific IP.
 func (s *Server) ownsUDPAddress(address string) bool {
 	target, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return false // A hostname is checked against the connected peer after dial.
 	}
-	ip := target.Addr().WithZone("").Unmap()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for endpoint := range s.udpEndpoints {
-		if s.matchesEndpoint(endpoint, target, ip) {
-			return true
-		}
-	}
-	return false
+	return s.endpoints.Load().udp[netip.AddrPortFrom(target.Addr().WithZone("").Unmap(), target.Port())] != nil
 }
 
 func (a *socksUDPAssociation) receive() {
@@ -262,7 +318,9 @@ func (a *socksUDPAssociation) receive() {
 }
 
 func (a *socksUDPAssociation) forward(port uint16, address string, header, payload []byte) {
-	if a.server.ownsUDPAddress(address) {
+	relay := &a.server.udp
+	if a.server.localDestination("udp", address) {
+		relay.localDestination.Add(1)
 		return
 	}
 	a.mu.Lock()
@@ -281,8 +339,22 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 		a.writeTarget(target, payload)
 		return
 	}
+	// receive() forwards synchronously: without this, every datagram to a
+	// refusing destination would stall the association for a full dial.
+	if routes := relay.routes.Load(); a.failureRoutes != routes {
+		a.failures, a.failureRoutes = nil, routes
+	}
+	if retry, failed := a.failures[address]; failed {
+		if now.Before(retry) {
+			a.mu.Unlock()
+			relay.recentFailure.Add(1)
+			return
+		}
+		delete(a.failures, address)
+	}
 	// Make room before dialing: even an in-flight connection counts toward the
 	// per-association cap. Removing the map entry also prevents stale responses.
+	// The evicted target's global slot passes to the new dial.
 	var oldest *socksUDPTarget
 	if len(a.targets) == socksUDPMaxTargets {
 		for _, candidate := range a.targets {
@@ -294,26 +366,29 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 	}
 	a.mu.Unlock()
 	if oldest != nil {
-		_ = oldest.conn.Close()
-		a.server.untrack(oldest.conn)
+		a.server.closeTracked(oldest.conn)
+	} else if !relay.acquire() {
+		return
 	}
 
 	conn, err := a.server.dialContext(a.ctx, "udp", address)
 	if err != nil {
-		return // No direct socket fallback when the routed outbound refuses UDP.
-	}
-	if a.server.ownsUDPAddress(conn.RemoteAddr().String()) {
-		_ = conn.Close()
+		relay.release()
+		if errors.Is(err, errLocalDestination) || errors.Is(err, errLocalPeer) {
+			relay.localDestination.Add(1)
+		}
+		a.rememberFailure(address) // No direct socket fallback when the routed outbound refuses UDP.
 		return
 	}
 	if !a.server.track(conn) {
+		relay.release()
 		return
 	}
 	a.mu.Lock()
 	if a.closed || a.ctx.Err() != nil {
 		a.mu.Unlock()
-		_ = conn.Close()
-		a.server.untrack(conn)
+		relay.release()
+		a.server.closeTracked(conn)
 		return
 	}
 	target := &socksUDPTarget{address: address, header: append([]byte(nil), header...), conn: conn, lastUsed: time.Now()}
@@ -324,6 +399,35 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 	}
 	a.workers.Add(1)
 	go a.readTarget(target)
+}
+
+// rememberFailure drops datagrams to address for the retry delay. Entries are
+// per association, so one client's failures never affect another client. An
+// entry recorded across a configuration apply is discarded by the next forward.
+func (a *socksUDPAssociation) rememberFailure(address string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return
+	}
+	now := time.Now()
+	if a.failures == nil {
+		a.failures = make(map[string]time.Time)
+	}
+	if len(a.failures) >= socksUDPMaxTargets {
+		soonest := ""
+		for candidate, retry := range a.failures {
+			if !now.Before(retry) {
+				delete(a.failures, candidate)
+			} else if soonest == "" || retry.Before(a.failures[soonest]) {
+				soonest = candidate
+			}
+		}
+		if len(a.failures) >= socksUDPMaxTargets {
+			delete(a.failures, soonest)
+		}
+	}
+	a.failures[address] = now.Add(a.server.udp.retryDelay)
 }
 
 func (a *socksUDPAssociation) writeTarget(target *socksUDPTarget, payload []byte) bool {
@@ -384,15 +488,26 @@ func (a *socksUDPAssociation) readTarget(target *socksUDPTarget) {
 		if len(target.header)+n > maxPacket {
 			continue
 		}
+		// Never hold the association lock across a socket write: a slow client
+		// would otherwise stall forward() and every other target reader.
 		a.mu.Lock()
-		if !a.closed && a.targets[target.address] == target && a.client.IsValid() {
-			if err := a.listener.SetWriteDeadline(time.Now().Add(socksUDPWriteTimeout)); err == nil {
-				if written, err := a.listener.WriteToUDPAddrPort(packet[:len(target.header)+n], a.client); err == nil && written == len(target.header)+n {
-					stamp := time.Now()
-					target.lastUsed = stamp
-					a.lastActivity = stamp
-				}
-			}
+		client := a.client
+		active := !a.closed && a.targets[target.address] == target && client.IsValid()
+		a.mu.Unlock()
+		if !active {
+			continue
+		}
+		if err := a.listener.SetWriteDeadline(time.Now().Add(socksUDPWriteTimeout)); err != nil {
+			continue
+		}
+		if written, err := a.listener.WriteToUDPAddrPort(packet[:len(target.header)+n], client); err != nil || written != len(target.header)+n {
+			continue
+		}
+		stamp := time.Now()
+		a.mu.Lock()
+		if a.targets[target.address] == target {
+			target.lastUsed = stamp
+			a.lastActivity = stamp
 		}
 		a.mu.Unlock()
 	}
@@ -406,8 +521,8 @@ func (a *socksUDPAssociation) forget(target *socksUDPTarget) {
 	}
 	delete(a.targets, target.address)
 	a.mu.Unlock()
-	_ = target.conn.Close()
-	a.server.untrack(target.conn)
+	a.server.udp.release()
+	a.server.closeTracked(target.conn)
 }
 
 func (a *socksUDPAssociation) shutdown() {
@@ -418,7 +533,7 @@ func (a *socksUDPAssociation) shutdown() {
 	a.mu.Unlock()
 	_ = a.listener.Close()
 	for _, target := range targets {
-		_ = target.conn.Close()
-		a.server.untrack(target.conn)
+		a.server.udp.release()
+		a.server.closeTracked(target.conn)
 	}
 }

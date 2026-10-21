@@ -46,10 +46,11 @@ type compiledRouting struct {
 // Snapshot contains bounded, in-memory connection metadata. Payloads and HTTP
 // headers are never retained. IP is empty when a remote proxy did not reveal it.
 type Snapshot struct {
-	At           time.Time     `json:"at"`
-	Flows        []Flow        `json:"flows"`
-	Destinations []Destination `json:"destinations"`
-	Totals       Totals        `json:"totals"`
+	At              time.Time        `json:"at"`
+	Flows           []Flow           `json:"flows"`
+	Destinations    []Destination    `json:"destinations"`
+	Totals          Totals           `json:"totals"`
+	UDPDialFailures []UDPDialFailure `json:"udp_dial_failures"`
 }
 
 // Totals cover the retained flows, not an unbounded lifetime history.
@@ -63,6 +64,7 @@ type Totals struct {
 
 type Flow struct {
 	ID            uint64    `json:"id"`
+	Network       string    `json:"network"`
 	Host          string    `json:"host"`
 	Port          string    `json:"port"`
 	IP            string    `json:"ip,omitempty"`
@@ -116,6 +118,7 @@ type Engine struct {
 	probes            int
 	generation        uint64
 	destinationPolicy func(string) (blocked, internal bool)
+	udpFailures       map[udpFailureKey]uint64
 }
 
 // SetDestinationPolicy excludes this daemon's own endpoints from observations
@@ -184,6 +187,7 @@ func (e *Engine) Update(cfg config.Config, providers map[string]outbound.Provide
 		}
 	}
 	e.destinations = kept
+	e.pruneUDPFailuresLocked()
 }
 
 func (e *Engine) unchangedPolicyLocked(d *adaptiveState, previous map[string]outbound.Provider) bool {
@@ -369,7 +373,10 @@ func (e *Engine) protectRoute(r route, host string) (route, error) {
 	return r, nil
 }
 
-func (e *Engine) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+// errLocalPeer reports that the selected outbound connected back to this daemon.
+var errLocalPeer = errors.New("proxy destination resolves to a local proxy listener")
+
+func (e *Engine) DialContext(ctx context.Context, network, address string) (_ net.Conn, err error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6", "udp", "udp4", "udp6":
 	default:
@@ -400,28 +407,31 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	}
 	e.mu.Lock()
 	r, err := e.selectRoute(t)
+	isUDP := strings.HasPrefix(network, "udp")
+	if isUDP {
+		// A refused datagram has no error to show the client. Count why, per the
+		// last outbound attempted; cancellation is not an outbound failure.
+		defer func() {
+			if err != nil && !errors.Is(err, context.Canceled) {
+				e.mu.Lock()
+				e.recordUDPFailureLocked(r.outbound, udpFailureReason(err))
+				e.mu.Unlock()
+			}
+		}()
+	}
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
 	}
-	isUDP := strings.HasPrefix(network, "udp")
 	if isUDP && len(r.candidates) > 0 {
 		r.outbound = initialOutbound(r)
 		r.candidates = nil
 	}
 	switch r.family {
 	case "ipv4":
-		if isUDP {
-			network = "udp4"
-		} else {
-			network = "tcp4"
-		}
+		network = network[:3] + "4"
 	case "ipv6":
-		if isUDP {
-			network = "udp6"
-		} else {
-			network = "tcp6"
-		}
+		network = network[:3] + "6"
 	}
 	groupAddr := address
 	key := address + "|" + network
@@ -482,7 +492,9 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		attemptElapsed = e.now().Sub(attemptStart)
 		e.mu.Lock()
 		sameGen := e.generation == generation
-		if sameGen || sameProvider(p, e.providers[id]) {
+		// UDP has no handshake: a dial says nothing about reachability, and an
+		// outbound without UDP support must not look unhealthy for TCP.
+		if !isUDP && (sameGen || sameProvider(p, e.providers[id])) {
 			e.recordHealthLocked(id, err)
 		}
 		e.mu.Unlock()
@@ -508,7 +520,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 		if blocked || internal {
 			if blocked {
 				_ = conn.Close()
-				return nil, errors.New("proxy destination resolves to a local proxy listener")
+				return nil, errLocalPeer
 			}
 			return conn, nil
 		}
@@ -536,7 +548,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (net.
 	if err != nil {
 		return nil, err
 	}
-	f := &flowState{flow: Flow{ID: e.sequence.Add(1), Host: host, Port: port, IP: ip, Family: family, Outbound: r.outbound, Rule: r.rule, Started: started, ConnectMillis: float64(elapsed) / float64(time.Millisecond)}, now: e.now}
+	f := &flowState{flow: Flow{ID: e.sequence.Add(1), Network: network[:3], Host: host, Port: port, IP: ip, Family: family, Outbound: r.outbound, Rule: r.rule, Started: started, ConnectMillis: float64(elapsed) / float64(time.Millisecond)}, now: e.now}
 	e.mu.Lock()
 	e.pruneFlowsLocked()
 	e.flows[f.flow.ID] = f
@@ -587,7 +599,7 @@ func (e *Engine) pruneFlowsLocked() {
 func (e *Engine) Snapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	s := Snapshot{At: e.now(), Flows: []Flow{}, Destinations: []Destination{}}
+	s := Snapshot{At: e.now(), Flows: []Flow{}, Destinations: []Destination{}, UDPDialFailures: e.udpFailuresLocked()}
 	for id, f := range e.flows {
 		if s.At.Sub(f.flow.Started) > 24*time.Hour {
 			delete(e.flows, id)

@@ -1122,6 +1122,9 @@ func (m model) flowsView() string {
 	if ip == "" {
 		ip = m.text("IP not reported by upstream")
 	}
+	if network := formatFlowProtocol(f.Network); network != "" {
+		ip += " · " + network
+	}
 	status := "Active"
 	if f.Closed {
 		status = "Closed"
@@ -1347,4 +1350,16 @@ func (m model) refreshLabel() string {
 	default:
 		return fmt.Sprintf("%ds", int(interval.Seconds()))
 	}
+}
+
+// formatFlowProtocol shows protocol names as uppercase acronyms, not translated;
+// an unknown value from a newer daemon stays verbatim.
+func formatFlowProtocol(network string) string {
+	switch network {
+	case "tcp":
+		return "TCP"
+	case "udp":
+		return "UDP"
+	}
+	return network
 }

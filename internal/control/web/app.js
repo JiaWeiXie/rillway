@@ -11,6 +11,17 @@ const rate = n => `${bytes(n)}/s`;
 const typeName = value => { const source = ({direct:'Direct',warp:'Cloudflare WARP',wireguard:'WireGuard',tailscale:'Tailscale',tsnet:'Tailscale',socks5:'SOCKS5',http:'HTTP Proxy'}[value]); return source ? t(source) : value; };
 const stateKey = t => String(t || '').toLowerCase();
 const stateName = value => { const source = ({ready:'Available',connected:'Connected',running:'Running',starting:'Starting',stopped:'Stopped',disconnected:'Disconnected',disabled:'Disabled',error:'Error',unavailable:'Unavailable',needslogin:'Sign-in required',needsmachineauth:'Awaiting admin approval',needs_login:'Sign-in required',needs_auth:'Sign-in required',unsupported_account:'Account unsupported',unsupported_client:'Version unsupported'}[stateKey(value)]); return source ? t(source) : value || t('Status pending'); };
+// Protocol names are shown as standard uppercase acronyms; unknown values stay verbatim.
+const networkNames = {tcp:'TCP',udp:'UDP'};
+const networkName = value => typeof value !== 'string' ? '' : Object.hasOwn(networkNames,value.toLowerCase()) ? networkNames[value.toLowerCase()] : value;
+const udpFailureReasons = {
+  unsupported:['UDP not supported','This outbound cannot carry UDP, for example WARP Local Proxy. The traffic does not fall back to direct.'],
+  unavailable:['Outbound unavailable','The outbound or outbound group is disabled, missing, failed or was replaced, or the group has no usable member.'],
+  blocked:['Refused by protection','Private destinations cannot use this public outbound, or the outbound connected back to Rillway.'],
+  timeout:['Timed out','The outbound did not open the UDP path in time.'],
+  network:['Network error','Another network error occurred while opening the UDP path.']
+};
+const counter = value => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? String(n) : '0'; };
 const pacPresetNotes = {
   'domain.localhost':'This device. Covers localhost and names ending in .localhost.',
   'domain.mdns':'Bonjour and mDNS devices on the current local network.',
@@ -324,7 +335,7 @@ async function poll() {
     if(Math.max(cfg?.revision ?? 0,latestSnapshot.config_revision ?? 0) > previousRevision) editors.configChanged();
     flows = Array.isArray(snapshot) ? snapshot : snapshot.flows || [];
     renderRevision();
-    renderFlows(); connection(true); success = true;
+    renderFlows(); renderUDPRelay(); connection(true); success = true;
   } catch (e) { if(generation !== sessionGeneration || e.stale) return; connection(false); if(e.status !== 401) notice(e, true); }
   finally { finish(success); polling = false; }
 }
@@ -421,11 +432,29 @@ function flowRow({f,index}) {
   const host = destinationAddress(f);
   const ip = f.ip ? `${f.ip}${f.family ? ` · ${f.family}` : ''}` : t('Destination IP unknown; resolved upstream');
   const sum = (Number(f.upload_bytes)||0)+(Number(f.download_bytes)||0);
-  return `<tr><td><span class="domain">${esc(host)}</span><span class="sub">${esc(ip)}</span></td><td><span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span></td><td class="numeric">${rate(f.download_bytes_per_second || f.download_rate)}</td><td class="numeric">${rate(f.upload_bytes_per_second || f.upload_rate)}</td><td class="numeric">${bytes(sum)}</td><td class="numeric">${Number(f.connect_ms || 0).toFixed(1)} ms</td><td><span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span></td></tr>`;
+  const network = networkName(f.network);
+  return `<tr><td><span class="domain">${esc(host)}</span>${network ? ` <span class="badge flow-network" data-network>${esc(network)}</span>` : ''}<span class="sub">${esc(ip)}</span></td><td><span class="badge">${esc(f.outbound || t('Unspecified'))}</span><span class="sub">${esc(f.rule || f.rule_id || t('Default rule'))}</span></td><td class="numeric">${rate(f.download_bytes_per_second || f.download_rate)}</td><td class="numeric">${rate(f.upload_bytes_per_second || f.upload_rate)}</td><td class="numeric">${bytes(sum)}</td><td class="numeric">${Number(f.connect_ms || 0).toFixed(1)} ms</td><td><span class="badge${flowActive(f) ? ' good' : ''}">${et(flowActive(f) ? 'Active' : 'Closed')}</span></td></tr>`;
+}
+// UDP relay counters come from the stats poll. Outbound IDs are user data and
+// unknown reasons are shown verbatim; neither field carries hostnames or IPs.
+function renderUDPRelay() {
+  if(!Object.hasOwn(latestSnapshot,'udp_dial_failures') && !Object.hasOwn(latestSnapshot,'proxy_udp_drops')) return;
+  const drops = latestSnapshot.proxy_udp_drops || {};
+  $('udp-drop-target-limit').textContent = counter(drops.target_limit);
+  $('udp-drop-recent-failure').textContent = counter(drops.recent_failure);
+  $('udp-drop-local-destination').textContent = counter(drops.local_destination);
+  const failures = Array.isArray(latestSnapshot.udp_dial_failures) ? latestSnapshot.udp_dial_failures : [];
+  $('udp-dial-failures-table').hidden = failures.length === 0;
+  $('udp-dial-failures-empty').hidden = failures.length > 0;
+  $('udp-dial-failures').innerHTML = failures.map(item => {
+    const reason = String(item?.reason ?? ''), known = Object.hasOwn(udpFailureReasons,reason) ? udpFailureReasons[reason] : null;
+    const reasonText = known ? `${et(known[0])}<span class="sub">${et(known[1])}</span>` : esc(reason);
+    return `<tr data-udp-failure><td data-label="${et('Outbound')}"><strong data-udp-failure-outbound>${esc(item?.outbound ?? '')}</strong></td><td data-label="${et('Reason')}" data-udp-failure-reason="${esc(reason)}"><div>${reasonText}</div></td><td class="numeric" data-label="${et('Count')}" data-udp-failure-count>${counter(item?.count)}</td></tr>`;
+  }).join('');
 }
 function renderFlows() {
   const query = searchValue('flow-search');
-  const visible = flows.map((f,index) => ({f,index})).filter(({f}) => [destinationAddress(f),f.host,f.domain,f.ip,f.port,f.outbound].join(' ').toLowerCase().includes(query));
+  const visible = flows.map((f,index) => ({f,index})).filter(({f}) => [destinationAddress(f),f.host,f.domain,f.ip,f.port,f.outbound,networkName(f.network)].join(' ').toLowerCase().includes(query));
   let up = 0, down = 0, count = 0;
   for(const f of flows) { up += Number(f.upload_bytes_per_second || f.upload_rate) || 0; down += Number(f.download_bytes_per_second || f.download_rate) || 0; if(flowActive(f)) count++; }
   $('upload-rate').textContent = rate(up); $('download-rate').textContent = rate(down); $('active-count').textContent = count;
@@ -1014,7 +1043,7 @@ function switchLocale(locale) {
   navigate(currentPage);
   connection(isOnline);
   if(cfg) {
-    renderConfigText(); translatePACRows(); renderFlows(); renderRules(); renderOutbounds(); renderSourceAccess(); renderDeleteOutbound();
+    renderConfigText(); translatePACRows(); renderFlows(); renderUDPRelay(); renderRules(); renderOutbounds(); renderSourceAccess(); renderDeleteOutbound();
     editors.render(); renderRuleConflict();
     for(const id of ['default-outbound','rule-outbound']) {
       const select = $(id), selected = select.value;

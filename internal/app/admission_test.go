@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"rillway/internal/control"
 	"rillway/internal/platform"
 	"rillway/internal/proxy"
+	"strings"
 	"testing"
 	"time"
 )
@@ -98,9 +100,13 @@ func TestProxySaturationPreservesManagementAndShutdown(t *testing.T) {
 	var stats struct {
 		Rejections *proxy.AdmissionRejections `json:"proxy_admission_rejections"`
 		Capacity   access.ConnectionCapacity  `json:"proxy_capacity"`
+		UDPDrops   *proxy.UDPDrops            `json:"proxy_udp_drops"`
 	}
 	if err := json.Unmarshal(raw, &stats); err != nil || stats.Rejections == nil || *stats.Rejections != (proxy.AdmissionRejections{SourceLimit: 1}) {
 		t.Fatalf("stats proxy_admission_rejections = %+v, %v", stats.Rejections, err)
+	}
+	if stats.UDPDrops == nil || *stats.UDPDrops != (proxy.UDPDrops{}) {
+		t.Fatalf("stats proxy_udp_drops = %+v", stats.UDPDrops)
 	}
 	if stats.Capacity.ActiveConnections != 2 || stats.Capacity.MaxConnections != 4 || stats.Capacity.MaxConnectionsPerSource != 2 || stats.Capacity.SourceLimit != 1 || stats.Capacity.TotalLimit != 0 {
 		t.Fatalf("wrong effective proxy capacity: %+v", stats.Capacity)
@@ -153,5 +159,81 @@ func TestProxySaturationPreservesManagementAndShutdown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown did not close active tunnels")
+	}
+}
+
+// Idle Web UI keep-alive sockets fill the management budget; macOS must still
+// fetch PAC from the same source.
+func TestManagementSaturationDoesNotBlockPAC(t *testing.T) {
+	c := config.Default(t.TempDir())
+	c.Listeners = config.Listeners{HTTP: freeAddress(t), SOCKS5: freeAddress(t), Admin: freeAddress(t), PAC: freeAddress(t)}
+	c.PAC.ProxyAddress = c.Listeners.HTTP
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := platform.EnsureCredentials(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ready, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, path, c, func(string) { close(ready) })
+		close(done)
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatal(err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("service did not start")
+	}
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("service did not shut down")
+		}
+	}()
+	dialAdmin := func() (*tls.Conn, error) {
+		return tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", c.Listeners.Admin, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // isolated loopback test with generated self-signed certificate
+	}
+	for i := range managementMaxConnectionsPerSource {
+		conn, err := dialAdmin()
+		if err != nil {
+			t.Fatalf("admin connection %d rejected: %v", i+1, err)
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err = fmt.Fprintf(conn, "GET /api/v1/info HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer %s\r\n\r\n", token); err != nil {
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("admin connection %d unusable: %v %v", i+1, response, err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		// The socket now sits idle under the server keep-alive timeout.
+	}
+	if excess, err := dialAdmin(); err == nil {
+		_ = excess.Close()
+		t.Fatal("admin per-source budget was not enforced")
+	}
+	pacClient := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 3 * time.Second}
+	response, err := pacClient.Get("http://" + c.Listeners.PAC + "/proxy.pac")
+	if err != nil {
+		t.Fatal("saturated management budget blocked PAC:", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), "FindProxyForURL") {
+		t.Fatalf("PAC response = %d %q %v", response.StatusCode, body, err)
 	}
 }

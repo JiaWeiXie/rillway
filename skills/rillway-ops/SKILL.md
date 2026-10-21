@@ -14,7 +14,7 @@ Commands and paths below are product conventions, not a particular deployment.
 
 - First installation, binary upgrade, rollback: read [installation](references/installation.md).
 - Outbounds, rules, adaptive routing, credentials: read [configuration](references/configuration.md).
-- Connectivity, WARP registration, Docker, Mac PAC: read [troubleshooting](references/troubleshooting.md).
+- Connectivity, SOCKS5 UDP, WARP registration, Docker, Mac PAC: read [troubleshooting](references/troubleshooting.md).
 - Machine-readable discovery, configuration plans and actions: read [Agent CLI](references/agent-cli.md).
 
 Start with `rillway version` and `rillway agent schema`. If the installed build

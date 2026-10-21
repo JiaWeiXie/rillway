@@ -10,7 +10,6 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/control"
-	"rillway/internal/engine"
 	"rillway/internal/i18n"
 	"strings"
 	"testing"
@@ -21,22 +20,23 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-func TestEngineSnapshotJSONContract(t *testing.T) {
-	input := engine.Snapshot{Flows: []engine.Flow{{ID: 42, Host: "raw.githubusercontent.com", Port: "443", Closed: true, UploadRate: 128, DownloadRate: 2048}}}
-	data, err := json.Marshal(input)
-	if err != nil {
-		t.Fatal(err)
+func TestFlowDetailShowsProtocol(t *testing.T) {
+	flows := []flow{
+		{ID: 42, Network: "tcp", Host: "raw.githubusercontent.com", Port: "443", Closed: true},
+		{ID: 43, Network: "udp", Host: "dns.google", Port: "53"},
+		{ID: 44, Network: "custom-proto", Host: "example.com"},
+		{ID: 45, Host: "example.com"}, // older daemon without the field
 	}
-	var decoded snapshot
-	if err = json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		selected int
+		want     string
+	}{{0, "TCP · Closed"}, {1, "UDP · Active"}, {2, "custom-proto · Active"}, {3, "upstream · Active"}} {
+		if view := (model{ready: true, height: 30, flows: flows, selected: tc.selected}).View(); !strings.Contains(view, tc.want) {
+			t.Fatalf("flow %d detail lacks %q:\n%s", tc.selected, tc.want, view)
+		}
 	}
-	if len(decoded.Flows) != 1 || decoded.Flows[0].ID != 42 || decoded.Flows[0].Port != "443" || !decoded.Flows[0].Closed {
-		t.Fatalf("bad engine snapshot: %+v", decoded)
-	}
-	m := model{ready: true, height: 30, flows: decoded.Flows}
-	if !strings.Contains(m.View(), "Closed") {
-		t.Fatal("closed flow rendered as active")
+	if view := (model{ready: true, height: 30, locale: i18n.TraditionalChinese, flows: flows, selected: 1}).View(); !strings.Contains(view, "UDP · 連線中") {
+		t.Fatalf("Traditional Chinese detail lacks untranslated protocol:\n%s", view)
 	}
 }
 

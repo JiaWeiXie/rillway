@@ -42,7 +42,7 @@ Linux 優先採用 Rillway 安裝程式產生的 `/etc/systemd/system/rillway.se
 | `--yes` | `false` | 使用明確指定／預設值，不詢問；僅供首次安裝 |
 | `--no-install` | `false` | 建立設定／憑證，不註冊服務或要求 sudo |
 
-UDP ASSOCIATE 需要支援此協定的客戶端。TCP 控制連線使用 SOCKS5 listener；UDP 封包則送往 SOCKS5 回覆指定的 relay 位址與動態分配的 UDP 埠，不一定是 `--socks-port`。UDP 可使用 direct、WireGuard 與 Tailscale 出口；WARP UDP 會被拒絕，不回退至直連。詳見[出口限制](providers.md)。
+UDP ASSOCIATE 需要支援此協定的客戶端。TCP 控制連線使用 SOCKS5 listener；UDP 封包則送往 SOCKS5 回覆指定的 relay 位址與動態分配的 UDP 埠，不一定是 `--socks-port`。UDP 可使用 direct、WireGuard 與 Tailscale 出口；WARP UDP 會被拒絕，不回退至直連，並計為 `unsupported`。UDP 建連結果不會改變出口健康狀態或自適應路由的量測，這兩者只採計 TCP；自適應路由規則下的 UDP 使用該規則的初始出口，不做自適應備援。詳見[出口限制](providers.md)與 [UDP 計數](#連線容量)。
 
 依序詢問 IP、來源、四個連接埠、公司略過網域，最後確認需輸入 `yes`。直接 Enter 保留顯示的預設值。IP 必須是目標主機已配置的位址；拒絕 `0.0.0.0`、`::`、multicast 與帶 zone 的位址。連接埠須互異、介於 `1024–65535`，並且沒有被占用。來源可填 CIDR，單一 IP 會轉成 `/32` 或 `/128`，另自動加入 loopback 與監聽位址本身。輸入驗證失敗時尚未寫檔或變更服務，請修正後重跑。輸入結束不代表同意安裝。
 
@@ -88,13 +88,15 @@ v1 與 v2 設定都支援選用的頂層 `connection_limits`：
 
 三個瀏覽器各開 10～20 個分頁，共用同一來源額度。分頁不等於連線：必要資源、持續連線及其他應用程式都會消耗 socket。既有串流壓測沒有確立最高安全 socket 數，不能以 RSS 或 worker 數線性推算。保留服務 CPU／記憶體限制，觀察實際負載的活躍 socket、拒絕增量及資源用量。
 
-HTTP 轉發、HTTPS CONNECT、SOCKS5 TCP 與 UDP ASSOCIATE 控制連線共用入口 socket 預算，包含握手中與閒置但仍開啟的連線。每個 UDP association 的 TCP 控制連線，在全域與單一來源上限各計入一個額度。同一個標準化來源 IP 的所有應用程式與瀏覽器 profile 共用單一來源額度；計算的是已接受的 TCP 連線數，非 HTTP 請求數或 UDP 封包數。管理／PAC 容量獨立。超額 socket 在協定解析前關閉，瀏覽器可能直接收到連線錯誤，沒有 HTTP 或 SOCKS 錯誤回覆。
+HTTP 轉發、HTTPS CONNECT、SOCKS5 TCP 與 UDP ASSOCIATE 控制連線共用入口 socket 預算，包含握手中與閒置但仍開啟的連線。每個 UDP association 的 TCP 控制連線，在全域與單一來源上限各計入一個額度。同一個標準化來源 IP 的所有應用程式與瀏覽器 profile 共用單一來源額度；計算的是已接受的 TCP 連線數，非 HTTP 請求數或 UDP 封包數。管理介面與 PAC 端點各有一份固定的准入額度：最多 128 條，每個來源 IP 最多 32 條，仍只允許 `security.allowed_clients` 內的來源；管理介面額滿不會擋住 PAC，兩者也都不占用 Proxy 預算。超額 socket 在協定解析前關閉，瀏覽器可能直接收到連線錯誤，沒有 HTTP 或 SOCKS 錯誤回覆。
 
-每個 UDP association 還可持有最多 32 個出口端目的地 UDP socket，由實作常數 `socksUDPMaxTargets` 獨立限制。這些目的地 socket 不額外消耗入口額度；修改 `connection_limits` 不會改變此 association 上限。因此，入口連線上限不等於程序持有的所有 socket 數量上限。
+每個 UDP association 還可持有最多 32 個出口端目的地 UDP socket，由實作常數 `socksUDPMaxTargets` 限制；額滿時關閉最久未使用的目的地 socket 以騰出位置。修改 `connection_limits` 不會改變此 association 上限。所有 association 另外共用一份全域「使用中 UDP 目的地」預算，為生效中 `max_connections` 的 4 倍（預設 256 時為 1,024）。這份預算隨 `connection_limits` 即時調整，沒有獨立設定；調低後，等既有目的地 socket 關閉才逐步生效。預算已滿時，需要開新目的地 socket 的封包會被丟棄，並計入 `target_limit`。目的地 socket 不額外消耗入口額度，因此入口連線上限不等於程序持有的所有 socket 數量上限。
 
 使用 **來源存取 → 連線容量 → 儲存上限**，或附目前 revision 的 `PUT /api/v1/config`，驗證與持久化後立即套用，**不需重啟**。提高上限後新連線立即可用；降低上限保留既有串流，即使活躍數暫時超過新上限，直到兩項預算都有餘額才接受新 socket。只在主機修改設定檔則需重啟 daemon 才會載入；重啟會關閉連線並重設記憶體計數。
 
 來源存取分別顯示生效中的活躍數／上限、政策拒絕與容量拒絕。`source_limit`／`total_limit` 是累積的**拒絕計數**，不代表設定上限；兩項同時滿額時，記為總上限拒絕。政策拒絕不增加容量計數。近期來源列可能過期或被移除，不能把各列加總當作啟動後總計。網站失敗時應記錄計數增量及實際瀏覽器／資源錯誤；單純提高上限不能證明原始問題已解決。
+
+`GET /api/v1/stats`（也可用 `rillway agent stats`）另外回報 UDP 狀況。`flows[].network` 為 `tcp` 或 `udp`。`udp_dial_failures` 列出 `{outbound, reason, count}`；`outbound` 是最後嘗試的出口，若路由在嘗試任何出口前就拒絕，則是設定指定的目標。`reason` 包括 `unsupported`（出口無法承載 UDP，例如 WARP Local Proxy）、`unavailable`（出口或出口群組已停用、不存在、失敗或已退役，或群組沒有可用成員、選定成員無法使用）、`blocked`（私網保護拒絕使用公網出口，或主機名稱別名解析到 Rillway 自己的 HTTP／SOCKS5 Proxy listener，使選定出口連回本 daemon）、`timeout` 與 `network`（其他網路錯誤）。取消的建連不計入；設定中已移除的出口或群組，在套用設定時一併移除其計數。`proxy_udp_drops` 計算 SOCKS5 UDP relay 自行丟棄的封包：`target_limit`（全域 UDP 目的地預算已滿）、`recent_failure`（同一 association 內同一目的地在 5 秒內失敗過，直接丟棄、不重新建連）與 `local_destination`（目的地字面位址是本 daemon 自己的 listener 或使用中的 SOCKS5 UDP relay socket，或主機名稱實際連到的對端是使用中的 relay socket）。近期失敗紀錄只屬於單一 association，不會跨客戶端共用，最多 32 個目的地，每次套用設定都會清空，讓路由變更立即生效。這些計數只存在記憶體，從 daemon 啟動起累計，重啟後歸零，不記錄主機名稱或 IP 位址。
 
 ## `tui`：本機與遠端管理
 

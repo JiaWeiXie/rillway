@@ -8,6 +8,7 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/config"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -322,9 +323,11 @@ func (s *Server) Capacity() access.ConnectionCapacity { return s.guard.Capacity(
 // AdmissionRejections reports capacity rejections on the shared HTTP/SOCKS5 budget.
 func (s *Server) AdmissionRejections() AdmissionRejections { return s.guard.Rejections() }
 
-// ApplyConnectionLimits updates connection limits on the shared connection guard.
+// ApplyConnectionLimits updates connection limits on the shared connection guard
+// and the SOCKS5 UDP target budget derived from them.
 func (s *Server) ApplyConnectionLimits(limits config.ConnectionLimits) {
 	s.guard.ApplyConnectionLimits(limits)
+	s.udp.setLimit(limits.Effective().MaxConnections)
 }
 
 // GuardListener registers a proxy endpoint for loop prevention and shares the
@@ -334,25 +337,20 @@ func (s *Server) GuardListener(l net.Listener) net.Listener {
 		return l
 	}
 	if addr, err := netip.ParseAddrPort(l.Addr().String()); err == nil {
-		s.mu.Lock()
-		s.endpoints = append(s.endpoints, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
-		s.mu.Unlock()
+		s.updateEndpoints(func(e *localEndpoints) {
+			e.proxy = append(e.proxy, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
+		})
 	}
 	return s.guard.Wrap(l)
-}
-
-func (s *Server) ownEndpoint(address string) bool {
-	blocked, _ := s.DestinationPolicy(address)
-	return blocked
 }
 
 // IgnoreListener marks a management/PAC endpoint as internal traffic. It stays
 // subject to its own ACL/authentication, but must not feed proxy observations.
 func (s *Server) IgnoreListener(l net.Listener) {
 	if addr, err := netip.ParseAddrPort(l.Addr().String()); err == nil {
-		s.mu.Lock()
-		s.internalEndpoints = append(s.internalEndpoints, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
-		s.mu.Unlock()
+		s.updateEndpoints(func(e *localEndpoints) {
+			e.internal = append(e.internal, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
+		})
 	}
 }
 
@@ -364,14 +362,13 @@ func (s *Server) DestinationPolicy(address string) (blocked, internal bool) {
 		return false, false
 	}
 	ip := addr.Addr().Unmap()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, endpoint := range s.endpoints {
+	endpoints := s.endpoints.Load()
+	for _, endpoint := range endpoints.proxy {
 		if s.matchesEndpoint(endpoint, addr, ip) {
 			return true, false
 		}
 	}
-	for _, endpoint := range s.internalEndpoints {
+	for _, endpoint := range endpoints.internal {
 		if s.matchesEndpoint(endpoint, addr, ip) {
 			return false, true
 		}
@@ -390,11 +387,23 @@ func (s *Server) matchesEndpoint(endpoint, target netip.AddrPort, ip netip.Addr)
 	return endpoint.Addr().IsUnspecified() && (!endpoint.Addr().Is4() || ip.Is4()) && (s.localIPs[ip] || ip.IsLoopback())
 }
 
+var (
+	errLocalDestination = errors.New("proxy destination is a local proxy listener")
+	errLocalPeer        = errors.New("proxy destination resolves to a local proxy listener")
+)
+
+// localDestination reports this daemon's own listeners. UDP also covers live
+// SOCKS5 relay sockets: a datagram sent there would re-enter the relay.
+func (s *Server) localDestination(network, address string) bool {
+	blocked, _ := s.DestinationPolicy(address)
+	return blocked || strings.HasPrefix(network, "udp") && s.ownsUDPAddress(address)
+}
+
 // dialContext gives HTTP forwarding, CONNECT and SOCKS5 the same outbound
 // budget. Tunnel providers rely on this context because they have no own timeout.
 func (s *Server) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if s.ownEndpoint(address) {
-		return nil, errors.New("proxy destination is a local proxy listener")
+	if s.localDestination(network, address) {
+		return nil, errLocalDestination
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.dialTimeout)
 	defer cancel()
@@ -404,9 +413,9 @@ func (s *Server) dialContext(ctx context.Context, network, address string) (net.
 	}
 	// The selected outbound owns DNS. Check its actual connected peer instead
 	// of doing a second host-DNS lookup that could expose private names.
-	if s.ownEndpoint(c.RemoteAddr().String()) {
+	if s.localDestination(network, c.RemoteAddr().String()) {
 		_ = c.Close()
-		return nil, errors.New("proxy destination resolves to a local proxy listener")
+		return nil, errLocalPeer
 	}
 	return c, nil
 }

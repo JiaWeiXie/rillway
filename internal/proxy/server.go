@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -16,6 +17,7 @@ import (
 	"rillway/internal/authguard"
 	"rillway/internal/config"
 	"rillway/internal/routeinfo"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,10 +42,28 @@ type Server struct {
 	guard              *ConnectionGuard
 	handshakeTimeout   time.Duration
 	dialTimeout        time.Duration
-	endpoints          []netip.AddrPort
-	udpEndpoints       map[netip.AddrPort]struct{}
-	internalEndpoints  []netip.AddrPort
-	localIPs           map[netip.Addr]bool
+	endpoints          atomic.Pointer[localEndpoints]
+	localIPs           map[netip.Addr]bool // immutable after New
+	udp                udpRelay
+}
+
+// localEndpoints lists this daemon's own bound sockets. A published value is
+// never mutated: per-dial and per-datagram checks read it without locking.
+type localEndpoints struct {
+	proxy    []netip.AddrPort                // HTTP/SOCKS5 listeners; dialing them would loop
+	internal []netip.AddrPort                // management and PAC listeners
+	udp      map[netip.AddrPort]*net.UDPConn // live SOCKS5 UDP relay sockets by specific bound IP
+}
+
+// updateEndpoints publishes a changed copy. Writers are rare: listener setup and
+// the start or end of a UDP association.
+func (s *Server) updateEndpoints(change func(*localEndpoints)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.endpoints.Load()
+	next := &localEndpoints{proxy: slices.Clone(current.proxy), internal: slices.Clone(current.internal), udp: maps.Clone(current.udp)}
+	change(next)
+	s.endpoints.Store(next)
 }
 
 func New(dialer Dialer, security config.Security, limits config.ConnectionLimits, policy *access.Policy, password string) (*Server, error) {
@@ -60,7 +80,10 @@ func New(dialer Dialer, security config.Security, limits config.ConnectionLimits
 		return nil, err
 	}
 	eff := limits.Effective()
-	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), udpEndpoints: make(map[netip.AddrPort]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
+	s := &Server{dialer: dialer, username: security.ProxyUsername, password: password, connections: make(map[io.ReadWriteCloser]struct{}), listeners: make(map[net.Listener]struct{}), authFailures: authguard.New(), handshakeTimeout: 10 * time.Second, dialTimeout: 15 * time.Second}
+	s.endpoints.Store(&localEndpoints{udp: make(map[netip.AddrPort]*net.UDPConn)})
+	s.udp.setLimit(eff.MaxConnections)
+	s.udp.retryDelay = socksUDPRetryDelay
 	s.sourcePolicy.Store(policy)
 	s.guard = NewConnectionGuard(eff.MaxConnections, eff.MaxConnectionsPerSource, func(ip netip.Addr) access.Decision {
 		p := s.sourcePolicy.Load()
@@ -333,6 +356,8 @@ func (s *Server) track(c io.ReadWriteCloser) bool {
 }
 
 func (s *Server) untrack(c io.ReadWriteCloser) { s.mu.Lock(); delete(s.connections, c); s.mu.Unlock() }
+
+func (s *Server) closeTracked(c io.ReadWriteCloser) { _ = c.Close(); s.untrack(c) }
 
 func (s *Server) Close() error {
 	s.mu.Lock()
