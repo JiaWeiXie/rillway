@@ -16,6 +16,7 @@
 - **本機 daemon smoke（code review 修正前）**：重建 binary，以暫存設定、憑證及 loopback listener 啟動前景 `serve`。真實 SOCKS5 UDP association 完成 direct echo；固定 WARP（停用）路由的接收端在 300 ms 內沒有收到封包。`rillway agent stats` 回報 `udp_dial_failures` 與 `proxy_udp_drops` 計數，flow 為 `udp`／`direct`。Web UI 的「UDP 轉送」面板在英文與繁中下顯示相同計數，展開流量列可看到 `UDP` 標籤；TUI 實際啟動後顯示 `127.0.0.1 · UDP · Active`；PAC 回 200。
 - **本機 daemon smoke（code review 修正後）**：以修正後的 binary 和新的暫存設定重跑。direct echo 成功；送往 loopback 埠、固定 WARP（停用）路由的封包未送達接收端（300 ms），`udp_dial_failures` 記錄 `warp`／`blocked` 1 次（私有目的地保護）；送往自身 relay 埠的封包記錄 `local_destination` 1 次；flow 為 `udp`。此輪未重拍 Web／TUI 畫面，未重測 `unavailable` 與 `recent_failure`，這兩項由上述自動化測試涵蓋。兩輪結束後 daemon 皆已停止、暫存檔已刪除；未變更主機 VPN、DNS 或 Proxy。
 - **品質檢查**：`mise run check`（`golangci-lint` 0 issues、`-race`、`-shuffle=on`、Python 腳本測試）通過。
+- **Go 1.27.3 與安全檢查**：`mise run security` 原本在 `security:vuln` 失敗，原因是 Go 標準庫 `crypto/x509@go1.27.2` 有可達漏洞 GO-2026-6809。將 `mise.toml`、`mise.lock`、`go.mod` 更新至 Go 1.27.3；`mise run notices` 無差異。更新後 `mise run check` 通過；`mise run security` 通過公開來源稽核、歷史 secrets、四平台 govulncheck 與 actionlint。四平台可達漏洞與匯入 package 漏洞皆為 0，另有 1 個 required module 漏洞未被呼叫。
 
 **未驗證項目與限制（NOT VERIFIED / SKIP）**：
 1. **外部真實 VPN 與第三方應用程式**：未在真實 WARP、WireGuard、Tailscale 帳號或第三方瀏覽器、DNS、QUIC／HTTP/3 應用驗證；計數器只證明本機受控案例的分類與丟棄行為。
