@@ -2,6 +2,15 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-21：v0.9.0 發布、VM 升級與 SOCKS5 UDP／PAC 容量驗收
+
+- **發布與供應鏈**：`v0.9.0` 標籤指向 CI 全數通過（security、ubuntu／macOS check、service-acceptance、cross-build）的 `main` commit。Release workflow（run 39600778170）的 build job 通過 security、race／shuffle／coverage、fuzz 與四平台建置後，經 `release` environment 核准產生 draft release；部署前核對 `SHA256SUMS` 全數 OK，`gh attestation verify` 確認 SLSA provenance 來自 `release.yml@refs/tags/v0.9.0`，draft 內文與 git-cliff 產生結果一致，驗收後才發布。
+- **原子替換**：沿用 v0.8.0 流程，停止服務、備份 state 後原子替換 binary，未重跑 `setup` 或 `service install`。停止至健康 1 秒；執行中程序雜湊符合發布檔；`NRestarts=0`、`ExecMainStatus=0`、unit 維持 enabled；WARP 服務維持 active。
+- **管理與傳輸驗收**：管理 API 回報 `v0.9.0`；未認證請求 401；PAC 正常；HTTP 轉發、HTTPS CONNECT 與 SOCKS5 TCP 各有實際傳輸；WARP 固定規則目的地完成往返並記錄於 `warp-plus`（來源端 403 為 GitHub 對 WARP 出口的政策）。WARP 記錄層級仍為 `inherit`／`-1`，未變更。
+- **SOCKS5 UDP（正式設定）**：`/api/v1/stats` 提供 `udp_dial_failures` 與 `proxy_udp_drops`。在主機上以 stdlib 用戶端完成 UDP ASSOCIATE 握手，送出一筆公共 DNS 查詢；依現有預設路由選到 `warp-plus`，用戶端在 5 秒內沒有收到回覆，也沒有產生 `udp`／direct flow，`udp_dial_failures` 新增 `warp-plus`／`unsupported`。結果符合「WARP Local Proxy 不支援 UDP，固定 VPN 路由不回退 direct」。
+- **PAC 獨立容量（正式環境）**：同一來源保持 40 條閒置管理 TLS 連線，實際保持 32 條、拒絕 8 條；同時抓取 PAC 回 200 且內容有效。v0.8.0 記錄的「管理介面閒置連線占滿後 PAC 被拒」已不再發生。
+- **限制**：只替換 binary，未變更 unit、設定、憑證、主機 VPN、DNS 或 Proxy。正式設定沒有可回應 UDP 的 direct 規則；未修改設定，因此 VM 上沒有驗證 UDP 正向往返。direct、WireGuard 與 Tailscale 的 UDP 往返只由本機測試涵蓋。未執行 live VPN tests、第三方 QUIC／HTTP/3 應用或容量壓測。
+
 ## 2026-10-21：管理介面／PAC 獨立容量、SOCKS5 UDP 資料路徑與觀測計數
 
 - **管理介面與 PAC 容量 (`internal/app/admission_test.go`)**：管理介面與 PAC 各自使用獨立的連線守衛（各 128 條，每來源 32 條）。同一來源以 32 條閒置 TLS 連線占滿管理介面後，PAC `GET` 仍回 200；第 33 條管理連線仍被拒絕。以暫時改回共用守衛的方式確認此測試會失敗（PAC 讀到 EOF），之後已還原。
