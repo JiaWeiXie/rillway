@@ -168,9 +168,9 @@ backend = "go:golang.org/x/tools/gopls"
 specifiers = ["v0.23.0"]
 
 [[tools."go:golang.org/x/vuln/cmd/govulncheck"]]
-version = "1.8.0"
+version = "1.9.0"
 backend = "go:golang.org/x/vuln/cmd/govulncheck"
-specifiers = ["v1.8.0"]
+specifiers = ["v1.9.0"]
 
 [[tools.golangci-lint]]
 version = "2.14.0"

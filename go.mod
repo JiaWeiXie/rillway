@@ -5,10 +5,10 @@ go 1.27.3
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/rivo/uniseg v0.4.7
-	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.60.0
-	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
-	tailscale.com v1.104.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.61.0
+	golang.zx2c4.com/wireguard v0.0.0-20261006164505-2631ce99a06f
+	tailscale.com v1.104.2
 )
 
 require (
@@ -57,15 +57,15 @@ require (
 	github.com/tailscale/web-client-prebuilt v0.0.0-20260917222731-e0ed2d0d0fea // indirect
 	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/xo/terminfo v1.0.0 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v1.0.1 // indirect
