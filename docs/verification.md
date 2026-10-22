@@ -2,6 +2,13 @@
 
 這份文件只記錄可重跑的專案驗證，不保存個人帳號、主機名稱、IP、SSH 路徑、憑證位置、服務雜湊或私人基礎設施拓撲。正式環境的驗收紀錄應存放在受限制的營運系統。
 
+## 2026-10-22：v0.9.1 安全依賴修補、發布與 VM 升級
+
+- **來源與發布**：升級 Tailscale v1.104.2、`x/crypto` v0.58.0、`x/net` v0.61.0、WireGuard `2631ce99a06f` 及 govulncheck v1.9.0；Go 維持 1.27.3。`mise run security`、`mise run check` 與四平台 `mise run release` 通過；標籤提交的 CI 五項工作全數通過。Release workflow（run 39736272836）完成 security、race、fuzz 與建置並建立草稿；下載檔案符合 `SHA256SUMS`，Linux amd64 binary 的 `gh attestation verify` 驗證通過。核對草稿內文後發布 v0.9.1。環境審核 API 的紀錄為 `skipped`，不能宣稱有 GitHub environment 的人工核准；本次發布由維護者直接授權。
+- **原子替換與復原點**：VM 原為 v0.9.0；停止 Rillway 服務後備份舊 binary、設定與 VPN state，再於同一檔案系統原子替換。停止至健康為 1 秒。執行中程序 SHA-256 與發布檔一致，備份目錄／封存權限為 0700／0600，封存中的設定與部署後設定一致。服務維持 enabled、active，`NRestarts=0`、`ExecMainStatus=0`；WARP 服務仍 active。
+- **實際傳輸**：可信憑證的管理 API 回報 v0.9.1，未認證 API 回 401，PAC 正常。VM 本機的 HTTP、HTTPS CONNECT、SOCKS5 完成傳輸；固定 WARP 規則完成往返且 flow 記錄於指定出口。從 Mac 經 VM 的 HTTP、HTTPS CONNECT、SOCKS5 到公開端點各回 200。部署暫存檔已清除。
+- **限制**：只替換 binary，未更動 unit、設定、憑證或主機 VPN／DNS／Proxy；未執行 live VPN tests、SOCKS5 UDP 往返、容量壓測或第三方 QUIC／WebRTC 驗收。四平台 govulncheck 均為 0 個可達漏洞，另有 `x/crypto/openpgp` 的 GO-2026-5932 模組層級警示，但專案未匯入該套件。
+
 ## 2026-10-21：v0.9.0 發布、VM 升級與 SOCKS5 UDP／PAC 容量驗收
 
 - **發布與供應鏈**：`v0.9.0` 標籤指向 `chore(release)` commit，其 CI 與上一個程式碼 commit 的 CI 皆全數通過（security、ubuntu／macOS check、service-acceptance、cross-build）。Release workflow（run 39600778170）的 build job 依序執行 `mise run security`、`mise run check`、`mise run fuzz` 與四平台建置，經 `release` environment 核准後產生 draft release；部署前核對 `SHA256SUMS` 全數 OK，`gh attestation verify` 確認 SLSA provenance 來自 `release.yml@refs/tags/v0.9.0`，draft 內文與 git-cliff 產生結果一致，驗收後才發布。
