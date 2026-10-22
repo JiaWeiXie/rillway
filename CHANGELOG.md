@@ -2,6 +2,16 @@
 
 Generated from committed Git history with git-cliff. Regenerate before a release.
 
+## 0.9.1 - 2026-10-22
+
+### Fixes
+
+- **deps:** patch Tailscale, WireGuard, x/crypto, and x/net; update govulncheck
+
+### Documentation
+
+- **verification:** record v0.9.0 release, VM upgrade, and LAN UDP observations
+
 ## 0.9.0 - 2026-10-21
 
 ### Features
