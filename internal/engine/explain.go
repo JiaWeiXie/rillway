@@ -72,12 +72,11 @@ func (e *Engine) Explain(req config.ExplainRequest) (config.ExplainResult, error
 	e.mu.Unlock()
 	address := net.JoinHostPort(t.host, t.port)
 	if policy != nil {
-		blocked, internal := policy(address)
-		if blocked {
-			return config.ExplainResult{Blocked: true, TargetKind: "default", Private: privateHost(t.host, pac), Family: req.Family, Reason: "proxy_loop"}, nil
-		}
-		if internal {
-			return config.ExplainResult{TargetKind: "outbound", TargetID: "direct", ResolvedID: "direct", Private: privateHost(t.host, pac), Family: req.Family, Reason: "internal_direct"}, nil
+		if reason := policy(address); reason != "" {
+			if reason == "proxy_listener" {
+				reason = "proxy_loop" // the reason code the route preview has always reported
+			}
+			return config.ExplainResult{Blocked: true, TargetKind: "default", Private: privateHost(t.host, pac), Family: req.Family, Reason: reason}, nil
 		}
 	}
 

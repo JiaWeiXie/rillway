@@ -4,40 +4,40 @@ import (
 	"context"
 	"io"
 	"net"
+	"rillway/internal/config"
+	"strconv"
 	"testing"
 	"time"
 )
 
-func TestInternalEndpointBypassesRoutingAndObservation(t *testing.T) {
+func TestManagementEndpointIsRefusedNotRouted(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = l.Close() }()
 	e, _ := testEngine()
-	e.cfg.DefaultOutbound = "warp" // ordinary private traffic must still fail
-	e.SetDestinationPolicy(func(address string) (bool, bool) {
-		return false, address == l.Addr().String()
+	e.SetDestinationPolicy(func(address string) string {
+		if address == l.Addr().String() {
+			return "management_endpoint"
+		}
+		return ""
 	})
-	c, err := e.DialContext(t.Context(), "tcp", l.Addr().String())
-	if err != nil {
-		t.Fatal("internal endpoint was sent through normal routing", err)
+	if c, err := e.DialContext(t.Context(), "tcp", l.Addr().String()); err == nil {
+		_ = c.Close()
+		t.Fatal("management endpoint was dialed through the proxy")
 	}
-	defer func() { _ = c.Close() }()
-	peer, err := l.Accept()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = peer.Close() }()
-	_ = c.SetDeadline(time.Now().Add(time.Second))
-	if _, err = peer.Write([]byte("reply")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = io.ReadFull(c, make([]byte, 5)); err != nil {
-		t.Fatal(err)
+	_ = l.(*net.TCPListener).SetDeadline(time.Now().Add(100 * time.Millisecond))
+	if peer, err := l.Accept(); err == nil {
+		_ = peer.Close()
+		t.Fatal("the refused endpoint received a connection")
 	}
 	if snap := e.Snapshot(); len(snap.Flows) != 0 || len(snap.Destinations) != 0 || snap.Totals.DownloadBytes != 0 {
-		t.Fatal("internal traffic was observed", snap)
+		t.Fatal("refused traffic was observed", snap)
+	}
+	explain, err := e.Explain(config.ExplainRequest{Host: "127.0.0.1", Port: strconv.Itoa(l.Addr().(*net.TCPAddr).Port)})
+	if err != nil || !explain.Blocked || explain.Reason != "management_endpoint" {
+		t.Fatalf("route preview: %+v %v", explain, err)
 	}
 	if _, err = e.DialContext(t.Context(), "tcp", "127.0.0.1:1"); err == nil {
 		t.Fatal("unrelated private destination bypassed fixed routing")
@@ -45,12 +45,8 @@ func TestInternalEndpointBypassesRoutingAndObservation(t *testing.T) {
 }
 
 func TestResolvedSelfEndpointDoesNotCreateFlowsOrAdaptiveState(t *testing.T) {
-	for _, blocked := range []bool{false, true} {
-		name := "internal"
-		if blocked {
-			name = "proxy-loop"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, reason := range []string{"proxy_listener", "management_endpoint"} {
+		t.Run(reason, func(t *testing.T) {
 			l, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
@@ -66,21 +62,16 @@ func TestResolvedSelfEndpointDoesNotCreateFlowsOrAdaptiveState(t *testing.T) {
 				}
 				return (&net.Dialer{}).DialContext(ctx, network, l.Addr().String())
 			}}
-			e.SetDestinationPolicy(func(address string) (bool, bool) {
-				self := address == l.Addr().String()
-				return self && blocked, self && !blocked
+			e.SetDestinationPolicy(func(address string) string {
+				if address == l.Addr().String() {
+					return reason
+				}
+				return ""
 			})
 			c, err := e.DialContext(t.Context(), "tcp", "alias.invalid:443")
-			if blocked {
-				if err == nil {
-					_ = c.Close()
-					t.Fatal("resolved proxy loop was accepted")
-				}
-			} else {
-				if err != nil {
-					t.Fatal(err)
-				}
+			if err == nil {
 				_ = c.Close()
+				t.Fatal("alias resolving to an own listener was accepted")
 			}
 			peer, err := l.Accept()
 			if err != nil {
@@ -93,6 +84,9 @@ func TestResolvedSelfEndpointDoesNotCreateFlowsOrAdaptiveState(t *testing.T) {
 			}
 			if snap := e.Snapshot(); len(snap.Flows) != 0 || len(snap.Destinations) != 0 || snap.Totals.ActiveConnections != 0 {
 				t.Fatal("resolved self traffic polluted observations", snap)
+			}
+			if want := map[string]uint64{"proxy_listener": 0, "management_endpoint": 1}[reason]; e.ManagementRefusals() != want {
+				t.Fatalf("ManagementRefusals = %d for %s, want %d", e.ManagementRefusals(), reason, want)
 			}
 		})
 	}
@@ -108,7 +102,7 @@ func TestUnrelatedResolvedDestinationRemainsObservable(t *testing.T) {
 	e.providers["direct"] = testProvider{id: "direct", dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, l.Addr().String())
 	}}
-	e.SetDestinationPolicy(func(string) (bool, bool) { return false, false })
+	e.SetDestinationPolicy(func(string) string { return "" })
 	c, err := e.DialContext(t.Context(), "tcp", "ordinary.invalid:443")
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +144,12 @@ func TestProbeResolvingToSelfIsDiscardedAndClosed(t *testing.T) {
 	}
 	state := e.destinationLocked(key, "alias.invalid:443", "tcp", r)
 	e.probes = 1
-	e.SetDestinationPolicy(func(address string) (bool, bool) { return false, address == l.Addr().String() })
+	e.SetDestinationPolicy(func(address string) string {
+		if address == l.Addr().String() {
+			return "management_endpoint"
+		}
+		return ""
+	})
 	c, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", l.Addr().String())
 	if err != nil {
 		t.Fatal(err)

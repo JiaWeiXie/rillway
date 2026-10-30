@@ -117,15 +117,17 @@ type Engine struct {
 	probeTimes        []time.Time
 	probes            int
 	generation        uint64
-	destinationPolicy func(string) (blocked, internal bool)
+	destinationPolicy func(string) string
+	managementRefused atomic.Uint64
 	udpFailures       map[udpFailureKey]uint64
 }
 
-// SetDestinationPolicy excludes this daemon's own endpoints from observations
-// and adaptive measurements. Literal internal services are dialed locally;
-// proxy endpoints are refused. DNS aliases are checked only after the selected
-// provider resolves them, never through an additional host DNS lookup.
-func (e *Engine) SetDestinationPolicy(policy func(string) (blocked, internal bool)) {
+// SetDestinationPolicy refuses this daemon's own listeners: the proxy's, which
+// would loop, and the management and PAC ones, which only their own ACL and
+// authentication may expose. The policy returns a refusal reason, or "" to allow.
+// DNS aliases are checked only after the selected provider resolves them, never
+// through an additional host DNS lookup. Refused traffic is never observed.
+func (e *Engine) SetDestinationPolicy(policy func(string) string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.destinationPolicy = policy
@@ -373,8 +375,19 @@ func (e *Engine) protectRoute(r route, host string) (route, error) {
 	return r, nil
 }
 
+// countManagementRefusal counts a refusal whose reason is the management or PAC listener.
+func (e *Engine) countManagementRefusal(reason string) {
+	if reason == "management_endpoint" {
+		e.managementRefused.Add(1)
+	}
+}
+
+// ManagementRefusals reports the refusals the engine itself made for the management
+// or PAC listener: names that the selected outbound resolved to the listener.
+func (e *Engine) ManagementRefusals() uint64 { return e.managementRefused.Load() }
+
 // errLocalPeer reports that the selected outbound connected back to this daemon.
-var errLocalPeer = errors.New("proxy destination resolves to a local proxy listener")
+var errLocalPeer = errors.New("proxy destination resolves to a local Rillway listener")
 
 func (e *Engine) DialContext(ctx context.Context, network, address string) (_ net.Conn, err error) {
 	switch network {
@@ -397,12 +410,9 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 	policy := e.destinationPolicy
 	e.mu.Unlock()
 	if policy != nil {
-		blocked, internal := policy(address)
-		if blocked {
-			return nil, errors.New("proxy destination is a local proxy listener")
-		}
-		if internal {
-			return (&net.Dialer{}).DialContext(ctx, network, address)
+		if reason := policy(address); reason != "" {
+			e.countManagementRefusal(reason)
+			return nil, errors.New("proxy destination is a local Rillway listener (" + reason + ")")
 		}
 	}
 	e.mu.Lock()
@@ -516,13 +526,10 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 	}
 	elapsed := e.now().Sub(started)
 	if err == nil && conn != nil && policy != nil {
-		blocked, internal := policy(conn.RemoteAddr().String())
-		if blocked || internal {
-			if blocked {
-				_ = conn.Close()
-				return nil, errLocalPeer
-			}
-			return conn, nil
+		if reason := policy(conn.RemoteAddr().String()); reason != "" {
+			_ = conn.Close()
+			e.countManagementRefusal(reason)
+			return nil, errLocalPeer
 		}
 	}
 	ip := ""

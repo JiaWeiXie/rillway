@@ -702,7 +702,12 @@ func TestEngineUDPFailuresCountedWithoutChangingHealth(t *testing.T) {
 	}
 	e.Update(cfg, providers)
 	// net.Pipe reports "pipe" as its peer: here that is this daemon's listener.
-	e.SetDestinationPolicy(func(address string) (bool, bool) { return address == "pipe", false })
+	e.SetDestinationPolicy(func(address string) string {
+		if address == "pipe" {
+			return "proxy_listener"
+		}
+		return ""
+	})
 	for range 3 {
 		if _, err := e.DialContext(t.Context(), "udp", "192.0.2.1:443"); !errors.Is(err, outbound.ErrUDPUnsupported) {
 			t.Fatalf("UDP via WARP: %v", err)

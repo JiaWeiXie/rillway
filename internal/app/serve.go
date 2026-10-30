@@ -193,7 +193,7 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		if item.guard == nil {
 			l = p.GuardListener(l)
 		} else {
-			p.IgnoreListener(l)
+			p.RefuseListener(l)
 			l = item.guard.Wrap(l)
 		}
 		jobs = append(jobs, job{l, item.h, item.tls, item.socks, item.readTimeout, item.writeTimeout})

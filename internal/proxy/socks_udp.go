@@ -321,6 +321,7 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 	relay := &a.server.udp
 	if a.server.localDestination("udp", address) {
 		relay.localDestination.Add(1)
+		a.server.countManagementRefusal(address)
 		return
 	}
 	a.mu.Lock()

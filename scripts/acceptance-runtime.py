@@ -104,8 +104,13 @@ class RuntimeAcceptance(unittest.TestCase):
         config = ready()
         pac = "http://" + config["listeners"]["pac"] + "/proxy.pac"
         direct = curl(["--noproxy", "*", pac])
-        self.assertEqual(curl(["--noproxy", "", "--proxy", "http://" + config["listeners"]["http"], pac]), direct)
-        self.assertEqual(curl(["--noproxy", "", "--socks5-hostname", config["listeners"]["socks5"], pac]), direct)
+        self.assertIn(b"FindProxyForURL", direct)
+        # The PAC and management listeners answer direct clients only: a request for
+        # them through either proxy listener is refused.
+        with self.assertRaises(AssertionError):
+            curl(["--noproxy", "", "--proxy", "http://" + config["listeners"]["http"], pac])
+        with self.assertRaises(AssertionError):
+            curl(["--noproxy", "", "--socks5-hostname", config["listeners"]["socks5"], pac])
         target = "https://example.com/"
         direct = curl(["--noproxy", "*", target])
         self.assertEqual(curl(["--noproxy", "", "--proxy", "http://" + config["listeners"]["http"], target]), direct)
@@ -170,7 +175,8 @@ class RuntimeAcceptance(unittest.TestCase):
             self.assertEqual(api("service/restart", {}, "POST")[0], 202)
             ready(lambda config: config["listeners"]["http"] == new_address)
             pac = "http://" + original["listeners"]["pac"] + "/proxy.pac"
-            self.assertIn(new_address.encode(), curl(["--noproxy", "", "--proxy", "http://" + new_address, pac]))
+            self.assertIn(new_address.encode(), curl(["--noproxy", "*", pac]))
+            curl(["--noproxy", "", "--proxy", "http://" + new_address, "https://example.com/"])
             with self.assertRaises(OSError):
                 socket.create_connection(tuple([host, int(original["listeners"]["http"].rsplit(":", 1)[1])]), timeout=2)
             self.assertEqual(subprocess.check_output(["systemctl", "show", "rillway", "-p", "MainPID", "--value"]), pid)
