@@ -235,10 +235,13 @@ func (r *Runtime) Snapshot() any {
 	defer r.mu.Unlock()
 	var capacity access.ConnectionCapacity
 	var udpDrops proxy.UDPDrops
+	var managementRefusals uint64
 	if r.proxy != nil {
 		capacity = r.proxy.Capacity()
 		udpDrops = r.proxy.UDPDrops()
+		managementRefusals = r.proxy.ManagementRefusals()
 	}
+	managementRefusals += r.Engine.ManagementRefusals()
 	return struct {
 		engine.Snapshot
 		Revision   uint64                    `json:"config_revision"`
@@ -246,7 +249,10 @@ func (r *Runtime) Snapshot() any {
 		Rejections proxy.AdmissionRejections `json:"proxy_admission_rejections"`
 		Capacity   access.ConnectionCapacity `json:"proxy_capacity"`
 		UDPDrops   proxy.UDPDrops            `json:"proxy_udp_drops"`
-	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity, udpDrops}
+		// ManagementRefusals counts proxy requests for the management or PAC listener
+		// that were refused since the daemon started. It holds no addresses.
+		ManagementRefusals uint64 `json:"proxy_management_refusals"`
+	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity, udpDrops, managementRefusals}
 }
 
 func (r *Runtime) attachProxy(p *proxy.Server) {

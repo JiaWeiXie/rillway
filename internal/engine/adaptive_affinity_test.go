@@ -83,12 +83,8 @@ func TestAdaptiveSharedProbeHonorsUpdatedFixedIngressRule(t *testing.T) {
 }
 
 func TestAdaptiveSharedStateSurvivesResolvedSelfAlias(t *testing.T) {
-	for _, blocked := range []bool{false, true} {
-		name := "internal"
-		if blocked {
-			name = "proxy-loop"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, reason := range []string{"management_endpoint", "proxy_listener"} {
+		t.Run(reason, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
@@ -111,9 +107,11 @@ func TestAdaptiveSharedStateSurvivesResolvedSelfAlias(t *testing.T) {
 				}}
 			}
 			e.Update(e.cfg, map[string]outbound.Provider{"direct": provider("direct"), "warp": provider("warp")})
-			e.SetDestinationPolicy(func(address string) (bool, bool) {
-				self := address == listener.Addr().String()
-				return self && blocked, self && !blocked
+			e.SetDestinationPolicy(func(address string) string {
+				if address == listener.Addr().String() {
+					return reason
+				}
+				return ""
 			})
 			conn, err := e.DialContext(t.Context(), "tcp", "www.example.com:443")
 			if err != nil {
@@ -125,8 +123,8 @@ func TestAdaptiveSharedStateSurvivesResolvedSelfAlias(t *testing.T) {
 			}
 			*now = now.Add(2 * time.Minute)
 			conn, err = e.DialContext(t.Context(), "tcp", "self.example.com:443")
-			if blocked && err == nil || !blocked && err != nil {
-				t.Errorf("self alias: blocked=%v error=%v", blocked, err)
+			if err == nil {
+				t.Errorf("self alias to %s was accepted", reason)
 			}
 			if conn != nil {
 				_ = conn.Close()

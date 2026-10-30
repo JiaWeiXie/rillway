@@ -57,7 +57,7 @@ CIDR 僅匹配 Proxy 客戶端給的 IP literal。系統不會先用 Ubuntu 的 
 
 UDP 另有兩組低基數計數，只存在記憶體，從 daemon 啟動起累計，重啟歸零，不記錄主機名稱或 IP。`udp_dial_failures` 以「出口 × 原因」累計無法轉送的 UDP 目的地，原因固定為 `unsupported`（出口無法承載 UDP，例如 WARP Local Proxy）、`unavailable`（出口或出口群組已停用、不存在、失敗或已退役，或群組沒有可用成員、選定成員無法使用；私網保護以外的路由拒絕都歸於此類）、`blocked`（私網保護拒絕使用公網出口，或選定出口連線後確認主機名稱別名指向 Rillway 自己的 HTTP／SOCKS5 Proxy listener）、`timeout`、`network`（其他網路錯誤）；出口為最後嘗試者，路由在嘗試前就拒絕時則是設定指定的目標。取消的建連不計入；設定中已移除的出口或群組，在套用時一併移除其計數。UDP 建連結果不更新出口健康狀態，也不寫入自適應學習；健康與自適應只採計 TCP，自適應路由規則下的 UDP 固定使用初始出口。`proxy_udp_drops` 記錄 SOCKS5 UDP relay 自行丟棄的封包：`target_limit`、`recent_failure`、`local_destination`，語意見[來源存取控制](#來源存取控制)。
 
-自身管理介面／PAC 的連線不建立 flow 或自適應樣本，HTTP／SOCKS5 的自身代理目的地則拒絕連線。判斷使用實際綁定的 IP／連接埠，wildcard 僅涵蓋已知本機位址；同一主機上其他經 Proxy 連線的服務仍會被記錄。已知的管理／PAC IP 直接在本機建連；別名只依所選出口連線結果判斷，不額外查詢主機 DNS。新自適應目的地在解析確認後才公開給探測排程，已排程的探測若連到自身也丟棄樣本。PAC 在用戶端自動 bypass 已設定的 Proxy 主機。
+自身 HTTP／SOCKS5 代理目的地，以及管理介面與 PAC 的目的地，都拒絕經 Proxy 連線，不建立 flow 或自適應樣本；管理介面與 PAC 只服務直接連入的用戶端，手動設定 Proxy 的瀏覽器需把 Rillway 位址加入例外清單。判斷使用實際綁定的 IP／連接埠，wildcard 僅涵蓋已知本機位址；同一主機上其他經 Proxy 連線的服務仍會被記錄。別名只依所選出口連線結果判斷，不額外查詢主機 DNS。新自適應目的地在解析確認後才公開給探測排程，已排程的探測若連到自身也丟棄樣本。PAC 在用戶端自動 bypass 已設定的 Proxy 主機。
 
 WARP SOCKS 回應通常無法告知真正遠端 IP，會顯示未知，不使用本機 `127.0.0.1:40000` 假冒目的 IP。DNS、傳輸失敗與實際速度不能單靠 IP 城市推論；診斷只列出可實測的資料與回應提供的 CDN header。
 
@@ -89,7 +89,7 @@ Proxy（HTTP／CONNECT 與 SOCKS5 TCP／UDP ASSOCIATE）在 TCP socket accept �
 | GET `/api/v1/info` | 已驗證身分後取得 daemon 的程式版本；與設定 revision 各自獨立 |
 | GET `/api/v1/config` | 目前生效設定與 revision，秘密為檔案參照 |
 | PUT `/api/v1/config` | 完整設定，revision 必須與目前一致，成功後遞增 |
-| GET `/api/v1/stats` | flows（含 `network`：`tcp`／`udp`）、destinations、totals、config_revision、applied_at；`proxy_capacity` 包含 `active_connections` 與生效中的 `max_connections`／`max_connections_per_source`，其中 `source_limit`／`total_limit` 為啟動後累積容量拒絕數；既有 `proxy_admission_rejections` 保留相同兩項計數；`udp_dial_failures` 為 `{outbound, reason, count}` 陣列（不為 null，依出口、原因排序），`proxy_udp_drops` 為 `target_limit`／`recent_failure`／`local_destination` 計數 |
+| GET `/api/v1/stats` | flows（含 `network`：`tcp`／`udp`）、destinations、totals、config_revision、applied_at；`proxy_management_refusals`（經 Proxy 要求連到管理介面或 PAC 而被拒絕的累計次數，不含位址）；`proxy_capacity` 包含 `active_connections` 與生效中的 `max_connections`／`max_connections_per_source`，其中 `source_limit`／`total_limit` 為啟動後累積容量拒絕數；既有 `proxy_admission_rejections` 保留相同兩項計數；`udp_dial_failures` 為 `{outbound, reason, count}` 陣列（不為 null，依出口、原因排序），`proxy_udp_drops` 為 `target_limit`／`recent_failure`／`local_destination` 計數 |
 | GET `/api/v1/outbounds` | profile 狀態與可驗證的健康資訊 |
 | DELETE `/api/v1/outbounds/{id}` | `{"revision":CURRENT,"replacement":"OUTBOUND_ID"}`，刪除 profile 並原子替換所有引用；保護 direct、檢查 revision，成功後遞增 |
 | POST `/api/v1/outbounds/{id}/{action}` | `{"value":"..."}`，執行出口支援的動作 |

@@ -16,7 +16,7 @@ Rillway 適用於可信任的區網或 VPN。原始碼公開後，管理介面�
 - HTTP／SOCKS5 共用可設定的准入預算（`connection_limits`，預設最多 256 條用戶端連線，每個來源 IP 最多 256 條）。管理介面與 PAC 端點各有一份固定配額，最多 128 條，每個來源 IP 最多 32 條；管理介面額滿不會擋住 PAC。在解析協定或 TLS 握手前檢查 ACL 與容量，超額直接關閉連線。半關閉的 tunnel 到完全關閉才釋放配額。這些限制不代表頻寬或程序總記憶體上限。`GET /api/v1/stats` 的 `proxy_admission_rejections` 記錄 listener 啟動後，允許來源的 HTTP／SOCKS5 連線因單一來源或總量上限被關閉的次數；用戶端看到的是連線被重設。
 - SOCKS5 UDP 目的地 socket 有兩層上限：每個 association 32 個，全域預算為生效中 `max_connections` 的 4 倍。超出全域預算、同一 association 內 5 秒內失敗過的目的地、字面位址是本 daemon 自己 listener 或使用中 UDP relay socket，或主機名稱實際連到使用中 relay socket 的封包，都會被丟棄並計入 `proxy_udp_drops`。主機名稱別名解析到 Rillway 自己的 HTTP／SOCKS5 Proxy listener 時會被拒絕，並在 `udp_dial_failures` 記為 `blocked`。失敗紀錄不會跨客戶端共用；UDP 計數不記錄主機名稱或 IP 位址。
 - Proxy 拒絕連回自身 HTTP／SOCKS5 listener，包括 wildcard 綁定位址下已知的本機 IP，以及所選出口實際連線確認的 DNS 別名，不額外查詢主機 DNS。這項保護無法偵測所有涉及外部上游 Proxy 的迴圈。
-- 連到自身管理介面／PAC 的流量不列入統計或自適應樣本。已知的 IP／連接埠使用本機連線，別名則在所選出口解析後確認並排除；目的服務的來源 ACL、HTTPS 與登入驗證仍有效。同一主機的其他服務經明確設定的 Proxy 連線時仍會被記錄。PAC 自動讓已設定的 Proxy 主機直連，即使使用者停用了 bypass 項目也保留。
+- 管理介面與 PAC 只服務自己的用戶端：經 Proxy（轉發、CONNECT 或 SOCKS5）連到它們的請求會被拒絕，不論是直接用位址，或用所選出口解析到同一個 listener 的名稱，也不列入統計或自適應樣本。請直接開啟 Web UI 與 PAC，不要經過 Proxy；手動設定 Proxy 的瀏覽器需把 Rillway 位址加入例外清單。它們仍保有各自的來源 ACL、HTTPS 與管理驗證。`GET /api/v1/stats` 以 `proxy_management_refusals` 回報被拒絕的次數。同一主機的其他服務經明確設定的 Proxy 連線時仍可連線並會被記錄。PAC 自動讓已設定的 Proxy 主機直連，即使使用者停用了 bypass 項目也保留。
 - 管理介面使用 HTTPS、自動產生的 256-bit 隨機 Token、修改操作的同源檢查、CSP、禁止快取及遮蔽秘密的錯誤訊息。核對並信任憑證，不要關閉 TLS 驗證。
 - 同一來源 IP 一分鐘內登入失敗 20 次後，會暫時阻擋驗證，直到該時間區間結束；期間即使輸入正確憑證也不會通過。來源尚未被阻擋時，沒有附帶帳密的 HTTP Proxy 請求會收到一般的 `407` 驗證要求，不計入失敗次數；已被阻擋的來源或計數已滿時則收到 `429`。HTTP／SOCKS5 Proxy 共用一份計數，管理介面獨立計數。換來源連接埠、IPv4-mapped IPv6 或偽造 forwarded headers 都無法繞過。
 - 每份計數最多保留 256 個來源；額滿時拒絕新來源，直到舊項目到期。重啟 daemon 會清除記憶體中的計數。這項措施不能取代 ACL、防火牆或 DDoS 防護。

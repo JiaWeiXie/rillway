@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -63,26 +64,27 @@ func TestOwnEndpointWildcardMappedIPv4AndRemoteHost(t *testing.T) {
 	}
 }
 
-func TestInternalPolicyMatchesOnlyOwnBoundServices(t *testing.T) {
+func TestDestinationPolicyMatchesOnlyOwnBoundServices(t *testing.T) {
 	s := testServer(t, false)
 	s.updateEndpoints(func(e *localEndpoints) {
 		e.proxy = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17890")}
 		e.internal = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17893"), netip.MustParseAddrPort("[::1]:17892")}
 	})
 	for _, address := range []string{"127.0.0.1:17893", "[::ffff:127.0.0.1]:17893", "[::1]:17892"} {
-		blocked, internal := s.DestinationPolicy(address)
-		if blocked || !internal {
-			t.Fatal("own management/PAC endpoint was not ignored", address)
+		if got := s.DestinationPolicy(address); got != DestinationManagementEndpoint {
+			t.Fatalf("own management/PAC endpoint %s: %q", address, got)
+		}
+		if !s.localDestination("tcp", address) {
+			t.Fatal("management/PAC endpoint is dialable through the proxy", address)
 		}
 	}
 	for _, address := range []string{"127.0.0.1:8080", "192.0.2.20:17893", "[::1]:17893", "[::1]:17890"} {
-		blocked, internal := s.DestinationPolicy(address)
-		if blocked || internal {
-			t.Fatal("unrelated endpoint was ignored or blocked", address)
+		if got := s.DestinationPolicy(address); got != "" {
+			t.Fatal("unrelated endpoint was refused", address, got)
 		}
 	}
-	if blocked, internal := s.DestinationPolicy("127.0.0.1:17890"); !blocked || internal {
-		t.Fatal("own proxy endpoint lost loop protection")
+	if got := s.DestinationPolicy("127.0.0.1:17890"); got != DestinationProxyListener {
+		t.Fatal("own proxy endpoint lost loop protection", got)
 	}
 }
 
@@ -1195,4 +1197,27 @@ func TestApplyConnectionLimitsConcurrentCloseAndLimitRaces(t *testing.T) {
 	if cap := g.Capacity(); cap.ActiveConnections != 0 {
 		t.Fatalf("expected 0 active connections after test, got %d", cap.ActiveConnections)
 	}
+}
+
+// Refused attempts to reach the management or PAC listener are counted (and only
+// those): the proxy's own listeners and unrelated destinations are not.
+func TestManagementRefusalsAreCountedSeparately(t *testing.T) {
+	s := testServer(t, false)
+	s.updateEndpoints(func(e *localEndpoints) {
+		e.proxy = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17890")}
+		e.internal = []netip.AddrPort{netip.MustParseAddrPort("0.0.0.0:17892"), netip.MustParseAddrPort("0.0.0.0:17893")}
+	})
+	s.dialer = refusingDialer{}
+	for _, address := range []string{"127.0.0.1:17892", "127.0.0.1:17893", "127.0.0.1:17890", "203.0.113.5:443"} {
+		_, _ = s.dialContext(t.Context(), "tcp", address)
+	}
+	if got := s.ManagementRefusals(); got != 2 {
+		t.Fatalf("ManagementRefusals = %d, want 2 (management and PAC only)", got)
+	}
+}
+
+type refusingDialer struct{}
+
+func (refusingDialer) DialContext(context.Context, string, string) (net.Conn, error) {
+	return nil, errors.New("unreachable")
 }

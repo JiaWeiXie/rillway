@@ -47,12 +47,17 @@ an upgrade; there is no long-term support branch yet.
   including known local addresses for wildcard binds and DNS aliases confirmed
   by the selected outbound's connected peer. No extra host-DNS query is made.
   This is not a general detector for loops involving external upstream proxies.
-- Requests to the daemon's bound management/PAC endpoints do not enter traffic
-  counters or adaptive measurements. Literal endpoints use a local connection;
-  confirmed aliases are excluded after provider resolution. Destination ACLs,
-  HTTPS and management authentication still apply. Other explicitly proxied
-  services on the same host remain observable. PAC automatically returns DIRECT
-  for the configured proxy host, even when user bypass entries are disabled.
+- The management and PAC endpoints answer their own clients only: a proxy
+  request (forward, CONNECT or SOCKS5) for them is refused, by literal address
+  or by a name the selected outbound resolves to the same listener, and never
+  enters traffic counters or adaptive measurements. Open the Web UI and PAC
+  directly, not through the proxy; a browser with a manual proxy needs the
+  Rillway address in its proxy exceptions. The endpoints keep their own source
+  ACL, HTTPS and management authentication. `GET /api/v1/stats` reports the
+  number of refused attempts as `proxy_management_refusals`. Other explicitly proxied services
+  on the same host remain reachable and observable. PAC automatically returns
+  DIRECT for the configured proxy host, even when user bypass entries are
+  disabled.
 - Management uses HTTPS, a generated 256-bit random bearer token, same-origin
   checks on changes, CSP, no-store responses, and secret-safe error messages.
   Trust the verified certificate; do not disable TLS verification.
