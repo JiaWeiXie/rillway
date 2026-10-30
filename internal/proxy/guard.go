@@ -344,9 +344,10 @@ func (s *Server) GuardListener(l net.Listener) net.Listener {
 	return s.guard.Wrap(l)
 }
 
-// IgnoreListener marks a management/PAC endpoint as internal traffic. It stays
-// subject to its own ACL/authentication, but must not feed proxy observations.
-func (s *Server) IgnoreListener(l net.Listener) {
+// RefuseListener marks a management/PAC endpoint. The endpoint keeps its own
+// ACL and authentication; connecting to it through the proxy is refused, so a
+// proxy client cannot reach it from the host's own address.
+func (s *Server) RefuseListener(l net.Listener) {
 	if addr, err := netip.ParseAddrPort(l.Addr().String()); err == nil {
 		s.updateEndpoints(func(e *localEndpoints) {
 			e.internal = append(e.internal, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
@@ -354,26 +355,37 @@ func (s *Server) IgnoreListener(l net.Listener) {
 	}
 }
 
-// DestinationPolicy identifies only this daemon's bound ports. Other services
-// on the same host remain observable. No host DNS lookup is performed.
-func (s *Server) DestinationPolicy(address string) (blocked, internal bool) {
+// Destination reasons returned by DestinationPolicy.
+const (
+	// DestinationProxyListener is this daemon's own HTTP/SOCKS5 listener: dialing
+	// it would loop.
+	DestinationProxyListener = "proxy_listener"
+	// DestinationManagementEndpoint is the management or PAC listener, which only
+	// its own ACL and authentication may expose.
+	DestinationManagementEndpoint = "management_endpoint"
+)
+
+// DestinationPolicy returns why a destination must be refused, or "" when it may
+// be dialed: only this daemon's own bound ports are refused. Other services on
+// the same host remain reachable and observable. No host DNS lookup is performed.
+func (s *Server) DestinationPolicy(address string) string {
 	addr, err := netip.ParseAddrPort(address)
 	if err != nil {
-		return false, false
+		return ""
 	}
 	ip := addr.Addr().Unmap()
 	endpoints := s.endpoints.Load()
 	for _, endpoint := range endpoints.proxy {
 		if s.matchesEndpoint(endpoint, addr, ip) {
-			return true, false
+			return DestinationProxyListener
 		}
 	}
 	for _, endpoint := range endpoints.internal {
 		if s.matchesEndpoint(endpoint, addr, ip) {
-			return false, true
+			return DestinationManagementEndpoint
 		}
 	}
-	return false, false
+	return ""
 }
 
 func (s *Server) matchesEndpoint(endpoint, target netip.AddrPort, ip netip.Addr) bool {
@@ -388,21 +400,21 @@ func (s *Server) matchesEndpoint(endpoint, target netip.AddrPort, ip netip.Addr)
 }
 
 var (
-	errLocalDestination = errors.New("proxy destination is a local proxy listener")
-	errLocalPeer        = errors.New("proxy destination resolves to a local proxy listener")
+	errLocalDestination = errors.New("proxy destination is a local Rillway listener")
+	errLocalPeer        = errors.New("proxy destination resolves to a local Rillway listener")
 )
 
-// localDestination reports this daemon's own listeners. UDP also covers live
+// localDestination reports this daemon's own proxy, management and PAC listeners. UDP also covers live
 // SOCKS5 relay sockets: a datagram sent there would re-enter the relay.
 func (s *Server) localDestination(network, address string) bool {
-	blocked, _ := s.DestinationPolicy(address)
-	return blocked || strings.HasPrefix(network, "udp") && s.ownsUDPAddress(address)
+	return s.DestinationPolicy(address) != "" || strings.HasPrefix(network, "udp") && s.ownsUDPAddress(address)
 }
 
 // dialContext gives HTTP forwarding, CONNECT and SOCKS5 the same outbound
 // budget. Tunnel providers rely on this context because they have no own timeout.
 func (s *Server) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if s.localDestination(network, address) {
+		s.countManagementRefusal(address)
 		return nil, errLocalDestination
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.dialTimeout)
@@ -415,7 +427,21 @@ func (s *Server) dialContext(ctx context.Context, network, address string) (net.
 	// of doing a second host-DNS lookup that could expose private names.
 	if s.localDestination(network, c.RemoteAddr().String()) {
 		_ = c.Close()
+		s.countManagementRefusal(c.RemoteAddr().String())
 		return nil, errLocalPeer
 	}
 	return c, nil
 }
+
+// countManagementRefusal counts a refused attempt to reach the management or PAC
+// listener. It records no address, so the counter can be shown to operators as is.
+func (s *Server) countManagementRefusal(address string) {
+	if s.DestinationPolicy(address) == DestinationManagementEndpoint {
+		s.managementRefused.Add(1)
+	}
+}
+
+// ManagementRefusals reports how many proxy requests for the management or PAC
+// listener were refused since the daemon started (literal address or a name the
+// selected outbound resolved to the listener). The counter resets on restart.
+func (s *Server) ManagementRefusals() uint64 { return s.managementRefused.Load() }

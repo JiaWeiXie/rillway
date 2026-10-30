@@ -384,8 +384,7 @@ func (e *Engine) completeProbe(job probeJob, started time.Time, conn net.Conn, e
 		policy := e.destinationPolicy
 		e.mu.Unlock()
 		if policy != nil {
-			blocked, ignored := policy(conn.RemoteAddr().String())
-			internal = blocked || ignored
+			internal = policy(conn.RemoteAddr().String()) != ""
 		}
 		host, _, _ := net.SplitHostPort(job.address)
 		family = addressFamily(destinationIP(conn, host))

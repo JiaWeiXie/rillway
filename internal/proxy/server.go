@@ -44,6 +44,7 @@ type Server struct {
 	dialTimeout        time.Duration
 	endpoints          atomic.Pointer[localEndpoints]
 	localIPs           map[netip.Addr]bool // immutable after New
+	managementRefused  atomic.Uint64       // attempts to reach the management or PAC listener through the proxy
 	udp                udpRelay
 }
 
