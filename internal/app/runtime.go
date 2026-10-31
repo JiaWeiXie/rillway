@@ -17,6 +17,7 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/config"
 	"rillway/internal/engine"
+	"rillway/internal/hostlocal"
 	"rillway/internal/outbound"
 	"rillway/internal/proxy"
 	"rillway/internal/resourcecontrol"
@@ -35,6 +36,8 @@ type Runtime struct {
 	appliedAt       time.Time
 	restart         chan struct{}
 	proxy           *proxy.Server
+	hostLocal       *hostlocal.State
+	hostIPs         []netip.Addr
 }
 
 // PrepareRestart validates the saved configuration before the HTTP handler
@@ -130,7 +133,22 @@ func New(ctx context.Context, path string, c config.Config) (*Runtime, error) {
 	if err := config.Validate(c); err != nil {
 		return nil, err
 	}
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	var ips []netip.Addr
+	for _, address := range addresses {
+		if prefix, err := netip.ParsePrefix(address.String()); err == nil {
+			ips = append(ips, prefix.Addr().WithZone("").Unmap())
+		}
+	}
+	hostPolicy, err := c.CompileHostLocal(ips)
+	if err != nil {
+		return nil, err
+	}
 	r := &Runtime{cfg: clone(c), path: path, providers: map[string]outbound.Provider{}, tailscaleOwners: map[string]*managed{}, appliedAt: time.Now().UTC()}
+	r.hostIPs, r.hostLocal = ips, hostlocal.NewState(hostPolicy)
 	// Restore a saved Go GC budget, if the installed resource controller exists.
 	// This read never changes OS limits and must not prevent foreground startup.
 	_, _ = resourcecontrol.MemoryControl(ctx, nil)
@@ -144,6 +162,7 @@ func New(ctx context.Context, path string, c config.Config) (*Runtime, error) {
 		r.trackTailscaleOwner(o, p)
 	}
 	r.Engine = engine.New(c, r.providers)
+	r.Engine.SetHostLocalPolicy(r.hostLocal)
 	return r, nil
 }
 
@@ -251,8 +270,9 @@ func (r *Runtime) Snapshot() any {
 		UDPDrops   proxy.UDPDrops            `json:"proxy_udp_drops"`
 		// ManagementRefusals counts proxy requests for the management or PAC listener
 		// that were refused since the daemon started. It holds no addresses.
-		ManagementRefusals uint64 `json:"proxy_management_refusals"`
-	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity, udpDrops, managementRefusals}
+		ManagementRefusals uint64             `json:"proxy_management_refusals"`
+		HostLocal          hostlocal.Snapshot `json:"host_local"`
+	}{r.Engine.Snapshot(), r.cfg.Revision, r.appliedAt, proxy.AdmissionRejections{SourceLimit: capacity.SourceLimit, TotalLimit: capacity.TotalLimit}, capacity, udpDrops, managementRefusals, r.hostLocal.Snapshot()}
 }
 
 func (r *Runtime) attachProxy(p *proxy.Server) {
@@ -359,6 +379,10 @@ func (r *Runtime) applyLocked(ctx context.Context, c config.Config, policy *acce
 	if !reflect.DeepEqual(c.Listeners, r.cfg.Listeners) || !reflect.DeepEqual(c.Security, r.cfg.Security) {
 		return config.PublicError{Message: "To change listener addresses or security settings, edit the configuration file on the host and restart the daemon."}
 	}
+	hostPolicy, err := c.CompileHostLocal(r.hostIPs)
+	if err != nil {
+		return config.PublicError{Message: "Host-local policy validation failed.", Err: err}
+	}
 	old := map[string]config.Outbound{}
 	for _, o := range r.cfg.Outbounds {
 		old[o.ID] = o
@@ -411,6 +435,7 @@ func (r *Runtime) applyLocked(ctx context.Context, c config.Config, policy *acce
 		r.pruneTailscaleOwners()
 		return err
 	}
+	r.hostLocal.Publish(hostPolicy)
 	r.Engine.Update(c, next)
 	for id, p := range r.providers {
 		if p != next[id] {

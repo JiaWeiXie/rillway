@@ -125,6 +125,7 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 	}
 	defer func() { _ = p.Close() }()
 	r.attachProxy(p)
+	p.SetHostLocalPolicy(r.hostLocal)
 	r.Engine.SetDestinationPolicy(p.DestinationPolicy)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -221,7 +222,8 @@ func serveOnce(ctx context.Context, path string, c config.Config, ready func(str
 		go func() { defer wg.Done(); failures <- server.Serve(l) }()
 	}
 	if ready != nil {
-		ready(fmt.Sprintf(i18n.Message(i18n.FromContext(ctx), "Web UI: https://%s\nPAC: http://%s/proxy.pac\nTLS SHA-256: %s\nManagement token file: %s"), c.Listeners.Admin, c.Listeners.PAC, fp, c.Security.AdminTokenFile))
+		summary := c.HostLocalSummary(i18n.FromContext(ctx))
+		ready(fmt.Sprintf(i18n.Message(i18n.FromContext(ctx), "Web UI: https://%s\nPAC: http://%s/proxy.pac\nTLS SHA-256: %s\nManagement token file: %s"), c.Listeners.Admin, c.Listeners.PAC, fp, c.Security.AdminTokenFile) + "\n" + fmt.Sprintf(i18n.Message(i18n.FromContext(ctx), "Host-local access mode: %s."), summary.EffectiveMode) + " " + summary.Notice)
 	}
 	var serveErr error
 	select {
