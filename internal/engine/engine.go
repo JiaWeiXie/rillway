@@ -524,7 +524,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 		sameGen := e.generation == generation
 		// UDP has no handshake: a dial says nothing about reachability, and an
 		// outbound without UDP support must not look unhealthy for TCP.
-		if !isUDP && (sameGen || sameProvider(p, e.providers[id])) {
+		if !isUDP && err != nil && (sameGen || sameProvider(p, e.providers[id])) {
 			e.recordHealthLocked(id, err)
 		}
 		e.mu.Unlock()
@@ -563,6 +563,15 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 		if err != nil {
 			_ = conn.Close()
 			return nil, err
+		}
+		// A connected socket is not an accepted success until both final
+		// destination checks pass. A later refusal must not heal provider health.
+		if !isUDP {
+			e.mu.Lock()
+			if e.generation == generation || sameProvider(providers[r.outbound], e.providers[r.outbound]) {
+				e.recordHealthLocked(r.outbound, nil)
+			}
+			e.mu.Unlock()
 		}
 	}
 	ip := ""
