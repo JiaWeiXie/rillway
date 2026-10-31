@@ -34,10 +34,11 @@ func candidateResolver(t *testing.T) *net.Resolver {
 			}
 			q := query.Questions[0]
 			response := dnsmessage.Message{Header: dnsmessage.Header{ID: query.ID, Response: true, RecursionDesired: query.RecursionDesired, RecursionAvailable: true}, Questions: query.Questions}
-			if q.Type == dnsmessage.TypeA {
-				for _, ip := range [][4]byte{{127, 0, 0, 1}, {127, 0, 0, 2}} {
-					response.Answers = append(response.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}, Body: &dnsmessage.AResource{A: ip}})
-				}
+			switch q.Type {
+			case dnsmessage.TypeA:
+				response.Answers = append(response.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}, Body: &dnsmessage.AResource{A: [4]byte{127, 0, 0, 1}}})
+			case dnsmessage.TypeAAAA:
+				response.Answers = append(response.Answers, dnsmessage.Resource{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET}, Body: &dnsmessage.AAAAResource{AAAA: netip.IPv6Loopback().As16()}})
 			}
 			body, err := response.Pack()
 			if err != nil {
@@ -66,7 +67,9 @@ func TestDirectRealDNSCandidatesRespectFinalIngressOutcome(t *testing.T) {
 		{"blocked then transport failure", true, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			listener, err := net.Listen("tcp4", "127.0.0.2:0")
+			// ::1 is refused before connect; the accepted target binds the default
+			// IPv4 loopback, without requiring an extra alias on macOS.
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +103,7 @@ func TestDirectRealDNSCandidatesRespectFinalIngressOutcome(t *testing.T) {
 				return nil
 			})
 			_, port, _ := net.SplitHostPort(listener.Addr().String())
-			conn, err := (&direct{id: "direct-alias", resolver: candidateResolver(t)}).DialContext(ctx, "tcp4", net.JoinHostPort("candidates.test.", port))
+			conn, err := (&direct{id: "direct-alias", resolver: candidateResolver(t)}).DialContext(ctx, "tcp", net.JoinHostPort("candidates.test.", port))
 			if tc.accept {
 				if err != nil {
 					t.Fatal(err)
@@ -134,7 +137,7 @@ func TestDirectRealDNSCandidatesRespectFinalIngressOutcome(t *testing.T) {
 			mu.Lock()
 			observed := append([]netip.AddrPort(nil), attempts...)
 			mu.Unlock()
-			if len(observed) < 2 || observed[0].Addr() != netip.MustParseAddr("127.0.0.1") || observed[1].Addr() != dst.Addr() {
+			if len(observed) < 2 || observed[0].Addr() != netip.IPv6Loopback() || observed[1].Addr() != dst.Addr() {
 				t.Fatal("fixture did not exercise ordered multiple numeric attempts", observed)
 			}
 		})
