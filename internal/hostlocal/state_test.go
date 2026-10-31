@@ -45,6 +45,30 @@ func TestIndependentActualAndHypotheticalCounters(t *testing.T) {
 	}
 }
 
+func TestOpenScopedExceptionCountersIncludingBaseline(t *testing.T) {
+	for _, target := range []string{"127.0.0.1:3000", "169.254.169.254:80"} {
+		for _, source := range []string{"192.0.2.2", "198.51.100.2"} {
+			dst, src := netip.MustParseAddrPort(target), netip.MustParseAddr(source)
+			p := policy(t, Open, RuleSpec{IP: dst.Addr(), Lo: dst.Port(), Hi: dst.Port(), From: []string{"192.0.2.0/24"}})
+			s := NewState(p)
+			e := s.Begin(src, dst.Port())
+			e.Finalize(dst, p.CheckIP(dst, src))
+			e.Complete(nil)
+			got := s.Snapshot()
+			var wantHypothetical, wantActual uint64
+			if source == "198.51.100.2" {
+				wantHypothetical = 1
+				if IsBaseline(dst.Addr()) {
+					wantActual = 1
+				}
+			}
+			if got.ActualDenials != wantActual || got.HypotheticalLocalClientsOnlyDenials != wantHypothetical {
+				t.Fatal(target, source, got)
+			}
+		}
+	}
+}
+
 func TestCandidateAttemptsAreNotIngressDenials(t *testing.T) {
 	source := netip.MustParseAddr("192.0.2.2")
 	local := netip.MustParseAddrPort("127.0.0.1:3000")

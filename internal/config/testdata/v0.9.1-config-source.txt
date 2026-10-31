@@ -1,0 +1,5 @@
+Exact public release-tag example config; synthetic example data only.
+Tag v0.9.1 commit 6c30e39a2a8477fa2fa1e864b8aa595a2a6499a0
+Path examples/config.json
+https://github.com/JiaWeiXie/rillway/blob/6c30e39a2a8477fa2fa1e864b8aa595a2a6499a0/examples/config.json
+No released binary executed by this source-fixture extraction.

@@ -7,9 +7,57 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"rillway/internal/hostlocal"
 	"testing"
 )
+
+func TestReleasedConfigRetainsNondefaultStateAndExceptionRoundTrip(t *testing.T) {
+	body, err := os.ReadFile("testdata/v0.9.1-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HostLocal != nil || c.HostLocalMode() != hostlocal.LocalClientsOnly {
+		t.Fatal("released absent mode not protected")
+	}
+	// Customize the actual released example, not a current Default with an old
+	// version number. These are synthetic private file references, never secrets.
+	c.Revision = 37
+	c.ConnectionLimits = ConnectionLimits{MaxConnections: 512, MaxConnectionsPerSource: 128}
+	c.Security.AdminTokenFile = "fixture-state/custom-admin.token"
+	c.Security.TLSCertFile = "fixture-state/custom-admin.crt"
+	c.Security.TLSKeyFile = "fixture-state/custom-admin.key"
+	c.Outbounds[2].StateDir = "fixture-state/custom-overlay"
+	c.SourceAccess.Rules[0].CIDRs = append(c.SourceAccess.Rules[0].CIDRs, "192.0.2.55/32")
+	before := c
+	path := filepath.Join(t.TempDir(), "upgraded.json")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || !reflect.DeepEqual(loaded, before) {
+		t.Fatal("released settings lost", err)
+	}
+	loaded.HostLocal = &HostLocal{Mode: hostlocal.Open, Allow: []HostLocalRule{{To: "127.0.0.1:3000", From: []string{"192.0.2.55/32"}}}}
+	if err := Save(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(roundTrip, loaded) {
+		t.Fatal("exception round-trip lost nondefault state")
+	}
+	roundTrip.HostLocal = nil
+	if !reflect.DeepEqual(roundTrip, before) {
+		t.Fatal("adding policy reset unrelated data")
+	}
+}
 
 func TestHostLocalEveryConfigVersionPreservesEffectiveMode(t *testing.T) {
 	for _, version := range []int{1, 2, 3} {
