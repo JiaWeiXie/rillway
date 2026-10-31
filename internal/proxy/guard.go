@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"rillway/internal/access"
 	"rillway/internal/config"
+	"rillway/internal/hostlocal"
 	"sort"
 	"strings"
 	"sync"
@@ -338,7 +339,7 @@ func (s *Server) GuardListener(l net.Listener) net.Listener {
 	}
 	if addr, err := netip.ParseAddrPort(l.Addr().String()); err == nil {
 		s.updateEndpoints(func(e *localEndpoints) {
-			e.proxy = append(e.proxy, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
+			e.proxy = append(e.proxy, netip.AddrPortFrom(addr.Addr().WithZone("").Unmap(), addr.Port()))
 		})
 	}
 	return s.guard.Wrap(l)
@@ -350,7 +351,7 @@ func (s *Server) GuardListener(l net.Listener) net.Listener {
 func (s *Server) RefuseListener(l net.Listener) {
 	if addr, err := netip.ParseAddrPort(l.Addr().String()); err == nil {
 		s.updateEndpoints(func(e *localEndpoints) {
-			e.internal = append(e.internal, netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()))
+			e.internal = append(e.internal, netip.AddrPortFrom(addr.Addr().WithZone("").Unmap(), addr.Port()))
 		})
 	}
 }
@@ -373,7 +374,7 @@ func (s *Server) DestinationPolicy(address string) string {
 	if err != nil {
 		return ""
 	}
-	ip := addr.Addr().Unmap()
+	ip := addr.Addr().WithZone("").Unmap()
 	endpoints := s.endpoints.Load()
 	for _, endpoint := range endpoints.proxy {
 		if s.matchesEndpoint(endpoint, addr, ip) {
@@ -412,10 +413,19 @@ func (s *Server) localDestination(network, address string) bool {
 
 // dialContext gives HTTP forwarding, CONNECT and SOCKS5 the same outbound
 // budget. Tunnel providers rely on this context because they have no own timeout.
-func (s *Server) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (s *Server) dialContext(ctx context.Context, network, address string) (_ net.Conn, resultErr error) {
+	if hostlocal.EventFrom(ctx) == nil {
+		var event *hostlocal.Event
+		ctx, event = s.beginHostEvent(ctx, address)
+		defer func() { event.Complete(resultErr) }()
+	}
 	if s.localDestination(network, address) {
 		s.countManagementRefusal(address)
+		s.recordSelfRefusal(ctx, address)
 		return nil, errLocalDestination
+	}
+	if err := s.checkHost(ctx, address, netip.AddrPort{}); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.dialTimeout)
 	defer cancel()
@@ -428,6 +438,7 @@ func (s *Server) dialContext(ctx context.Context, network, address string) (net.
 	if s.localDestination(network, c.RemoteAddr().String()) {
 		_ = c.Close()
 		s.countManagementRefusal(c.RemoteAddr().String())
+		s.recordSelfRefusal(ctx, c.RemoteAddr().String())
 		return nil, errLocalPeer
 	}
 	return c, nil

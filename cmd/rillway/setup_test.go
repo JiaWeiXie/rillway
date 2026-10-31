@@ -58,6 +58,9 @@ func TestSetupInteractive(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if c.HostLocal == nil || c.HostLocal.Mode != "local-clients-only" {
+				t.Fatal("new setup did not persist explicit host-local default")
+			}
 			if installs != 1 || c.Listeners.Admin != "[2001:db8::1]:17892" || c.PAC.ProxyAddress != "[2001:db8::1]:17890" {
 				t.Fatalf("bad setup: %+v", c.Listeners)
 			}

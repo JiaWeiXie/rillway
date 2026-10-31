@@ -52,3 +52,7 @@ cp -R skills/rillway-ops "${CODEX_HOME:-$HOME/.codex}/skills/"
 設計參考 [CLI Guidelines](https://clig.dev/)、[GitHub CLI JSON](https://cli.github.com/manual/gh_help_formatting)、[Hugging Face Agent CLI](https://huggingface.co/blog/hf-cli-for-agents)與 [Agent Skills 格式](https://agentskills.io/specification)。這些是設計依據，不宣稱有通用「Agent Native」認證。
 
 `config`、`stats` 即使不含秘密內容，仍可能識別私人設備及目的地。管理權杖提供與 Web UI 相同的管理權限；將憑證及日誌留在 Git 外，只發布清理過的報告。掃描與來源證明不保證識別所有秘密或漏洞。
+
+### 主機本機服務驗證資料
+
+離線 `validate` 在 `data.host_local` 加入生效模式、baseline 與 `host_local.mode=open` 的切回指引。原有 envelope、錯誤與退出碼不變；`runtime_verified` 維持 false。`stats` 分開回報有容量上限的實際與假設計數。請見[主機本機服務的存取](host-local.zh-Hant.md)。

@@ -79,6 +79,11 @@ func (e *Engine) Explain(req config.ExplainRequest) (config.ExplainResult, error
 			return config.ExplainResult{Blocked: true, TargetKind: "default", Private: privateHost(t.host, pac), Family: req.Family, Reason: reason}, nil
 		}
 	}
+	if state := e.hostLocal.Load(); state != nil {
+		if d := state.Load().CheckAddress(address, t.source); d.Denied {
+			return config.ExplainResult{Blocked: true, TargetKind: "default", Private: privateHost(t.host, pac), Family: req.Family, Reason: d.Reason}, nil
+		}
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -142,6 +147,23 @@ func (e *Engine) Explain(req config.ExplainRequest) (config.ExplainResult, error
 			}
 		}
 		result.ResolvedID = resolved
+	}
+	if state := e.hostLocal.Load(); state != nil {
+		d := state.Load().CheckAddress(address, t.source)
+		if d.NeedsDirectIP {
+			providerType := ""
+			for _, o := range e.cfg.Outbounds {
+				if o.ID == result.ResolvedID {
+					providerType = o.Type
+					break
+				}
+			}
+			if providerType == "direct" {
+				result.HostLocalResolution = "pending_direct_resolution"
+			} else if remote := state.Load().CheckRemoteName(address, t.source); remote.Denied {
+				result.Blocked, result.Reason = true, remote.Reason
+			}
+		}
 	}
 	return result, nil
 }

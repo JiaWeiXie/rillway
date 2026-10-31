@@ -1,0 +1,86 @@
+{
+  "version": 3,
+  "revision": 1,
+  "listeners": {
+    "http": "127.0.0.1:17890",
+    "socks5": "127.0.0.1:17891",
+    "admin": "127.0.0.1:17892",
+    "pac": "127.0.0.1:17893"
+  },
+  "security": {
+    "allowed_clients": ["127.0.0.0/8", "::1/128"],
+    "admin_token_file": "./.local/state/admin.token",
+    "tls_cert_file": "./.local/state/admin.crt",
+    "tls_key_file": "./.local/state/admin.key"
+  },
+  "connection_limits": {
+    "max_connections": 256,
+    "max_connections_per_source": 256
+  },
+  "source_access": {
+    "rules": [
+      {
+        "id": "local-clients",
+        "name": "Local clients",
+        "action": "allow",
+        "cidrs": [
+          "127.0.0.0/8",
+          "::1/128"
+        ],
+        "enabled": true
+      }
+    ]
+  },
+  "outbounds": [
+    {"id": "direct", "type": "direct", "enabled": true, "public_internet": true},
+    {"id": "warp", "type": "warp", "enabled": false, "public_internet": true, "proxy_address": "127.0.0.1:40000", "warp_binary": "warp-cli"},
+    {"id": "company", "type": "tailscale", "enabled": false, "public_internet": false, "state_dir": "./.local/tailscale", "hostname": "rillway"},
+    {"id": "wg", "type": "wireguard", "enabled": false, "public_internet": true, "config_file": "./.local/secrets/wg.conf"}
+  ],
+  "outbound_groups": [],
+  "rule_sets": [],
+  "rules": [
+    {"id": "github-origin", "domains": ["github.com", "api.github.com", "codeload.github.com"], "outbound": "direct", "family": "auto"},
+    {"id": "github-cdn", "domains": ["raw.githubusercontent.com", "avatars.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"], "outbound": "warp", "family": "auto"},
+    {"id": "github-assets", "suffixes": ["githubassets.com"], "outbound": "warp", "family": "auto"}
+  ],
+  "default_outbound": "direct",
+  "adaptive": {
+    "enabled": false,
+    "candidates": ["direct", "warp"],
+    "window_seconds": 600,
+    "min_samples": 3,
+    "improvement_percent": 25,
+    "improvement_millis": 50,
+    "cooldown_seconds": 600,
+    "probes_per_minute": 12,
+    "probe_concurrency": 2,
+    "probe_timeout_seconds": 4
+  },
+  "pac": {
+    "proxy_address": "127.0.0.1:17890",
+    "bypass_domains": [
+      {"value": "localhost", "enabled": true, "preset": "domain.localhost"},
+      {"value": "local", "enabled": true, "preset": "domain.mdns"},
+      {"value": "home.arpa", "enabled": true, "preset": "domain.home"},
+      {"value": "ts.net", "enabled": true, "preset": "domain.tailscale-dns"},
+      {"value": "tailscale.com", "enabled": true, "preset": "domain.tailscale-control"},
+      {"value": "host.docker.internal", "enabled": true, "preset": "domain.docker-host"},
+      {"value": "gateway.docker.internal", "enabled": true, "preset": "domain.docker-gateway"},
+      {"value": "vm.docker.internal", "enabled": true, "preset": "domain.docker-vm"},
+      {"value": "cluster.local", "enabled": true, "preset": "domain.kubernetes"}
+    ],
+    "bypass_cidrs": [
+      {"value": "127.0.0.0/8", "enabled": true, "preset": "cidr.loopback-v4"},
+      {"value": "10.0.0.0/8", "enabled": true, "preset": "cidr.private-10"},
+      {"value": "172.16.0.0/12", "enabled": true, "preset": "cidr.private-172"},
+      {"value": "192.168.0.0/16", "enabled": true, "preset": "cidr.private-192"},
+      {"value": "169.254.0.0/16", "enabled": true, "preset": "cidr.link-local-v4"},
+      {"value": "100.64.0.0/10", "enabled": true, "preset": "cidr.tailscale"},
+      {"value": "fd7a:115c:a1e0::/48", "enabled": true, "preset": "cidr.tailscale-v6"},
+      {"value": "::1/128", "enabled": true, "preset": "cidr.loopback-v6"},
+      {"value": "fc00::/7", "enabled": true, "preset": "cidr.ula-v6"},
+      {"value": "fe80::/10", "enabled": true, "preset": "cidr.link-local-v6"}
+    ]
+  }
+}

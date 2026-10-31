@@ -397,3 +397,7 @@ usage, current cap, minimum/maximum and an opaque edit revision. `PUT` accepts
 only `mode`, decimal-string `value` (up to three decimals) and that `revision`.
 Units are `percent`, `MiB`, `GiB`; stale writes return HTTP 409. Listener/config
 revisions are separate. Read current state after a timeout before retrying.
+
+## Host-local policy
+
+See [Host-local access](host-local.md) for `host_local` modes, source-scoped exceptions, `agent validate` policy output, independent actual/hypothetical stats and upgrade/downgrade instructions. No new setup flag or doctor command is added.

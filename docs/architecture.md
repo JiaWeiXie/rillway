@@ -124,3 +124,9 @@ properties and return sanitized errors.
 An ambiguous result must be read back before retrying. The helper itself has a
 64 MiB cap, CPU/task limits, no network address families and exits after idle.
 Policy and platform limits are documented in the bilingual CLI references.
+
+## Host-local policy boundary
+
+A shared immutable policy snapshot governs source-aware requested targets, direct numeric pre-connect candidates and every cached/fresh UDP send. Only loopback socket peers are local sources; host-interface membership classifies destinations separately. Listener-only checks remain distinct from host-local checks of provider targets, so a WARP transport peer is not treated as the requested destination. Adaptive probes carry their originating source and policy refusals do not affect provider health or adaptive samples. Explain is pure and labels pending direct resolution without promising access.
+
+Later checks use the new snapshot, and already-authorized sends may finish. Apply is not a synchronous barrier and does not cut established TCP. Ingress owns idempotent actual/hypothetical accounting; numeric DNS attempts, Explain and probes do not increment independently. See [Host-local access](host-local.md) for configuration, literal-only remote DNS coverage, bounded stats and upgrade behavior.

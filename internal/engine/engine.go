@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"reflect"
 	"rillway/internal/config"
+	"rillway/internal/hostlocal"
 	"rillway/internal/outbound"
 	"rillway/internal/routeinfo"
 	"slices"
@@ -118,6 +119,7 @@ type Engine struct {
 	probes            int
 	generation        uint64
 	destinationPolicy func(string) string
+	hostLocal         atomic.Pointer[hostlocal.State]
 	managementRefused atomic.Uint64
 	udpFailures       map[udpFailureKey]uint64
 }
@@ -224,6 +226,14 @@ func sameProvider(a, b outbound.Provider) bool {
 }
 
 func cloneConfig(c config.Config) config.Config {
+	if c.HostLocal != nil {
+		host := *c.HostLocal
+		host.Allow = slices.Clone(host.Allow)
+		for i := range host.Allow {
+			host.Allow[i].From = slices.Clone(host.Allow[i].From)
+		}
+		c.HostLocal = &host
+	}
 	c.Outbounds = append([]config.Outbound(nil), c.Outbounds...)
 	c.Rules = append([]config.Rule(nil), c.Rules...)
 	c.OutboundGroups = slices.Clone(c.OutboundGroups)
@@ -415,6 +425,9 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 			return nil, errors.New("proxy destination is a local Rillway listener (" + reason + ")")
 		}
 	}
+	if err := e.checkHostRequest(ctx, address); err != nil {
+		return nil, err
+	}
 	e.mu.Lock()
 	r, err := e.selectRoute(t)
 	isUDP := strings.HasPrefix(network, "udp")
@@ -475,6 +488,10 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 	// Update replaces this map rather than mutating it. All attempts use the
 	// same routing/provider snapshot even if configuration changes mid-dial.
 	providers := e.providers
+	providerTypes := make(map[string]string, len(e.cfg.Outbounds))
+	for _, o := range e.cfg.Outbounds {
+		providerTypes[o.ID] = o.Type
+	}
 	started := e.now()
 	e.mu.Unlock()
 	type failedAttempt struct {
@@ -498,17 +515,23 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 			dialCtx = routeinfo.With(ctx, fastInfo)
 		}
 		attemptStart := e.now()
-		conn, err = p.DialContext(dialCtx, network, address)
+		dialCtx, err = e.hostDialContext(dialCtx, address, providerTypes[id], true)
+		if err == nil {
+			conn, err = p.DialContext(dialCtx, network, address)
+		}
 		attemptElapsed = e.now().Sub(attemptStart)
 		e.mu.Lock()
 		sameGen := e.generation == generation
 		// UDP has no handshake: a dial says nothing about reachability, and an
 		// outbound without UDP support must not look unhealthy for TCP.
-		if !isUDP && (sameGen || sameProvider(p, e.providers[id])) {
+		if !isUDP && err != nil && (sameGen || sameProvider(p, e.providers[id])) {
 			e.recordHealthLocked(id, err)
 		}
 		e.mu.Unlock()
 		if err == nil {
+			break
+		}
+		if errors.Is(err, hostlocal.ErrDenied) {
 			break
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -525,11 +548,30 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 		}
 	}
 	elapsed := e.now().Sub(started)
+	var hostDestination netip.AddrPort
 	if err == nil && conn != nil && policy != nil {
 		if reason := policy(conn.RemoteAddr().String()); reason != "" {
 			_ = conn.Close()
 			e.countManagementRefusal(reason)
+			dst, _ := netip.ParseAddrPort(conn.RemoteAddr().String())
+			hostlocal.EventFrom(ctx).Finalize(dst, hostlocal.Decision{Denied: true, HypotheticalDenied: true, HostLocal: true, Reason: reason})
 			return nil, errLocalPeer
+		}
+	}
+	if err == nil && conn != nil {
+		hostDestination, err = e.hostResult(ctx, address, providerTypes[r.outbound], conn)
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		// A connected socket is not an accepted success until both final
+		// destination checks pass. A later refusal must not heal provider health.
+		if !isUDP {
+			e.mu.Lock()
+			if e.generation == generation || sameProvider(providers[r.outbound], e.providers[r.outbound]) {
+				e.recordHealthLocked(r.outbound, nil)
+			}
+			e.mu.Unlock()
 		}
 	}
 	ip := ""
@@ -537,7 +579,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 		ip = destinationIP(conn, host)
 	}
 	family := addressFamily(ip)
-	if state != nil {
+	if state != nil && !errors.Is(err, hostlocal.ErrDenied) {
 		e.mu.Lock()
 		// An in-flight dial from a previous config must not populate the new policy.
 		if e.generation == generation {
@@ -560,7 +602,7 @@ func (e *Engine) DialContext(ctx context.Context, network, address string) (_ ne
 	e.pruneFlowsLocked()
 	e.flows[f.flow.ID] = f
 	e.mu.Unlock()
-	return &trackedConn{Conn: conn, flow: f}, nil
+	return &trackedConn{Conn: conn, flow: f, hostDestination: hostDestination}, nil
 }
 
 func addressFamily(ip string) string {
@@ -728,7 +770,13 @@ func (f *flowState) snapshot(now time.Time) Flow {
 
 type trackedConn struct {
 	net.Conn
-	flow *flowState
+	flow            *flowState
+	hostDestination netip.AddrPort
+}
+
+// HostDestination is valid only for a trusted direct provider's numeric target.
+func (c *trackedConn) HostDestination() (netip.AddrPort, bool) {
+	return c.hostDestination, c.hostDestination.IsValid()
 }
 
 func (c *trackedConn) Read(b []byte) (int, error) {

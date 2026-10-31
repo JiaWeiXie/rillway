@@ -67,7 +67,10 @@ func familyAllows(network string, addr netip.Addr) bool {
 		(network == "tcp6" || network == "udp6") && addr.Is6()
 }
 
-type direct struct{ id string }
+type direct struct {
+	id       string
+	resolver *net.Resolver // nil uses the host resolver; injectable for isolated DNS tests
+}
 
 func (d *direct) ID() string   { return d.id }
 func (d *direct) Close() error { return nil }
@@ -79,7 +82,7 @@ func (d *direct) DialContext(ctx context.Context, network, address string) (net.
 	if err := providerNetwork(network); err != nil {
 		return nil, err
 	}
-	dialer := net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second, Resolver: d.resolver, ControlContext: directControl(ctx)}
 	connection, err := dialer.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err

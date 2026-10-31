@@ -12,6 +12,7 @@ import (
 	"rillway/internal/buildinfo"
 	"rillway/internal/config"
 	"rillway/internal/control"
+	"rillway/internal/i18n"
 	"strings"
 	"time"
 )
@@ -132,7 +133,7 @@ func agentOperation(ctx context.Context, args []string, in io.Reader) (any, erro
 			return nil, agentFail("invalid_configuration", "Configuration validation failed. Check the documented configuration fields.", 2)
 		}
 		if command == "validate" {
-			return map[string]any{"valid": true, "revision": candidate.Revision, "runtime_verified": false}, nil
+			return map[string]any{"valid": true, "revision": candidate.Revision, "runtime_verified": false, "host_local": candidate.HostLocalSummary(i18n.FromContext(ctx))}, nil
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)

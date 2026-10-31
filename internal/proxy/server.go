@@ -16,6 +16,8 @@ import (
 	"rillway/internal/access"
 	"rillway/internal/authguard"
 	"rillway/internal/config"
+	"rillway/internal/hostlocal"
+	"rillway/internal/i18n"
 	"rillway/internal/routeinfo"
 	"slices"
 	"strconv"
@@ -45,6 +47,7 @@ type Server struct {
 	endpoints          atomic.Pointer[localEndpoints]
 	localIPs           map[netip.Addr]bool // immutable after New
 	managementRefused  atomic.Uint64       // attempts to reach the management or PAC listener through the proxy
+	hostLocal          atomic.Pointer[hostlocal.State]
 	udp                udpRelay
 }
 
@@ -155,7 +158,17 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "absolute HTTP or HTTPS URL required", http.StatusBadRequest)
 		return
 	}
-	request := r.Clone(routeinfo.With(r.Context(), requestInfo(r.RemoteAddr, "http")))
+	requestCtx := routeinfo.With(r.Context(), requestInfo(r.RemoteAddr, "http"))
+	eventAddress := r.URL.Host
+	if r.URL.Port() == "" {
+		port := "80"
+		if r.URL.Scheme == "https" {
+			port = "443"
+		}
+		eventAddress = net.JoinHostPort(r.URL.Hostname(), port)
+	}
+	requestCtx, event := s.beginHostEvent(requestCtx, eventAddress)
+	request := r.Clone(requestCtx)
 	request.RequestURI = ""
 	websocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && headerToken(r.Header, "Connection", "upgrade")
 	removeHopHeaders(request.Header)
@@ -166,8 +179,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	request.Header.Del("Proxy-Authorization")
 	request.Header.Del("Proxy-Authenticate")
 	response, err := s.transport.RoundTrip(request)
+	event.Complete(err)
 	if err != nil {
-		http.Error(w, "outbound connection failed", http.StatusBadGateway)
+		http.Error(w, outboundFailureMessage(i18n.FromAcceptLanguage(r.Header.Get("Accept-Language")), err), http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -301,7 +315,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	upstream, err := s.dialContext(routeinfo.With(r.Context(), requestInfo(r.RemoteAddr, "http")), "tcp", r.Host)
 	if err != nil {
-		http.Error(w, "outbound connection failed", http.StatusBadGateway)
+		http.Error(w, outboundFailureMessage(i18n.FromAcceptLanguage(r.Header.Get("Accept-Language")), err), http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = upstream.Close() }()

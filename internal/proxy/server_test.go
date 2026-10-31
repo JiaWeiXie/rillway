@@ -440,6 +440,15 @@ func TestSOCKSShutdownInterruptsAcceptBackoff(t *testing.T) {
 func TestSOCKSContextCancelsIncompleteHandshake(t *testing.T) {
 	s := testServer(t, false)
 	c := startSOCKS(t, s)
+	// A connected TCP socket can still be in the listener backlog. Wait for
+	// the SOCKS worker, then leave its request handshake incomplete at Close.
+	if _, err := c.Write([]byte{5, 1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	var method [2]byte
+	if _, err := io.ReadFull(c, method[:]); err != nil || method != [2]byte{5, 0} {
+		t.Fatalf("SOCKS worker did not enter the handshake: %v %v", method, err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}

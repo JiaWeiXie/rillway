@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"rillway/internal/config"
+	"rillway/internal/hostlocal"
 	"rillway/internal/outbound"
 	"slices"
 	"sort"
@@ -174,7 +175,7 @@ func (e *Engine) recordLocked(d *adaptiveState, id string, latency time.Duration
 }
 
 func (e *Engine) recordFamilyLocked(d *adaptiveState, id string, latency time.Duration, err error, family string) {
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, hostlocal.ErrDenied) {
 		return
 	}
 	a := adaptiveDefaults(e.cfg.Adaptive)
@@ -280,6 +281,10 @@ type probeJob struct {
 	state                     *adaptiveState
 	provider                  outbound.Provider
 	timeout                   time.Duration
+	source                    netip.Addr
+	inbound                   string
+	providerType              string
+	generation                uint64
 }
 
 // scheduleProbes is kept deterministic for clock-controlled budget tests.
@@ -346,7 +351,14 @@ func (e *Engine) scheduleProbes() []probeJob {
 		d.lastProbe = now
 		e.probeTimes = append(e.probeTimes, now)
 		e.probes++
-		jobs = append(jobs, probeJob{key: key, id: id, address: probeAddr, network: d.network, state: d, provider: p, timeout: time.Duration(a.ProbeTimeoutSeconds) * time.Second})
+		providerType := ""
+		for _, o := range e.cfg.Outbounds {
+			if o.ID == id {
+				providerType = o.Type
+				break
+			}
+		}
+		jobs = append(jobs, probeJob{key: key, id: id, address: probeAddr, network: d.network, state: d, provider: p, timeout: time.Duration(a.ProbeTimeoutSeconds) * time.Second, source: t.source, inbound: t.inbound, providerType: providerType, generation: e.generation})
 	}
 	return jobs
 }
@@ -368,7 +380,7 @@ func (e *Engine) probeLoop() {
 					ctx, cancel := context.WithTimeout(e.ctx, job.timeout)
 					defer cancel()
 					started := e.now()
-					conn, err := job.provider.DialContext(ctx, job.network, job.address)
+					conn, err := e.dialProbe(ctx, job)
 					e.completeProbe(job, started, conn, err)
 				}()
 			}
@@ -393,6 +405,9 @@ func (e *Engine) completeProbe(job probeJob, started time.Time, conn net.Conn, e
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.probes--
+	if errors.Is(err, hostlocal.ErrDenied) {
+		return
+	}
 	if job.state != nil && e.destinations[job.key] == job.state || sameProvider(job.provider, e.providers[job.id]) {
 		e.recordHealthLocked(job.id, err)
 	}

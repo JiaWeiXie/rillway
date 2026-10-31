@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"net"
+	"rillway/internal/hostlocal"
 	"rillway/internal/outbound"
 	"sort"
 )
@@ -31,6 +32,8 @@ func udpFailureReason(err error) string {
 	var route *routeBlockError
 	var timeout net.Error
 	switch {
+	case errors.Is(err, hostlocal.ErrDenied):
+		return UDPFailureBlocked
 	case errors.Is(err, errLocalPeer):
 		return UDPFailureBlocked
 	case errors.As(err, &route):

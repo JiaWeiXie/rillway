@@ -91,3 +91,7 @@ choices; there is no claimed universal “Agent Native” certification.
 `config` and `stats` remain private even without secret contents. A management
 token grants the same admin access as Web UI/TUI. Keep credentials/logs outside Git
 and publish sanitized reports only; scans/provenance cannot guarantee security.
+
+### Host-local validation data
+
+Offline `validate` adds `data.host_local` with effective mode, baseline and the `host_local.mode=open` rollback guidance. Its existing envelope, errors and exits are unchanged; `runtime_verified` stays false. `stats` exposes bounded actual and hypothetical counts separately. See [Host-local access](host-local.md).

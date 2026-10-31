@@ -18,6 +18,8 @@ Web UI 與 TUI 會先填好常用出口設定。TUI 按 `o` 選擇服務、`?` �
 
 Web UI 會顯示可直接貼到 Mac 的完整 PAC 網址。新增 WireGuard 出口時可匯入或貼上設定檔；Tailscale 可使用瀏覽器登入或填入選用的授權金鑰。需要重啟的 Server 設定與完整 JSON 檢視皆為唯讀。修改 Server 設定後，可在「設定 → 重新啟動服務」載入；既有 Proxy 連線會中斷。這會在目前的背景程序內重啟監聽與出口，不需 sudo，也不會更新執行檔或重開主機。
 
+主機本機服務預設使用 `local-clients-only`，未設定模式的既有安裝升級後也立即適用。請見[模式、例外、DNS 限制與切回 open](docs/host-local.zh-Hant.md)。
+
 ## 單一執行檔與引導安裝
 
 每個發布平台只需要 **一個獨立執行檔**，內建 Proxy、HTTPS Web UI、TUI、tsnet、WireGuard userspace 引擎、圖片、離線中文字體／Emoji 字體與第三方授權。伺服器不需要 Go、Node、mise 或外部介面素材。**WARP／WARP+ 仍需另外安裝 Cloudflare 官方 client。**
