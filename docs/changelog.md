@@ -55,3 +55,32 @@ mise exec -- git-cliff --offline --no-exec --config cliff.toml --tag v0.1.0
 所有 changelog 任務都使用 `--offline --no-exec`。CI 取得完整 Git 歷史，驗證設定，並用臨時 Git repository 測試分類、breaking changes 與版本分段。一般 `mise run check` 會一併執行這些測試。
 
 設定依據：[git-cliff Git 設定](https://github.com/orhun/git-cliff/blob/main/website/docs/configuration/git.md)、[CLI 使用範例](https://github.com/orhun/git-cliff/blob/main/website/docs/usage/examples.md)。
+
+## v0.10.0 升級前言與正式發布說明
+
+`cliff.toml` 的版本模板在 `v0.10.0` 段落開頭加入英文與繁體中文前言，依序說明
+立即生效的升級行為、指定來源與目的地的例外、切回 `open`，以及尚未驗證的範圍。
+前言只對此版本輸出，不會套用至其他已發布版本或未來版本。
+
+準備時先執行 `mise run changelog`，再使用既有的版本預覽方式產生
+`v0.10.0` 段落；將新段落放入 `CHANGELOG.md`，保留已提交的舊版內容。
+`--tag v0.10.0` 只是給產生器的版本名稱，不會建立 Git tag。
+
+正式發布 workflow 不讀取 `CHANGELOG.md` 作為 GitHub Release 內文。它在
+已核准版本 tag 的來源上執行以下現有指令：
+
+```sh
+mise exec -- git-cliff --offline --no-exec --config cliff.toml --latest --output dist/RELEASE_NOTES.md
+```
+
+這會把同一份版本前言放在依 history 分類的提交清單之前。產生的檔案隨
+`verified-release` artifact 傳入 publish job，再由現有的 `gh release create`
+以 `--notes-file release/dist/RELEASE_NOTES.md` 建立 draft Release。只編輯
+`CHANGELOG.md` 不會改變這份重新產生的發布說明。建立 tag 與發布仍須另外核准。
+
+The v0.10.0 introduction is part of the existing git-cliff version template.
+The release workflow regenerates `dist/RELEASE_NOTES.md` from the tagged history
+and that template, then passes the reviewed artifact to `gh release create`
+with `--notes-file`. It does not use the committed `CHANGELOG.md` as the release
+body. No workflow change is needed; preparing these documents creates no tag
+or release.

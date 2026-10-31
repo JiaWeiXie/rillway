@@ -12,6 +12,101 @@ body = """
 {% else %}\
 ## Unreleased
 {% endif %}\
+{% if version == \"v0.10.0\" %}
+### Upgrade notes (English)
+
+#### 1. Upgrade behavior changes immediately.
+
+Configurations without `host_local`
+   immediately use `local-clients-only` after upgrade. A client on another
+   computer using Rillway to reach a service on the Rillway host is refused
+   until an exception permits it. Rillway's management and PAC listeners are
+   also refused through the proxy (#10), even with an exception. Clients on the
+   VM connecting over loopback, ordinary browsing and existing VPN routes are
+   unaffected by the default change.
+
+#### 2. Allow the intended client and service.
+
+For example, allow the source
+   `192.0.2.30/32` to reach `127.0.0.1:3000`. Replace the documentation address
+   with the source address Rillway actually sees on the incoming connection;
+   forwarding or address translation can change it. Merge this object into the
+   complete configuration, keeping its current revision and unrelated settings:
+
+   ```json
+   \"host_local\": {
+     \"mode\": \"local-clients-only\",
+     \"allow\": [{ \"to\": \"127.0.0.1:3000\", \"from\": [\"192.0.2.30/32\"] }]
+   }
+   ```
+
+   Apply the complete configuration through the normal revision-checked apply
+   workflow, or edit the service's actual configuration file and restart it.
+   Editing the file alone does not apply it. See [Host-local access](https://github.com/JiaWeiXie/rillway/blob/main/docs/host-local.md).
+
+#### 3. Return to `open` if needed.
+
+Set `host_local.mode` to `open`, preserve any
+   wanted exceptions and unrelated settings, then apply or restart as above.
+   Management/PAC listener restrictions and the documented baseline still apply.
+   `rillway agent validate --input candidate.json` shows the effective mode,
+   baseline and the `open` rollback path **offline**; it does not verify live
+   access. Before downgrading to v0.9.1, remove the entire `host_local` object;
+   selecting `open` alone does not make the old binary accept the new field.
+
+#### 4. Not tested
+
+A separate remote machine; the full protocol matrix from a
+   non-loopback source; live metadata access; live VPN and provider combinations;
+   or any real deployment. The disposable released-binary upgrade, explicit
+   `open` restart, downgrade and retention checks passed on one hosted runner.
+   Its non-loopback HTTP check is same-runner evidence, not remote-host proof.
+
+### 升級說明（繁體中文）
+
+#### 1. 升級後會立即改變行為
+
+未含 `host_local` 的設定在升級後立即使用
+   `local-clients-only`。其他電腦的用戶端若透過 Rillway 連線至 Rillway
+   主機上的服務，會遭到拒絕，直到符合例外規則。透過 Proxy 連線至 Rillway
+   自己的管理與 PAC 監聽端也會遭到拒絕（#10），即使加入例外也一樣。
+   VM 上透過 loopback 連線的用戶端、一般網頁瀏覽與既有 VPN 路由，不受這次
+   預設值變更影響。
+
+#### 2. 允許指定用戶端與服務
+
+例如，允許來源 `192.0.2.30/32` 存取
+   `127.0.0.1:3000`。請將文件範例位址換成 Rillway 在傳入連線中實際看到的
+   來源位址；轉送或位址轉換可能改變這個位址。將以下物件合併至完整設定，
+   保留目前的 revision 與其他設定：
+
+   ```json
+   \"host_local\": {
+     \"mode\": \"local-clients-only\",
+     \"allow\": [{ \"to\": \"127.0.0.1:3000\", \"from\": [\"192.0.2.30/32\"] }]
+   }
+   ```
+
+   使用正常、會檢查 revision 的流程套用完整設定，或修改服務實際使用的
+   設定檔後重新啟動。只修改檔案不會套用設定。詳見[主機本機服務的存取](https://github.com/JiaWeiXie/rillway/blob/main/docs/host-local.zh-Hant.md)。
+
+#### 3. 需要時切回 `open`
+
+將 `host_local.mode` 設為 `open`，保留想繼續使用的
+   例外與其他設定，再依上述流程套用或重新啟動。管理／PAC 監聽端限制與文件
+   所述的 baseline 仍然有效。`rillway agent validate --input candidate.json`
+   會**離線**顯示生效模式、baseline 與切回 `open` 的方式，不會驗證即時連線。
+   若要降回 v0.9.1，須先移除整個 `host_local` 物件；只改為 `open`，
+   不會讓舊程式認得新欄位。
+
+#### 4. 尚未測試
+
+另一台遠端電腦、完整的非 loopback 來源協定矩陣、即時 metadata
+   存取、實際 VPN 與出口組合，以及任何真實部署。已在單一 hosted runner 上
+   完成舊版執行檔升級、明確切回 `open` 並重啟、降版及設定／state 保留檢查。
+   其中的非 loopback HTTP 檢查仍在同一個 runner 上進行，不能當作遠端主機證據。
+
+{% endif %}\
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim }}
 
