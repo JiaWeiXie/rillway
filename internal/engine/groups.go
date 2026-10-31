@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"rillway/internal/config"
+	"rillway/internal/hostlocal"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -175,7 +176,7 @@ func (e *Engine) recordHealth(id string, err error) {
 }
 
 func (e *Engine) recordHealthLocked(id string, err error) {
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, hostlocal.ErrDenied) {
 		return
 	}
 	if e.health == nil {
