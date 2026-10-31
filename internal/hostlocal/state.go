@@ -82,6 +82,7 @@ type Event struct {
 	source                               netip.Addr
 	port                                 uint16
 	completed, final, permittedCandidate bool
+	hypotheticalPermittedCandidate       bool
 	dst                                  netip.AddrPort
 	decision                             Decision
 	deniedDst                            netip.AddrPort
@@ -102,6 +103,9 @@ func (e *Event) ObserveCandidate(dst netip.AddrPort, d Decision) {
 	defer e.mu.Unlock()
 	if e.completed {
 		return
+	}
+	if !d.HypotheticalDenied {
+		e.hypotheticalPermittedCandidate = true
 	}
 	if d.Denied {
 		e.deniedDst, e.deniedDecision = dst, d
@@ -125,6 +129,9 @@ func (e *Event) Finalize(dst netip.AddrPort, d Decision) {
 
 // Complete commits once. A transport/DNS failure is not an actual policy denial;
 // a wrapped denial is counted only when no permitted candidate was attempted.
+// Without a final identity, any hypothetically permitted candidate suppresses
+// the hypothetical denial. The diagnostic destination is an observed refused
+// candidate, not necessarily the candidate whose error the dialer returned.
 func (e *Event) Complete(err error) {
 	if e == nil {
 		return
@@ -140,6 +147,7 @@ func (e *Event) Complete(err error) {
 			return
 		}
 		e.dst, e.decision = e.deniedDst, e.deniedDecision
+		e.decision.HypotheticalDenied = !e.hypotheticalPermittedCandidate
 	}
 	d := e.decision
 	if !d.Denied && !d.HypotheticalDenied {

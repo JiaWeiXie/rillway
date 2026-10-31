@@ -105,6 +105,70 @@ func TestCandidateAttemptsAreNotIngressDenials(t *testing.T) {
 	}
 }
 
+func TestAllActualCandidatesDeniedUsesHypotheticalCandidateSet(t *testing.T) {
+	source := netip.MustParseAddr("127.0.0.1")
+	local := netip.MustParseAddrPort("127.0.0.1:3000")
+	baseline := netip.MustParseAddrPort("169.254.169.254:3000")
+	otherBaseline := netip.MustParseAddrPort("[fe80::1]:3000")
+	for _, tc := range []struct {
+		name         string
+		first, last  netip.AddrPort
+		hypothetical uint64
+	}{
+		{"local then baseline", local, baseline, 0},
+		{"baseline then local", baseline, local, 0},
+		{"all baseline", baseline, otherBaseline, 1},
+	} {
+		for _, concurrent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/concurrent=%t", tc.name, concurrent), func(t *testing.T) {
+				p := policy(t, Strict)
+				s := NewState(p)
+				e := s.Begin(source, 3000)
+				observe := func(dst netip.AddrPort) { e.ObserveCandidate(dst, p.CheckIP(dst, source)) }
+				if concurrent {
+					var wg sync.WaitGroup
+					for range 32 {
+						wg.Go(func() { observe(tc.first) })
+						wg.Go(func() { observe(tc.last) })
+					}
+					wg.Wait()
+				} else {
+					observe(tc.first)
+					observe(tc.last)
+				}
+				var wg sync.WaitGroup
+				for range 8 {
+					wg.Go(func() { e.Complete(fmt.Errorf("wrapped: %w", ErrDenied)) })
+				}
+				wg.Wait()
+				got := s.Snapshot()
+				if got.ActualDenials != 1 || got.HypotheticalLocalClientsOnlyDenials != tc.hypothetical || len(got.Recent) != 1 || len(got.ExternalHostLocalByPort) != 0 {
+					t.Fatal(got)
+				}
+				if !got.Recent[0].ActualDenial || got.Recent[0].HypotheticalLocalClientsOnlyDenial != (tc.hypothetical == 1) {
+					t.Fatal("recent event disagrees with aggregate counters", got)
+				}
+			})
+		}
+	}
+}
+
+func TestFinalizedDenialRetainsAuthoritativeIdentity(t *testing.T) {
+	source := netip.MustParseAddr("127.0.0.1")
+	p := policy(t, Strict)
+	s := NewState(p)
+	e := s.Begin(source, 3000)
+	local := netip.MustParseAddrPort("127.0.0.1:3000")
+	baseline := netip.MustParseAddrPort("169.254.169.254:3000")
+	e.ObserveCandidate(local, p.CheckIP(local, source))
+	e.Finalize(baseline, p.CheckIP(baseline, source))
+	e.Complete(ErrDenied)
+	got := s.Snapshot()
+	if got.ActualDenials != 1 || got.HypotheticalLocalClientsOnlyDenials != 1 || len(got.Recent) != 1 || got.Recent[0].Destination != baseline.String() {
+		t.Fatal(got)
+	}
+}
+
 func TestEventsBoundedAndSnapshotIndependent(t *testing.T) {
 	p := policy(t, Open)
 	s := NewState(p)

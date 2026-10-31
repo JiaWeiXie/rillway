@@ -136,7 +136,11 @@ A matching exception prevents the hypothetical denial too. Each ingress request
 or accepted datagram is counted at most once, not once per DNS candidate, byte,
 preview or probe. Successful mixed-DNS attempts use the final verified target;
 ordinary DNS/transport failures are not actual refusals just because another
-candidate was blocked. Unknown remote DNS identities remain unknown. Counters
+candidate was blocked. When all actual candidates are denied, any candidate
+eligible under the hypothetical policy prevents a hypothetical denial; callback
+order does not change the counts. Without a final identity, the recent destination
+is an observed refused candidate, not necessarily the dialer's terminal error
+target. Unknown remote DNS identities remain unknown. Counters
 are bounded, memory-only and reset on restart; existing management/UDP metrics
 retain their separate meanings.
 
