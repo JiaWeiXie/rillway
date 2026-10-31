@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"rillway/internal/authguard"
+	"rillway/internal/hostlocal"
 	"rillway/internal/routeinfo"
 	"strconv"
 	"sync"
@@ -138,7 +139,11 @@ func (s *Server) socksConnection(ctx context.Context, client net.Conn) {
 		return
 	}
 	if err != nil {
-		socksReply(client, 5)
+		if errors.Is(err, hostlocal.ErrDenied) {
+			socksReply(client, 2)
+		} else {
+			socksReply(client, 5)
+		}
 		return
 	}
 	defer func() { _ = upstream.Close() }()

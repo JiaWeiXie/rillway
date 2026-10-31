@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"rillway/internal/hostlocal"
 	"rillway/internal/routeinfo"
 	"strconv"
 	"sync"
@@ -72,10 +73,11 @@ func (s *Server) UDPDrops() UDPDrops {
 func (s *Server) ResetUDPRetryBackoff() { s.udp.routes.Add(1) }
 
 type socksUDPTarget struct {
-	address  string
-	header   []byte
-	conn     net.Conn
-	lastUsed time.Time // protected by the association mutex
+	hostDestination netip.AddrPort
+	address         string
+	header          []byte
+	conn            net.Conn
+	lastUsed        time.Time // protected by the association mutex
 }
 
 type socksUDPAssociation struct {
@@ -319,11 +321,6 @@ func (a *socksUDPAssociation) receive() {
 
 func (a *socksUDPAssociation) forward(port uint16, address string, header, payload []byte) {
 	relay := &a.server.udp
-	if a.server.localDestination("udp", address) {
-		relay.localDestination.Add(1)
-		a.server.countManagementRefusal(address)
-		return
-	}
 	a.mu.Lock()
 	if a.closed || (a.client.IsValid() && a.client.Port() != port) {
 		a.mu.Unlock()
@@ -332,16 +329,39 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 	if !a.client.IsValid() {
 		a.client = netip.AddrPortFrom(a.sourceIP, port)
 	}
+	a.lastActivity = time.Now()
+	a.mu.Unlock()
+	ctx, event := a.server.beginHostEvent(a.ctx, address)
+	var resultErr error
+	defer func() { event.Complete(resultErr) }()
+	if a.server.localDestination("udp", address) {
+		relay.localDestination.Add(1)
+		a.server.countManagementRefusal(address)
+		a.server.recordSelfRefusal(ctx, address)
+		resultErr = errLocalDestination
+		return
+	}
+	if resultErr = a.server.checkHost(ctx, address, netip.AddrPort{}); resultErr != nil {
+		a.mu.Lock()
+		target := a.targets[address]
+		a.mu.Unlock()
+		if target != nil {
+			a.forget(target)
+		}
+		return
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
 	now := time.Now()
-	a.lastActivity = now
 	if target := a.targets[address]; target != nil {
 		target.lastUsed = now
 		a.mu.Unlock()
-		a.writeTarget(target, payload)
+		_, resultErr = a.writeHostTarget(ctx, target, payload)
 		return
 	}
-	// receive() forwards synchronously: without this, every datagram to a
-	// refusing destination would stall the association for a full dial.
 	if routes := relay.routes.Load(); a.failureRoutes != routes {
 		a.failures, a.failureRoutes = nil, routes
 	}
@@ -353,9 +373,6 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 		}
 		delete(a.failures, address)
 	}
-	// Make room before dialing: even an in-flight connection counts toward the
-	// per-association cap. Removing the map entry also prevents stale responses.
-	// The evicted target's global slot passes to the new dial.
 	var oldest *socksUDPTarget
 	if len(a.targets) == socksUDPMaxTargets {
 		for _, candidate := range a.targets {
@@ -371,19 +388,25 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 	} else if !relay.acquire() {
 		return
 	}
-
-	conn, err := a.server.dialContext(a.ctx, "udp", address)
+	conn, err := a.server.dialContext(ctx, "udp", address)
 	if err != nil {
+		resultErr = err
 		relay.release()
 		if errors.Is(err, errLocalDestination) || errors.Is(err, errLocalPeer) {
 			relay.localDestination.Add(1)
 		}
-		a.rememberFailure(address) // No direct socket fallback when the routed outbound refuses UDP.
+		if !errors.Is(err, hostlocal.ErrDenied) {
+			a.rememberFailure(address)
+		}
 		return
 	}
 	if !a.server.track(conn) {
 		relay.release()
 		return
+	}
+	target := &socksUDPTarget{address: address, header: append([]byte(nil), header...), conn: conn, lastUsed: time.Now()}
+	if identity, ok := conn.(interface{ HostDestination() (netip.AddrPort, bool) }); ok {
+		target.hostDestination, _ = identity.HostDestination()
 	}
 	a.mu.Lock()
 	if a.closed || a.ctx.Err() != nil {
@@ -392,14 +415,45 @@ func (a *socksUDPAssociation) forward(port uint16, address string, header, paylo
 		a.server.closeTracked(conn)
 		return
 	}
-	target := &socksUDPTarget{address: address, header: append([]byte(nil), header...), conn: conn, lastUsed: time.Now()}
 	a.targets[address] = target
 	a.mu.Unlock()
-	if !a.writeTarget(target, payload) {
+	var written bool
+	written, resultErr = a.writeHostTarget(ctx, target, payload)
+	if !written {
 		return
 	}
 	a.workers.Add(1)
 	go a.readTarget(target)
+}
+
+// Every fresh or cached send gets a final current-policy check. This authorizes
+// the send: an already-authorized write may complete across policy publication.
+func (a *socksUDPAssociation) writeHostTarget(ctx context.Context, target *socksUDPTarget, payload []byte) (bool, error) {
+	numeric := target.hostDestination
+	self := target.address
+	if numeric.IsValid() {
+		self = numeric.String()
+	}
+	if a.server.localDestination("udp", self) {
+		a.server.recordSelfRefusal(ctx, self)
+		a.server.countManagementRefusal(self)
+		a.server.udp.localDestination.Add(1)
+		a.forget(target)
+		return false, errLocalDestination
+	}
+	if state := a.server.hostLocal.Load(); state != nil {
+		p := state.Load()
+		d := p.CheckRemoteName(target.address, a.sourceIP)
+		if numeric.IsValid() {
+			d = p.CheckResolved(target.address, numeric, a.sourceIP)
+		}
+		hostlocal.EventFrom(ctx).Finalize(numeric, d)
+		if d.Denied {
+			a.forget(target)
+			return false, &hostlocal.Denial{Reason: d.Reason}
+		}
+	}
+	return a.writeTarget(target, payload), nil
 }
 
 // rememberFailure drops datagrams to address for the retry delay. Entries are
