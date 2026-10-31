@@ -19,6 +19,9 @@ The Web UI shows a complete PAC URL to paste into your Mac settings. Import or p
 
 The Web UI and TUI prefill common outbound settings. In the TUI, press `o` to choose a service, `?` for instructions, and `+` on Outbounds to add a connection. Verified service connections are remembered. The dedicated **Source access** tab provides recent client ingress telemetry, IP/CIDR access control rules (allow/deny), and single-action client blocking that persists /32 or /128 deny rules and disconnects active proxy ingress streams without restarting. On installed Linux services, **Settings → Service memory limit** (TUI: Service settings, `m`) accepts percent, MiB or GiB, detects host/safety bounds and applies without restarting. [Memory control and older-service upgrade](docs/cli.md#service-memory-limit). On Service settings, press `t` to reveal the Web UI token; leaving the page hides it again.
 
+
+Host-local access defaults to `local-clients-only`, including after upgrading an unconfigured installation. [Modes, exceptions, DNS limits and rollback](docs/host-local.md).
+
 ## One executable, guided installation
 
 Each release target is **one standalone executable**. It includes the proxy,

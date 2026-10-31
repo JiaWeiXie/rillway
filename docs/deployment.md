@@ -129,3 +129,7 @@ MiB／GiB。詳見[中文 CLI 說明](cli.zh-Hant.md#服務記憶體限制)。
 `rillway-resource-control.service`，還原備份的舊 units，保留 root 擁有的 `/var/lib/rillway-resource-control` 備份。
 systemd 的記憶體屬性會保留；若也要回退限制，請另還原先前的 MemoryMax／MemoryHigh。
 解除安裝會移除控制程序的 unit，但保留數值設定供還原使用。
+
+## Host-local upgrade and rollback
+
+Configurations without `host_local.mode` immediately use `local-clients-only` after upgrade. Preserve configuration and provider state; do not rerun setup. One mode change to `open`, followed by the supported apply/restart, restores ordinary host-local access while retaining the baseline. Remove `host_local` before downgrading to v0.9.1. See [Host-local access](host-local.md) and its linked Traditional Chinese version for limits and diagnostics. This documentation is not evidence of a deployed upgrade.

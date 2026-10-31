@@ -54,8 +54,9 @@ an upgrade; there is no long-term support branch yet.
   directly, not through the proxy; a browser with a manual proxy needs the
   Rillway address in its proxy exceptions. The endpoints keep their own source
   ACL, HTTPS and management authentication. `GET /api/v1/stats` reports the
-  number of refused attempts as `proxy_management_refusals`. Other explicitly proxied services
-  on the same host remain reachable and observable. PAC automatically returns
+  number of refused attempts as `proxy_management_refusals`. Other services on the same host follow the [host-local policy](docs/host-local.md):
+  omitted mode immediately means loopback-clients-only after upgrade. Direct checks
+  resolved candidates before connect; remote DNS has literal-only coverage. PAC automatically returns
   DIRECT for the configured proxy host, even when user bypass entries are
   disabled.
 - Management uses HTTPS, a generated 256-bit random bearer token, same-origin

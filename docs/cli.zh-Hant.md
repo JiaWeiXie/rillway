@@ -274,3 +274,7 @@ sudo rillway service restart --config /etc/rillway/config.json
 可設定範圍與編輯版本；`PUT` 只接受 `mode`、最多三位小數的字串 `value` 及該
 `revision`。單位為 `percent`、`MiB`、`GiB`，版本衝突回傳 HTTP 409。這與主設定
 修訂號分開；若請求逾時，先讀取目前限制再重試。
+
+## 主機本機服務政策
+
+`host_local` 模式、來源限定例外、`agent validate` 政策摘要、彼此獨立的實際／假設拒絕計數，以及升降版方式，請見[主機本機服務的存取](host-local.zh-Hant.md)。不新增 setup 旗標或 doctor 指令。
