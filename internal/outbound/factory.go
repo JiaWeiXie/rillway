@@ -79,7 +79,7 @@ func (d *direct) DialContext(ctx context.Context, network, address string) (net.
 	if err := providerNetwork(network); err != nil {
 		return nil, err
 	}
-	dialer := net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second, ControlContext: directControl(ctx)}
 	connection, err := dialer.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
