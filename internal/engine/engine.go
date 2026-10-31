@@ -224,6 +224,14 @@ func sameProvider(a, b outbound.Provider) bool {
 }
 
 func cloneConfig(c config.Config) config.Config {
+	if c.HostLocal != nil {
+		host := *c.HostLocal
+		host.Allow = slices.Clone(host.Allow)
+		for i := range host.Allow {
+			host.Allow[i].From = slices.Clone(host.Allow[i].From)
+		}
+		c.HostLocal = &host
+	}
 	c.Outbounds = append([]config.Outbound(nil), c.Outbounds...)
 	c.Rules = append([]config.Rule(nil), c.Rules...)
 	c.OutboundGroups = slices.Clone(c.OutboundGroups)

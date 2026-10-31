@@ -10,6 +10,7 @@ type Config struct {
 	Security         Security         `json:"security"`
 	ConnectionLimits ConnectionLimits `json:"connection_limits"`
 	SourceAccess     SourceAccess     `json:"source_access"`
+	HostLocal        *HostLocal       `json:"host_local,omitempty"`
 	Outbounds        []Outbound       `json:"outbounds"`
 	OutboundGroups   []OutboundGroup  `json:"outbound_groups"`
 	RuleSets         []RuleSet        `json:"rule_sets"`

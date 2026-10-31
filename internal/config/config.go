@@ -187,6 +187,7 @@ func (p PAC) EnabledCIDRs() []string { return enabledPACValues(p.BypassCIDRs) }
 func Default(stateDir string) Config {
 	return Config{
 		Version: ConfigVersion, Revision: 1,
+		HostLocal:        &HostLocal{Mode: "local-clients-only"},
 		Listeners:        Listeners{HTTP: "127.0.0.1:17890", SOCKS5: "127.0.0.1:17891", Admin: "127.0.0.1:17892", PAC: "127.0.0.1:17893"},
 		Security:         Security{AllowedClients: []string{"127.0.0.0/8", "::1/128"}, AdminTokenFile: filepath.Join(stateDir, "admin.token"), TLSCertFile: filepath.Join(stateDir, "admin.crt"), TLSKeyFile: filepath.Join(stateDir, "admin.key")},
 		ConnectionLimits: ConnectionLimits{MaxConnections: DefaultMaxConnections, MaxConnectionsPerSource: DefaultMaxConnectionsPerSource},
@@ -234,6 +235,7 @@ func currentRules(rules []legacyRule) []Rule {
 }
 
 type rawConfigV1 struct {
+	HostLocal        *HostLocal       `json:"host_local,omitempty"`
 	Version          int              `json:"version"`
 	Revision         uint64           `json:"revision"`
 	Listeners        Listeners        `json:"listeners"`
@@ -247,6 +249,7 @@ type rawConfigV1 struct {
 }
 
 type rawConfigV2 struct {
+	HostLocal        *HostLocal       `json:"host_local,omitempty"`
 	Version          int              `json:"version"`
 	Revision         uint64           `json:"revision"`
 	Listeners        Listeners        `json:"listeners"`
@@ -320,6 +323,7 @@ func migratedRuleID(id, condition string, used map[string]bool) string {
 
 func migrateV1(v1 rawConfigV1) Config {
 	c := Config{
+		HostLocal:        v1.HostLocal,
 		Version:          ConfigVersion,
 		Revision:         v1.Revision,
 		Listeners:        v1.Listeners,
@@ -380,6 +384,7 @@ func Decode(data []byte) (Config, error) {
 			return Config{}, errors.New("configuration must contain one JSON object")
 		}
 		c := Config{
+			HostLocal:        v2.HostLocal,
 			Version:          ConfigVersion,
 			Revision:         v2.Revision,
 			Listeners:        v2.Listeners,
@@ -477,6 +482,9 @@ func ValidateAndCompileSourceAccess(c Config) (*access.Policy, error) {
 }
 
 func validateNonSourceSettings(c Config) error {
+	if _, err := c.CompileHostLocal(nil); err != nil {
+		return err
+	}
 	if c.Version != ConfigVersion {
 		return fmt.Errorf("unsupported config version %d", c.Version)
 	}
