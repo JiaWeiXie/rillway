@@ -109,8 +109,8 @@ If a credential is ever committed or published, revoke/rotate it first. Removing
 Git history cannot erase other people's clones, cached logs or downloaded assets.
 
 The Linux resource controller is a socket-activated root process in the same
-binary, separate from the unprivileged Web daemon. Its Unix socket checks peer
-UID and, for requests from the service user, the service cgroup; requests and
+binary, separate from the unprivileged Web daemon. Its private Unix socket checks peer
+UID and, for requests from the service user, the service cgroup; request sizes and
 waiting times are bounded. It accepts these fixed operations:
 
 - `memory.status` reads status for `rillway.service`; `memory.apply` changes its
