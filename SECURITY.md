@@ -52,16 +52,20 @@ an upgrade; there is no long-term support branch yet.
   or by a name the selected outbound resolves to the same listener, and never
   enters traffic counters or adaptive measurements. Open the Web UI and PAC
   directly, not through the proxy; a browser with a manual proxy needs the
-  Rillway address in its proxy exceptions. The endpoints keep their own source
-  ACL, HTTPS and management authentication. `GET /api/v1/stats` reports the
+  Rillway address in its proxy exceptions. The management endpoint uses HTTPS,
+  its source ACL and bearer-token authentication. The PAC endpoint uses plain HTTP with
+  a source ACL only, without TLS or bearer-token authentication; its integrity
+  relies on the trusted-LAN assumption. `GET /api/v1/stats` reports the
   number of refused attempts as `proxy_management_refusals`. Other services on the same host follow the [host-local policy](docs/host-local.md):
   omitted mode immediately means loopback-clients-only after upgrade. Direct checks
   resolved candidates before connect; remote DNS has literal-only coverage. PAC automatically returns
   DIRECT for the configured proxy host, even when user bypass entries are
   disabled.
 - Management uses HTTPS, a generated 256-bit random bearer token, same-origin
-  checks on changes, CSP, no-store responses, and secret-safe error messages.
-  Trust the verified certificate; do not disable TLS verification.
+  checks on changes, CSP, and secret-safe error messages. Default and API
+  responses use `Cache-Control: no-store`; brand and font assets intentionally
+  override it with `public, max-age=3600`. Trust the verified certificate;
+  do not disable TLS verification.
 - After 20 failed authentications from a socket peer in one minute, authentication
   is blocked until that window expires, including correct credentials. While a
   peer is not blocked, an HTTP proxy request without credentials receives the
@@ -78,9 +82,12 @@ an upgrade; there is no long-term support branch yet.
 - The installed Linux daemon runs as the dedicated `rillway` user. Config and state
   directories use `0700`, credentials/config use `0600`. A local administrator or
   process with that service identity can read them. Protect the host and backups.
-- Web UI tokens remain in browser memory; TUI tokens are hidden unless explicitly
-  revealed. Close the session or sign out on shared machines. Browser extensions,
-  malicious local processes and screenshots are outside this protection boundary.
+- The Web UI stores the management token in `sessionStorage` for the tab
+  session. Same-origin scripts can read it, and page reloads can restore it;
+  it is not restricted to a JavaScript variable in the current page. Close the
+  tab when finished on a shared machine. TUI tokens are hidden unless explicitly
+  revealed. Browser extensions, malicious local processes and screenshots are
+  outside this protection boundary.
 - Never expose provider secrets through observation data. Rillway does not decrypt
   HTTPS or retain payloads. An authenticated administrator can see hostnames and
   infrastructure configuration; treat the management token as full admin access.
@@ -101,12 +108,23 @@ and keep dependencies, the host OS and the official WARP client updated.
 If a credential is ever committed or published, revoke/rotate it first. Removing
 Git history cannot erase other people's clones, cached logs or downloaded assets.
 
-The Linux memory controller is a socket-activated root process in the same
-binary, separate from the unprivileged Web daemon. Its Unix socket checks peer
-UID and service cgroup and has bounded requests/deadlines. It only reads service
-status and changes fixed MemoryMax/MemoryHigh properties; it cannot execute
-submitted commands or modify other units. Root-owned metadata contains no
-credentials. The executable and all parent directories must remain root-owned
-and not group/world-writable. Authenticated administrators can change resource
-limits, which can still terminate the service under future load; conservative
-floors and host capacity checks are safeguards, not an availability guarantee.
+The Linux resource controller is a socket-activated root process in the same
+binary, separate from the unprivileged Web daemon. Its private Unix socket checks peer
+UID and, for requests from the service user, the service cgroup; request sizes and
+waiting times are bounded. It accepts these fixed operations:
+
+- `memory.status` reads status for `rillway.service`; `memory.apply` changes its
+  `MemoryMax` and `MemoryHigh` properties with a revision check.
+- `warp-log.status` reads WARP logging status. `warp-log.apply` requires a matching
+  revision and a log level from `inherit`, `warning`, `info` or `debug`. It saves
+  the fixed WARP logging drop-in, runs `daemon-reload`, restarts
+  `warp-svc.service`, and checks the resulting state. If that reload/restart or result check
+  fails, it attempts to restore the previous saved settings and reload/restart again;
+  a failed restoration is reported rather than guaranteed to succeed.
+
+The request cannot supply arbitrary commands, unit names or property names.
+Root-owned resource metadata contains no credentials. The executable and all
+parent directories must remain root-owned and not group/world-writable.
+Authenticated administrators can change resource limits, which can still
+terminate the service under future load; conservative floors and host capacity
+checks are safeguards, not an availability guarantee.

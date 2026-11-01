@@ -16,13 +16,13 @@ Rillway 適用於可信任的區網或 VPN。原始碼公開後，管理介面�
 - HTTP／SOCKS5 共用可設定的准入預算（`connection_limits`，預設最多 256 條用戶端連線，每個來源 IP 最多 256 條）。管理介面與 PAC 端點各有一份固定配額，最多 128 條，每個來源 IP 最多 32 條；管理介面額滿不會擋住 PAC。在解析協定或 TLS 握手前檢查 ACL 與容量，超額直接關閉連線。半關閉的 tunnel 到完全關閉才釋放配額。這些限制不代表頻寬或程序總記憶體上限。`GET /api/v1/stats` 的 `proxy_admission_rejections` 記錄 listener 啟動後，允許來源的 HTTP／SOCKS5 連線因單一來源或總量上限被關閉的次數；用戶端看到的是連線被重設。
 - SOCKS5 UDP 目的地 socket 有兩層上限：每個 association 32 個，全域預算為生效中 `max_connections` 的 4 倍。超出全域預算、同一 association 內 5 秒內失敗過的目的地、字面位址是本 daemon 自己 listener 或使用中 UDP relay socket，或主機名稱實際連到使用中 relay socket 的封包，都會被丟棄並計入 `proxy_udp_drops`。主機名稱別名解析到 Rillway 自己的 HTTP／SOCKS5 Proxy listener 時會被拒絕，並在 `udp_dial_failures` 記為 `blocked`。失敗紀錄不會跨客戶端共用；UDP 計數不記錄主機名稱或 IP 位址。
 - Proxy 拒絕連回自身 HTTP／SOCKS5 listener，包括 wildcard 綁定位址下已知的本機 IP，以及所選出口實際連線確認的 DNS 別名，不額外查詢主機 DNS。這項保護無法偵測所有涉及外部上游 Proxy 的迴圈。
-- 管理介面與 PAC 只服務自己的用戶端：經 Proxy（轉發、CONNECT 或 SOCKS5）連到它們的請求會被拒絕，不論是直接用位址，或用所選出口解析到同一個 listener 的名稱，也不列入統計或自適應樣本。請直接開啟 Web UI 與 PAC，不要經過 Proxy；手動設定 Proxy 的瀏覽器需把 Rillway 位址加入例外清單。它們仍保有各自的來源 ACL、HTTPS 與管理驗證。`GET /api/v1/stats` 以 `proxy_management_refusals` 回報被拒絕的次數。同一主機的其他服務依[主機本機服務政策](docs/host-local.zh-Hant.md)處理；省略模式的既有設定在升級後立即只允許 loopback 來源直接存取。direct 在連線前檢查解析後的位址；遠端 DNS 僅涵蓋字面目的地。PAC 自動讓已設定的 Proxy 主機直連，即使使用者停用了 bypass 項目也保留。
-- 管理介面使用 HTTPS、自動產生的 256-bit 隨機 Token、修改操作的同源檢查、CSP、禁止快取及遮蔽秘密的錯誤訊息。核對並信任憑證，不要關閉 TLS 驗證。
+- 管理介面與 PAC 只服務自己的用戶端：經 Proxy（轉發、CONNECT 或 SOCKS5）連到它們的請求會被拒絕，不論是直接用位址，或用所選出口解析到同一個 listener 的名稱，也不列入統計或自適應樣本。請直接開啟 Web UI 與 PAC，不要經過 Proxy；手動設定 Proxy 的瀏覽器需把 Rillway 位址加入例外清單。管理端點使用 HTTPS、來源 ACL 與 bearer token 驗證；PAC 端點只使用明文 HTTP 與來源 ACL，不使用 TLS 或 bearer token 驗證，其完整性依賴可信任區網的前提。`GET /api/v1/stats` 以 `proxy_management_refusals` 回報被拒絕的次數。同一主機的其他服務依[主機本機服務政策](docs/host-local.zh-Hant.md)處理；省略模式的既有設定在升級後立即只允許 loopback 來源直接存取。direct 在連線前檢查解析後的位址；遠端 DNS 僅涵蓋字面目的地。PAC 自動讓已設定的 Proxy 主機直連，即使使用者停用了 bypass 項目也保留。
+- 管理介面使用 HTTPS、自動產生的 256-bit 隨機 Token、修改操作的同源檢查、CSP 及遮蔽秘密的錯誤訊息。預設與 API 回應使用 `Cache-Control: no-store`；品牌與字型資產則刻意覆寫為 `public, max-age=3600`。核對並信任憑證，不要關閉 TLS 驗證。
 - 同一來源 IP 一分鐘內登入失敗 20 次後，會暫時阻擋驗證，直到該時間區間結束；期間即使輸入正確憑證也不會通過。來源尚未被阻擋時，沒有附帶帳密的 HTTP Proxy 請求會收到一般的 `407` 驗證要求，不計入失敗次數；已被阻擋的來源或計數已滿時則收到 `429`。HTTP／SOCKS5 Proxy 共用一份計數，管理介面獨立計數。換來源連接埠、IPv4-mapped IPv6 或偽造 forwarded headers 都無法繞過。
 - 每份計數最多保留 256 個來源；額滿時拒絕新來源，直到舊項目到期。重啟 daemon 會清除記憶體中的計數。這項措施不能取代 ACL、防火牆或 DDoS 防護。
 - HTTP／SOCKS5 的 Proxy 帳密在用戶端與 Proxy 之間是明文，請留在可信任區網／VPN。若需帳密，使用足夠長的隨機密碼。HTTPS CONNECT 加密目的網站流量，沒有加密 Proxy 帳密。
 - Linux daemon 使用專屬低權限 `rillway` 帳號；設定與 state 目錄 `0700`，憑證／設定 `0600`。主機管理員或同服務身分的程序仍能讀取，必須保護主機與備份。
-- Web UI Token 只保留於瀏覽器記憶體，TUI 預設隱藏。共用電腦請登出／關閉工作階段。惡意擴充功能、本機程序及畫面擷取不在這些措施的防護範圍內。
+- Web UI 的管理 Token 存在分頁工作階段的 `sessionStorage`，同源腳本可以讀取，重新載入頁面也能恢復；並非只存在目前頁面的 JavaScript 變數中。使用共用電腦時，結束後請關閉分頁。TUI Token 預設隱藏，須明確操作才會顯示。瀏覽器擴充功能、惡意本機程序及畫面擷取不在這些措施的防護範圍內。
 - 不在觀察資料中保留秘密、HTTPS 解密內容或 payload。持有管理 Token 的人可管理服務並查看主機名稱與配置，因此 Token 應視為完整管理權限。
 
 ## 原始碼與發布
@@ -33,9 +33,20 @@ Checksum 可檢查檔案是否變更；來源證明可確認 repository 與 work
 
 若秘密曾進入 Git 或公開產物，先撤銷／輪替，再清理歷史。改寫 Git 紀錄無法收回別人的 clone、快取日誌或下載檔案。
 
-Linux 記憶體控制程序是同一 binary 的獨立 root 程序；Web daemon 維持低權限。
-私有 Unix socket 驗證 UID 與主服務 cgroup，限制請求大小與等待時間，只允許
-查閱狀態及修改固定服務的 MemoryMax／MemoryHigh，不能執行輸入的指令或修改
-其他 unit。root 擁有的數值設定不含憑證；binary 與上層目錄必須由 root 擁有，
-且不允許群組或其他人寫入。登入的管理者可以調整資源限制，後續負載超過上限仍
-可能終止服務；安全下限與容量檢查不構成可用性保證。
+Linux 資源控制程序是同一 binary 中由 socket 啟動的獨立 root 程序；Web daemon
+維持低權限。私有 Unix socket 檢查對端 UID；來自服務帳號的請求還須符合服務
+cgroup。請求大小與等待時間都有上限，接受的操作固定如下：
+
+- `memory.status` 讀取 `rillway.service` 狀態；`memory.apply` 經 revision 檢查後，
+  修改該服務的 `MemoryMax` 與 `MemoryHigh`。
+- `warp-log.status` 讀取 WARP 日誌狀態。`warp-log.apply` 要求 revision 相符，
+  且日誌等級必須是 `inherit`、`warning`、`info` 或 `debug`。它會儲存固定的
+  WARP 日誌 drop-in、執行 `daemon-reload`、重新啟動 `warp-svc.service`，再檢查
+  結果。若這次載入／重啟或結果檢查失敗，會嘗試恢復先前儲存的設定，
+  並再次載入及重啟；
+  若恢復失敗會回報錯誤，不保證一定成功。
+
+請求不能指定任意指令、unit 名稱或屬性名稱。root 擁有的資源中繼資料（metadata）不含憑證；
+binary 與上層目錄必須由 root 擁有，且不允許群組或其他人寫入。登入的管理者
+可以調整資源限制，後續負載超過上限仍可能終止服務；安全下限與主機容量檢查
+不構成可用性保證。
