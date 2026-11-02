@@ -40,6 +40,10 @@ run = ["mkdir -p coverage", "go test -race -shuffle=on -coverprofile=coverage/co
 [tasks."test:live"]
 run = "go test -tags=live -v ./tests/live/..."
 
+[tasks."test:source-acl"]
+description = "Run the bounded source ACL corpus and retain per-case results"
+run = "python3 scripts/source_acl_corpus.py"
+
 [tasks.fuzz]
 run = ["go test ./internal/config -run=^$ -fuzz=FuzzDecode -fuzztime=10s", "go test ./internal/proxy -run=^$ -fuzz=Fuzz -fuzztime=10s"]
 

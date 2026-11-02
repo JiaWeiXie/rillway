@@ -167,7 +167,7 @@ func testCorpusValidation(t *testing.T) {
 	for _, kind := range []string{"rules", "cidrs"} {
 		for _, over := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s-over-%t", kind, over), func(t *testing.T) {
-				// Literal documented limits: do not move expectations with production constants.
+				// Fixed source-access limits: do not move expectations with production constants.
 				n := 256
 				if kind == "cidrs" {
 					n = 1024
