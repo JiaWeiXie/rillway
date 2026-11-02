@@ -66,7 +66,7 @@ func TestSourceACLAdmissionManagement(t *testing.T) {
 			t.Run("admin", func(t *testing.T) {
 				requestCtx, stop := context.WithTimeout(t.Context(), 2*time.Second)
 				defer stop()
-				_, err = api.Config(requestCtx) // Correct token and trusted fixture certificate.
+				_, err := api.Config(requestCtx) // Correct token and trusted fixture certificate.
 				if (err == nil) == proxyAllowed || requestCtx.Err() != nil {
 					t.Fatal("management ACL separation failed")
 				}

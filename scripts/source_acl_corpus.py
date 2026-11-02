@@ -25,9 +25,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     command = ["go", "test", "-race", "-shuffle=on", "-count=1", "-timeout=90s", "-json",
                "-run", "^(" + "|".join(sorted(roots)) + ")$", *expected]
-    with (out / "events.jsonl").open("w") as stream:
+    with (out / "events.jsonl").open("w") as stream, (out / "stderr.txt").open("w") as stderr:
         try:
-            code = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, timeout=600).returncode
+            code = subprocess.run(command, stdout=stream, stderr=stderr, timeout=600).returncode
         except subprocess.TimeoutExpired:
             code = 124
     started, outcomes, errors = set(), {}, []
