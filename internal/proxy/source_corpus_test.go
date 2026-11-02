@@ -100,9 +100,10 @@ func TestSourceACLAdmissionWire(t *testing.T) {
 					}
 					meter := &corpusListener{Listener: l, closed: make(chan struct{}, 4)}
 					// Only wire uses the kernel peer. These overrides are synthetic representations.
-					if peer == "synthetic-mapped" {
+					switch peer {
+					case "synthetic-mapped":
 						meter.peer = "[::ffff:127.0.0.1]:1234"
-					} else if peer == "synthetic-malformed" {
+					case "synthetic-malformed":
 						meter.peer = "[[127.0.0.1]]:1234"
 					}
 					server := &http.Server{Handler: s.HTTPHandler(), ReadHeaderTimeout: time.Second}
